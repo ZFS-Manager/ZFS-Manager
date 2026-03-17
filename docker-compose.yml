@@ -1,0 +1,18 @@
+services:
+  zfs-manager:
+    build: .
+    image: zfs-manager:latest
+    container_name: zfs-manager
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - ZFS_API_PORT=3000
+      - RUST_LOG=info
+    # ZFS requires privileged access and host ZFS devices
+    privileged: true
+    volumes:
+      - /dev:/dev
+      - /proc:/proc
+      - /sys/module/zfs:/sys/module/zfs
+    network_mode: host
