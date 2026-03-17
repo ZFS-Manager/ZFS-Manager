@@ -1,19 +1,58 @@
-import React, { useEffect, useState } from 'react';
-import { Database, Activity, Shield, RefreshCw } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { 
+  Search, 
+  Bell, 
+  User, 
+  Database,
+  RefreshCw
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import Sidebar from './components/Sidebar';
+import DatasetList from './components/DatasetList';
+import StatCard from './components/StatCard';
+import PerformanceMonitor from './components/PerformanceMonitor';
+import ACLManager from './components/ACLManager';
 import { getDatasets, getPools } from './api';
-import type { ZfsDataset, ZfsPool } from './api';
+import type { ZfsDataset as ApiDataset, ZfsPool as ApiPool } from './api';
+import type { ZFSDataset, ZFSPool } from './types';
 
-const App: React.FC = () => {
-  const [datasets, setDatasets] = useState<ZfsDataset[]>([]);
-  const [pools, setPools] = useState<ZfsPool[]>([]);
+export default function App() {
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [datasets, setDatasets] = useState<ZFSDataset[]>([]);
+  const [pools, setPools] = useState<ZFSPool[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchData = async () => {
     setLoading(true);
     try {
       const [d, p] = await Promise.all([getDatasets(), getPools()]);
-      setDatasets(d);
-      setPools(p);
+      
+      // Map API types to UI types
+      const mappedDatasets: ZFSDataset[] = d.map((ds: ApiDataset, index: number) => ({
+        id: index.toString(),
+        name: ds.name,
+        used: ds.used,
+        avail: ds.available,
+        refer: ds.refer,
+        mountpoint: ds.mountpoint,
+        compression: 'lz4', // Default or fetch from props if added to API
+        dedup: 'off',
+        readonly: false
+      }));
+
+      const mappedPools: ZFSPool[] = p.map((pool: ApiPool) => ({
+        name: pool.name,
+        size: pool.size,
+        alloc: pool.alloc,
+        free: pool.free,
+        cap: Math.round((parseInt(pool.alloc) / parseInt(pool.size)) * 100) || 0,
+        health: pool.health as any,
+        raidType: 'Generic',
+        vdevs: [] // API doesn't provide vdevs in list yet
+      }));
+
+      setDatasets(mappedDatasets);
+      setPools(mappedPools);
     } catch (error) {
       console.error('Failed to fetch data:', error);
     } finally {
@@ -25,131 +64,166 @@ const App: React.FC = () => {
     fetchData();
   }, []);
 
-  const formatSize = (bytes: string) => {
-    const b = parseInt(bytes);
-    if (isNaN(b)) return bytes;
-    if (b === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-    const i = Math.floor(Math.log(b) / Math.log(k));
-    return parseFloat((b / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'dashboard':
+        return (
+          <div className="space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              <StatCard 
+                label="Total Pools" 
+                value={pools.length.toString()} 
+                icon={Database} 
+                trend={{ value: 'Stable', isPositive: true }}
+              />
+              <StatCard 
+                label="Total Datasets" 
+                value={datasets.length.toString()} 
+                icon={Database} 
+              />
+              <StatCard 
+                label="System Health" 
+                value={pools.every(p => p.health === 'ONLINE') ? 'Healthy' : 'Check Required'} 
+                icon={RefreshCw}
+                trend={{ value: 'Optimal', isPositive: true }}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2">
+                <PerformanceMonitor />
+              </div>
+              <div className="space-y-6">
+                <h3 className="text-xl font-bold text-white">Quick Status</h3>
+                {pools.map((pool, i) => (
+                  <motion.div
+                    key={pool.name}
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.1 }}
+                    className="glass-panel p-6"
+                  >
+                    <div className="flex justify-between items-center mb-4">
+                      <p className="text-lg font-bold text-white">{pool.name}</p>
+                      <span className={`status-badge ${pool.health === 'ONLINE' ? 'status-online' : 'status-error'}`}>
+                        {pool.health}
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-xs text-white/40">
+                        <span>Capacity</span>
+                        <span>{pool.cap}%</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-zfs-accent" 
+                          style={{ width: `${pool.cap}%` }}
+                        />
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      case 'stats':
+        return <PerformanceMonitor />;
+      case 'pools':
+        return (
+          <div className="space-y-8">
+            <div className="flex justify-between items-center">
+              <h2 className="text-3xl font-bold text-white">Storage Pools</h2>
+              <button 
+                onClick={fetchData}
+                className="apple-button apple-button-secondary"
+              >
+                <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+                Refresh
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {pools.map((pool) => (
+                <div key={pool.name} className="glass-panel p-8">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-2xl font-bold text-white">{pool.name}</h3>
+                    <span className={`status-badge ${pool.health === 'ONLINE' ? 'status-online' : 'status-error'}`}>
+                      {pool.health}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-white/5 p-4 rounded-xl">
+                      <p className="text-xs text-white/40 uppercase">Used</p>
+                      <p className="text-lg font-bold text-white">{pool.alloc}</p>
+                    </div>
+                    <div className="bg-white/5 p-4 rounded-xl">
+                      <p className="text-xs text-white/40 uppercase">Free</p>
+                      <p className="text-lg font-bold text-white">{pool.free}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      case 'datasets':
+        return <DatasetList datasets={datasets} />;
+      case 'permissions':
+        return <ACLManager />;
+      default:
+        return (
+          <div className="glass-panel p-12 text-center">
+            <h2 className="text-2xl font-bold text-white mb-4">Coming Soon</h2>
+            <p className="text-white/40">The {activeTab} module is currently under development.</p>
+          </div>
+        );
+    }
   };
 
   return (
-    <div className="min-h-screen p-6 md:p-12 max-w-7xl mx-auto">
-      <header className="flex justify-between items-center mb-12">
-        <div>
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">
-            ZFS Manager
-          </h1>
-          <p className="text-slate-400 mt-2">Enterprise Storage Orchestration</p>
-        </div>
-        <button 
-          onClick={fetchData}
-          className="p-3 glass rounded-xl hover:bg-slate-800 transition-colors flex items-center gap-2 text-blue-400 border border-blue-500/20"
-        >
-          <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
-          Refresh
-        </button>
-      </header>
-
-      <section className="mb-12">
-        <div className="flex items-center gap-3 mb-6">
-          <Database className="text-blue-500" />
-          <h2 className="text-2xl font-semibold">Storage Pools</h2>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {pools.map((pool) => (
-            <div key={pool.name} className="glass p-6 rounded-2xl card-hover relative overflow-hidden">
-              <div className="absolute top-0 right-0 p-4 opacity-10">
-                <Database size={80} />
+    <div className="flex min-h-screen bg-zfs-deep text-white">
+      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+      
+      <main className="flex-1 ml-72 p-12 overflow-y-auto h-screen no-scrollbar">
+        <header className="flex justify-between items-center mb-12">
+          <div className="flex items-center gap-6 bg-white/[0.03] border border-white/[0.05] rounded-2xl px-6 py-3 w-96 focus-within:bg-white/[0.05] focus-within:border-zfs-accent/50 transition-all">
+            <Search size={18} className="text-white/30" />
+            <input 
+              type="text" 
+              placeholder="Search pools or datasets..." 
+              className="bg-transparent border-none outline-none text-sm text-white placeholder:text-white/20 w-full"
+            />
+          </div>
+          
+          <div className="flex items-center gap-6">
+            <button className="w-12 h-12 flex items-center justify-center rounded-2xl bg-white/[0.03] text-white/40 hover:text-white border border-white/[0.05] transition-all relative">
+              <Bell size={20} />
+              <span className="absolute top-3.5 right-3.5 w-2 h-2 bg-rose-500 rounded-full border-2 border-[#020617]" />
+            </button>
+            <div className="flex items-center gap-4 pl-6 border-l border-white/10">
+              <div className="text-right">
+                <p className="text-sm font-bold text-white">Admin</p>
+                <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Superuser</p>
               </div>
-              <div className="flex justify-between items-start mb-4">
-                <h3 className="text-xl font-bold text-white">{pool.name}</h3>
-                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                  pool.health === 'ONLINE' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
-                }`}>
-                  {pool.health}
-                </span>
-              </div>
-              <div className="space-y-4">
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-400">Capacity</span>
-                  <span className="text-white font-medium">{formatSize(pool.alloc)} / {formatSize(pool.size)}</span>
-                </div>
-                <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-blue-500 rounded-full" 
-                    style={{ width: `${(parseInt(pool.alloc) / parseInt(pool.size)) * 100}%` }}
-                  ></div>
-                </div>
-                <div className="grid grid-cols-2 gap-4 pt-2">
-                  <div className="flex items-center gap-2 text-sm">
-                    <Activity size={16} className="text-blue-400" />
-                    <span className="text-slate-400">Read: {pool.read}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-sm">
-                    <Activity size={16} className="text-emerald-400" />
-                    <span className="text-slate-400">Write: {pool.write}</span>
-                  </div>
-                </div>
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-zfs-accent to-indigo-600 flex items-center justify-center shadow-[0_0_20px_rgba(59,130,246,0.3)]">
+                <User size={20} className="text-white" />
               </div>
             </div>
-          ))}
-          {pools.length === 0 && !loading && (
-            <div className="col-span-full glass p-12 text-center rounded-2xl text-slate-500">
-              No storage pools detected
-            </div>
-          )}
-        </div>
-      </section>
+          </div>
+        </header>
 
-      <section>
-        <div className="flex items-center gap-3 mb-6">
-          <Database className="text-emerald-500" />
-          <h2 className="text-2xl font-semibold">Datasets</h2>
-        </div>
-        <div className="glass rounded-2xl overflow-hidden border border-slate-800">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="bg-slate-900/50 text-slate-400 text-sm uppercase tracking-wider">
-                <th className="px-6 py-4 font-semibold">Name</th>
-                <th className="px-6 py-4 font-semibold">Used</th>
-                <th className="px-6 py-4 font-semibold">Available</th>
-                <th className="px-6 py-4 font-semibold">Mountpoint</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800">
-              {datasets.map((ds) => (
-                <tr key={ds.name} className="hover:bg-slate-800/30 transition-colors group">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <Shield size={18} className="text-emerald-500 opacity-50 group-hover:opacity-100" />
-                      <span className="text-white font-medium">{ds.name}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-slate-300">{formatSize(ds.used)}</td>
-                  <td className="px-6 py-4 text-slate-300">{formatSize(ds.available)}</td>
-                  <td className="px-6 py-4">
-                    <code className="text-xs bg-slate-900 px-2 py-1 rounded text-blue-400 border border-blue-500/20">
-                      {ds.mountpoint}
-                    </code>
-                  </td>
-                </tr>
-              ))}
-              {datasets.length === 0 && !loading && (
-                <tr>
-                  <td colSpan={4} className="px-6 py-12 text-center text-slate-500">
-                    No active datasets found
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2 }}
+          >
+            {renderContent()}
+          </motion.div>
+        </AnimatePresence>
+      </main>
     </div>
   );
-};
-
-export default App;
+}
