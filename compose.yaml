@@ -9,6 +9,7 @@ services:
       - ZFS_API_PORT=3000
       - RUST_LOG=info
       - ZFS_MANAGER_DATA=/home/docker/zfs-manager
+      - ZFS_API_KEY=my-super-secret-key-123
     privileged: true
     volumes:
       - /dev:/dev

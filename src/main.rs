@@ -1,4 +1,10 @@
-use axum::Router;
+use axum::{
+    extract::Request,
+    middleware::{self, Next},
+    response::Response,
+    http::StatusCode,
+    Router,
+};
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
@@ -9,6 +15,27 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 mod error;
 mod executor;
 mod routes;
+
+async fn auth_middleware(req: Request, next: Next) -> Result<Response, StatusCode> {
+    if req.uri().path().ends_with("/health") {
+        return Ok(next.run(req).await);
+    }
+
+    let api_key = std::env::var("ZFS_API_KEY").unwrap_or_default();
+    if api_key.is_empty() {
+        return Ok(next.run(req).await);
+    }
+
+    if let Some(auth_header) = req.headers().get("Authorization").or_else(|| req.headers().get("x-api-key")) {
+        let auth_str = auth_header.to_str().unwrap_or_default();
+        let token = auth_str.strip_prefix("Bearer ").unwrap_or(auth_str);
+        if token == api_key {
+            return Ok(next.run(req).await);
+        }
+    }
+    
+    Err(StatusCode::UNAUTHORIZED)
+}
 
 #[tokio::main]
 async fn main() {
@@ -36,6 +63,7 @@ async fn main() {
         .merge(routes::volumes::router())
         .merge(routes::clones::router())
         .merge(routes::properties::router())
+        .layer(middleware::from_fn(auth_middleware))
         .layer(cors)
         .layer(TraceLayer::new_for_http());
 
@@ -45,5 +73,11 @@ async fn main() {
 
     info!("🚀 zfs-manager listening on http://0.0.0.0:{port}");
     info!("   API base: http://0.0.0.0:{port}/api/v1");
+    if std::env::var("ZFS_API_KEY").is_ok() {
+        info!("🔐 API Key Authentication enabled!");
+    } else {
+        info!("🔓 API Key is NOT set. API is accessible to everyone.");
+    }
+    
     axum::serve(listener, app).await.expect("Server error");
 }

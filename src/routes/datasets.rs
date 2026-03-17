@@ -59,15 +59,22 @@ async fn list_datasets() -> Result<Json<Value>, ApiError> {
     let datasets: Vec<Value> = raw
         .lines()
         .filter(|l| !l.trim().is_empty())
-        .map(|line| {
+        .filter_map(|line| {
             let c: Vec<&str> = line.split('\t').collect();
-            json!({
-                "name":       c.first().unwrap_or(&""),
+            let name = c.first().unwrap_or(&"");
+            
+            // Filter out internal/system datasets used by TrueNAS
+            if name.contains("/.system") || name.contains("/ix-apps") {
+                return None;
+            }
+
+            Some(json!({
+                "name":       name,
                 "used":       c.get(1).unwrap_or(&""),
                 "available":  c.get(2).unwrap_or(&""),
                 "refer":      c.get(3).unwrap_or(&""),
                 "mountpoint": c.get(4).unwrap_or(&""),
-            })
+            }))
         })
         .collect();
     Ok(Json(json!({ "datasets": datasets })))
