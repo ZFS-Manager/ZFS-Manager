@@ -1,5 +1,8 @@
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM rust:1.83-slim AS builder
+FROM rust:alpine AS builder
+
+# Required for building some async/network crates on musl
+RUN apk add --no-cache musl-dev
 
 WORKDIR /app
 
@@ -10,7 +13,6 @@ RUN cargo build --release 2>/dev/null || true
 RUN rm -rf src
 
 # ARG CACHEBUST: pass a new value (e.g. git commit hash) to force recompile
-# Komodo: set build arg CACHEBUST=$(git rev-parse HEAD) in deploy settings
 ARG CACHEBUST=1
 RUN echo "Cache bust: $CACHEBUST"
 
@@ -19,17 +21,10 @@ COPY src ./src
 RUN touch src/main.rs && cargo build --release
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
-FROM debian:bookworm-slim
+FROM alpine:latest
 
-# Enable contrib repo (required for zfsutils-linux) and install ZFS tools
-RUN echo "deb http://deb.debian.org/debian bookworm main contrib" > /etc/apt/sources.list && \
-    echo "deb http://deb.debian.org/debian bookworm-updates main contrib" >> /etc/apt/sources.list && \
-    echo "deb http://deb.debian.org/debian-security bookworm-security main contrib" >> /etc/apt/sources.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-        zfsutils-linux \
-        ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+# Install ZFS tools
+RUN apk add --no-cache zfs
 
 COPY --from=builder /app/target/release/zfs-manager /usr/local/bin/zfs-manager
 

@@ -1,15 +1,17 @@
 services:
-  zfs-manager:
-    build: .
-    container_name: zfs-manager
+  zfs-backend:
+    build:
+      context: ./rust-backend
+      dockerfile: Dockerfile
+    container_name: zfs-backend
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${ZFS_BACKEND_PORT:-3000}:${ZFS_BACKEND_PORT:-3000}"
     environment:
-      - ZFS_API_PORT=3000
+      - ZFS_API_PORT=${ZFS_BACKEND_PORT:-3000}
       - RUST_LOG=info
       - ZFS_MANAGER_DATA=/home/docker/zfs-manager
-      - ZFS_API_KEY=my-super-secret-key-123
+      - ZFS_API_KEY=${ZFS_API_KEY:-my-super-secret-key-123}
     privileged: true
     volumes:
       - /dev:/dev
@@ -18,3 +20,17 @@ services:
       - /home/docker/zfs-manager:/home/docker/zfs-manager
     working_dir: /home/docker/zfs-manager
     network_mode: host
+
+  zfs-web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: zfs-web
+    restart: unless-stopped
+    ports:
+      - "${ZFS_WEB_PORT:-8080}:80"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:${ZFS_BACKEND_PORT:-3000}/api/v1
+      - VITE_API_KEY=${ZFS_API_KEY:-my-super-secret-key-123}
+    depends_on:
+      - zfs-backend
