@@ -63,7 +63,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
       </nav>
 
       <div className="mt-auto pt-6 border-t border-white/[0.05]">
-        <div className="nav-item group text-white/40 hover:text-rose-400 hover:bg-rose-500/10 transition-all duration-300">
+        <div className="nav-item group text-white/40 hover:text-rose-400 hover:bg-rose-500/10">
           <LogOut size={20} />
           <span className="font-medium">Logout</span>
         </div>

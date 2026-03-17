@@ -47,7 +47,7 @@ export default function ACLManager() {
                 <div>
                   <div className="flex items-center gap-3">
                     <p className="text-base font-bold text-white">{rule.name}</p>
-                    <span className="text-[9px] font-bold uppercase px-2 py-0.5 bg-white/5 text-white/40 rounded-md tracking-widest">{rule.type}</span>
+                    <span className="text-[9px] font-bold uppercase px-2 py-0.5 bg-white/5 text-white/30 rounded-md tracking-widest">{rule.type}</span>
                   </div>
                   <div className="flex gap-1.5 mt-2">
                     {rule.permissions.map(p => (

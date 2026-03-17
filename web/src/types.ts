@@ -87,4 +87,7 @@ export interface DiskStat {
   read: number;
   write: number;
   iops: number;
+  latency?: string;
+  arcHit?: number;
+  l2arcHit?: number;
 }
