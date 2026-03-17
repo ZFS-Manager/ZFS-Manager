@@ -1,5 +1,5 @@
 use axum::{
-    extract::Path,
+    extract::{Path, Query},
     routing::{delete, get, put},
     Json, Router,
 };
@@ -10,24 +10,43 @@ use crate::{error::ApiError, executor};
 
 pub fn router() -> Router {
     Router::new()
-        .route("/api/v1/properties/*dataset", get(get_all_properties))
-        .route(
-            "/api/v1/properties/*dataset/:prop",
-            get(get_property).put(set_property).delete(inherit_property),
-        )
+        // GET all properties for a dataset: GET /api/v1/properties/*dataset
+        // GET one property:                 GET /api/v1/properties/*dataset?prop=compression
+        .route("/api/v1/properties/*dataset", get(get_properties))
+        // Set property:   PUT  /api/v1/properties/*dataset  body: {prop, value}
+        // Reset/inherit:  DELETE /api/v1/properties/*dataset  body: {prop}
+        .route("/api/v1/properties/*dataset", put(set_property).delete(inherit_property))
 }
 
-// ── Bodies ────────────────────────────────────────────────────────────────────
+// ── Bodies / Queries ──────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct PropQuery {
+    pub prop: Option<String>,
+}
 
 #[derive(Deserialize)]
 pub struct SetPropertyBody {
+    pub prop: String,
     pub value: String,
+}
+
+#[derive(Deserialize)]
+pub struct InheritBody {
+    pub prop: String,
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-async fn get_all_properties(Path(dataset): Path<String>) -> Result<Json<Value>, ApiError> {
-    let raw = executor::zfs(&["get", "-H", "-p", "all", &dataset]).await?;
+/// GET /api/v1/properties/*dataset          → all properties
+/// GET /api/v1/properties/*dataset?prop=X   → single property
+async fn get_properties(
+    Path(dataset): Path<String>,
+    Query(q): Query<PropQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let prop_arg = q.prop.as_deref().unwrap_or("all");
+    let raw = executor::zfs(&["get", "-H", "-p", prop_arg, &dataset]).await?;
+
     let properties: Vec<Value> = raw
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -41,38 +60,35 @@ async fn get_all_properties(Path(dataset): Path<String>) -> Result<Json<Value>, 
             })
         })
         .collect();
-    Ok(Json(json!({ "dataset": dataset, "properties": properties })))
+
+    if properties.len() == 1 && q.prop.is_some() {
+        Ok(Json(json!({ "property": properties.into_iter().next().unwrap() })))
+    } else {
+        Ok(Json(json!({ "dataset": dataset, "properties": properties })))
+    }
 }
 
-async fn get_property(
-    Path((dataset, prop)): Path<(String, String)>,
-) -> Result<Json<Value>, ApiError> {
-    let raw = executor::zfs(&["get", "-H", "-p", &prop, &dataset]).await?;
-    let line = raw.lines().next().ok_or_else(|| ApiError::NotFound(format!("Property '{prop}' not found on '{dataset}'")))?;
-    let c: Vec<&str> = line.split('\t').collect();
-    Ok(Json(json!({
-        "dataset": c.first().unwrap_or(&""),
-        "name":    c.get(1).unwrap_or(&""),
-        "value":   c.get(2).unwrap_or(&""),
-        "source":  c.get(3).unwrap_or(&""),
-    })))
-}
-
+/// PUT /api/v1/properties/*dataset  body: { "prop": "compression", "value": "lz4" }
 async fn set_property(
-    Path((dataset, prop)): Path<(String, String)>,
+    Path(dataset): Path<String>,
     Json(body): Json<SetPropertyBody>,
 ) -> Result<Json<Value>, ApiError> {
-    if body.value.is_empty() {
-        return Err(ApiError::BadRequest("'value' is required".into()));
+    if body.prop.is_empty() || body.value.is_empty() {
+        return Err(ApiError::BadRequest("'prop' and 'value' are required".into()));
     }
-    let kv = format!("{prop}={}", body.value);
+    let kv = format!("{}={}", body.prop, body.value);
     executor::zfs(&["set", &kv, &dataset]).await?;
-    Ok(Json(json!({ "message": format!("Set {kv} on '{dataset}'") })))
+    Ok(Json(json!({ "message": format!("Set {} on '{dataset}'", kv) })))
 }
 
+/// DELETE /api/v1/properties/*dataset  body: { "prop": "compression" }
 async fn inherit_property(
-    Path((dataset, prop)): Path<(String, String)>,
+    Path(dataset): Path<String>,
+    Json(body): Json<InheritBody>,
 ) -> Result<Json<Value>, ApiError> {
-    executor::zfs(&["inherit", &prop, &dataset]).await?;
-    Ok(Json(json!({ "message": format!("Property '{prop}' inherited on '{dataset}'") })))
+    if body.prop.is_empty() {
+        return Err(ApiError::BadRequest("'prop' is required".into()));
+    }
+    executor::zfs(&["inherit", &body.prop, &dataset]).await?;
+    Ok(Json(json!({ "message": format!("Property '{}' inherited on '{dataset}'", body.prop) })))
 }

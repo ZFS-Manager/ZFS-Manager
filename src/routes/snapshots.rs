@@ -1,5 +1,5 @@
 use axum::{
-    extract::Path,
+    extract::{Path, Query},
     routing::{delete, get, post},
     Json, Router,
 };
@@ -10,16 +10,17 @@ use crate::{error::ApiError, executor};
 
 pub fn router() -> Router {
     Router::new()
+        // Collection
         .route("/api/v1/snapshots", get(list_snapshots).post(create_snapshot))
-        .route(
-            "/api/v1/snapshots/*name",
-            get(get_snapshot).delete(destroy_snapshot),
-        )
-        .route("/api/v1/snapshots/*name/rollback", post(rollback))
-        .route("/api/v1/snapshots/*name/clone", post(clone_snapshot))
-        .route("/api/v1/snapshots/*name/holds", get(list_holds).post(add_hold).delete(release_hold))
-        .route("/api/v1/snapshots/*name/diff", get(diff_snapshot))
-        .route("/api/v1/snapshots/send", post(send_recv))
+        // Single item
+        .route("/api/v1/snapshots/*name", get(get_snapshot).delete(destroy_snapshot))
+        // Actions – snapshot name in request body
+        .route("/api/v1/snapshots/rollback", post(rollback))
+        .route("/api/v1/snapshots/clone",    post(clone_snapshot))
+        .route("/api/v1/snapshots/hold",     post(add_hold).delete(release_hold))
+        .route("/api/v1/snapshots/holds",    get(list_holds))
+        .route("/api/v1/snapshots/diff",     get(diff_snapshot))
+        .route("/api/v1/snapshots/send",     post(send_recv))
 }
 
 // ── Bodies ────────────────────────────────────────────────────────────────────
@@ -33,12 +34,14 @@ pub struct CreateSnapshotBody {
 
 #[derive(Deserialize)]
 pub struct RollbackBody {
+    pub name: String,
     #[serde(default)]
     pub force: bool,
 }
 
 #[derive(Deserialize)]
 pub struct CloneBody {
+    pub name: String,
     pub target: String,
     #[serde(default)]
     pub options: Vec<String>,
@@ -46,7 +49,13 @@ pub struct CloneBody {
 
 #[derive(Deserialize)]
 pub struct HoldBody {
+    pub name: String,
     pub tag: String,
+}
+
+#[derive(Deserialize)]
+pub struct NameQuery {
+    pub name: String,
 }
 
 #[derive(Deserialize)]
@@ -61,7 +70,11 @@ pub struct SendRecvBody {
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 async fn list_snapshots() -> Result<Json<Value>, ApiError> {
-    let raw = executor::zfs(&["list", "-H", "-p", "-t", "snapshot", "-o", "name,used,refer,creation"]).await?;
+    let raw = executor::zfs(&[
+        "list", "-H", "-p", "-t", "snapshot",
+        "-o", "name,used,refer,creation",
+    ])
+    .await?;
     let snaps: Vec<Value> = raw
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -83,15 +96,25 @@ async fn create_snapshot(Json(body): Json<CreateSnapshotBody>) -> Result<Json<Va
         return Err(ApiError::BadRequest("'name' is required (e.g. 'tank/data@snap1')".into()));
     }
     let mut args = vec!["snapshot"];
-    if body.recursive { args.push("-r"); }
+    if body.recursive {
+        args.push("-r");
+    }
     args.push(&body.name);
     executor::zfs(&args).await?;
     Ok(Json(json!({ "message": format!("Snapshot '{}' created", body.name) })))
 }
 
 async fn get_snapshot(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
-    let raw = executor::zfs(&["list", "-H", "-p", "-t", "snapshot", "-o", "name,used,refer,creation", &name]).await?;
-    let line = raw.lines().next().ok_or_else(|| ApiError::NotFound(format!("Snapshot '{name}' not found")))?;
+    let raw = executor::zfs(&[
+        "list", "-H", "-p", "-t", "snapshot",
+        "-o", "name,used,refer,creation",
+        &name,
+    ])
+    .await?;
+    let line = raw
+        .lines()
+        .next()
+        .ok_or_else(|| ApiError::NotFound(format!("Snapshot '{name}' not found")))?;
     let c: Vec<&str> = line.split('\t').collect();
     Ok(Json(json!({
         "name":     c.first().unwrap_or(&""),
@@ -106,36 +129,34 @@ async fn destroy_snapshot(Path(name): Path<String>) -> Result<Json<Value>, ApiEr
     Ok(Json(json!({ "message": format!("Snapshot '{name}' destroyed") })))
 }
 
-async fn rollback(
-    Path(name): Path<String>,
-    body: Option<Json<RollbackBody>>,
-) -> Result<Json<Value>, ApiError> {
-    let force = body.map(|b| b.force).unwrap_or(false);
+async fn rollback(Json(body): Json<RollbackBody>) -> Result<Json<Value>, ApiError> {
+    if body.name.is_empty() {
+        return Err(ApiError::BadRequest("'name' is required".into()));
+    }
     let mut args = vec!["rollback"];
-    if force { args.push("-f"); }
-    args.push(&name);
+    if body.force {
+        args.push("-f");
+    }
+    args.push(&body.name);
     executor::zfs(&args).await?;
-    Ok(Json(json!({ "message": format!("Rolled back to snapshot '{name}'") })))
+    Ok(Json(json!({ "message": format!("Rolled back to snapshot '{}'", body.name) })))
 }
 
-async fn clone_snapshot(
-    Path(name): Path<String>,
-    Json(body): Json<CloneBody>,
-) -> Result<Json<Value>, ApiError> {
-    if body.target.is_empty() {
-        return Err(ApiError::BadRequest("'target' is required".into()));
+async fn clone_snapshot(Json(body): Json<CloneBody>) -> Result<Json<Value>, ApiError> {
+    if body.name.is_empty() || body.target.is_empty() {
+        return Err(ApiError::BadRequest("'name' and 'target' are required".into()));
     }
     let mut args = vec!["clone".to_string()];
     args.extend(body.options);
-    args.push(name.clone());
+    args.push(body.name.clone());
     args.push(body.target.clone());
-    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    executor::zfs(&args_ref).await?;
-    Ok(Json(json!({ "message": format!("Cloned '{name}' → '{}'", body.target) })))
+    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    executor::zfs(&refs).await?;
+    Ok(Json(json!({ "message": format!("Cloned '{}' → '{}'", body.name, body.target) })))
 }
 
-async fn list_holds(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
-    let raw = executor::zfs(&["holds", "-H", &name]).await?;
+async fn list_holds(Query(q): Query<NameQuery>) -> Result<Json<Value>, ApiError> {
+    let raw = executor::zfs(&["holds", "-H", &q.name]).await?;
     let holds: Vec<Value> = raw
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -151,55 +172,47 @@ async fn list_holds(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     Ok(Json(json!({ "holds": holds })))
 }
 
-async fn add_hold(
-    Path(name): Path<String>,
-    Json(body): Json<HoldBody>,
-) -> Result<Json<Value>, ApiError> {
-    if body.tag.is_empty() {
-        return Err(ApiError::BadRequest("'tag' is required".into()));
+async fn add_hold(Json(body): Json<HoldBody>) -> Result<Json<Value>, ApiError> {
+    if body.tag.is_empty() || body.name.is_empty() {
+        return Err(ApiError::BadRequest("'name' and 'tag' are required".into()));
     }
-    executor::zfs(&["hold", &body.tag, &name]).await?;
-    Ok(Json(json!({ "message": format!("Hold '{}' added to '{name}'", body.tag) })))
+    executor::zfs(&["hold", &body.tag, &body.name]).await?;
+    Ok(Json(json!({ "message": format!("Hold '{}' added to '{}'", body.tag, body.name) })))
 }
 
-async fn release_hold(
-    Path(name): Path<String>,
-    Json(body): Json<HoldBody>,
-) -> Result<Json<Value>, ApiError> {
-    if body.tag.is_empty() {
-        return Err(ApiError::BadRequest("'tag' is required".into()));
+async fn release_hold(Json(body): Json<HoldBody>) -> Result<Json<Value>, ApiError> {
+    if body.tag.is_empty() || body.name.is_empty() {
+        return Err(ApiError::BadRequest("'name' and 'tag' are required".into()));
     }
-    executor::zfs(&["release", &body.tag, &name]).await?;
-    Ok(Json(json!({ "message": format!("Hold '{}' released from '{name}'", body.tag) })))
+    executor::zfs(&["release", &body.tag, &body.name]).await?;
+    Ok(Json(json!({ "message": format!("Hold '{}' released from '{}'", body.tag, body.name) })))
 }
 
-async fn diff_snapshot(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
-    let raw = executor::zfs(&["diff", &name]).await?;
+async fn diff_snapshot(Query(q): Query<NameQuery>) -> Result<Json<Value>, ApiError> {
+    let raw = executor::zfs(&["diff", &q.name]).await?;
     let lines: Vec<&str> = raw.lines().collect();
-    Ok(Json(json!({ "name": name, "diff": lines })))
+    Ok(Json(json!({ "name": q.name, "diff": lines })))
 }
 
 async fn send_recv(Json(body): Json<SendRecvBody>) -> Result<Json<Value>, ApiError> {
     if body.snapshot.is_empty() || body.destination.is_empty() {
         return Err(ApiError::BadRequest("'snapshot' and 'destination' are required".into()));
     }
-
-    // Build: zfs send [-i from] [-R] snapshot | zfs recv destination
-    let mut send_args = vec!["send".to_string()];
-    if body.replicate { send_args.push("-R".to_string()); }
-    if let Some(ref from) = body.from_snapshot {
-        send_args.push("-i".to_string());
-        send_args.push(from.clone());
+    let mut send_parts = vec!["send".to_string()];
+    if body.replicate {
+        send_parts.push("-R".to_string());
     }
-    send_args.push(body.snapshot.clone());
+    if let Some(ref from) = body.from_snapshot {
+        send_parts.push("-i".to_string());
+        send_parts.push(from.clone());
+    }
+    send_parts.push(body.snapshot.clone());
 
-    // We pipe via shell
     let script = format!(
-        "zfs send {} | zfs recv {}",
-        send_args[1..].join(" "),
+        "zfs {} | zfs recv {}",
+        send_parts[..].join(" "),
         body.destination
     );
-
     let output = tokio::process::Command::new("sh")
         .arg("-c")
         .arg(&script)

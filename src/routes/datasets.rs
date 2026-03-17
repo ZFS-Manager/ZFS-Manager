@@ -1,5 +1,5 @@
 use axum::{
-    extract::Path,
+    extract::{Path, Query},
     routing::{delete, get, post},
     Json, Router,
 };
@@ -10,14 +10,15 @@ use crate::{error::ApiError, executor};
 
 pub fn router() -> Router {
     Router::new()
+        // Collection
         .route("/api/v1/datasets", get(list_datasets).post(create_dataset))
-        .route(
-            "/api/v1/datasets/*name",
-            get(get_dataset).delete(destroy_dataset),
-        )
-        .route("/api/v1/datasets/*name/mount", post(mount_dataset).delete(unmount_dataset))
-        .route("/api/v1/datasets/*name/rename", post(rename_dataset))
-        .route("/api/v1/datasets/*name/space", get(dataset_space))
+        // Single item  – GET/DELETE by wildcard name (e.g. "tank/data")
+        .route("/api/v1/datasets/*name", get(get_dataset).delete(destroy_dataset))
+        // Actions – name is passed in the request body
+        .route("/api/v1/datasets/mount",  post(mount_dataset))
+        .route("/api/v1/datasets/unmount", post(unmount_dataset))
+        .route("/api/v1/datasets/rename", post(rename_dataset))
+        .route("/api/v1/datasets/space",  get(dataset_space))
 }
 
 // ── Bodies ────────────────────────────────────────────────────────────────────
@@ -25,22 +26,36 @@ pub fn router() -> Router {
 #[derive(Deserialize)]
 pub struct CreateDatasetBody {
     pub name: String,
-    /// Optional zfs-create options, e.g. ["-o", "compression=lz4"]
     #[serde(default)]
     pub options: Vec<String>,
 }
 
 #[derive(Deserialize)]
+pub struct NameBody {
+    pub name: String,
+}
+
+#[derive(Deserialize)]
 pub struct RenameBody {
+    pub name: String,
     pub new_name: String,
     #[serde(default)]
     pub recursive: bool,
 }
 
+#[derive(Deserialize)]
+pub struct SpaceQuery {
+    pub name: String,
+}
+
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 async fn list_datasets() -> Result<Json<Value>, ApiError> {
-    let raw = executor::zfs(&["list", "-H", "-p", "-t", "filesystem", "-o", "name,used,avail,refer,mountpoint"]).await?;
+    let raw = executor::zfs(&[
+        "list", "-H", "-p", "-t", "filesystem",
+        "-o", "name,used,avail,refer,mountpoint",
+    ])
+    .await?;
     let datasets: Vec<Value> = raw
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -65,14 +80,22 @@ async fn create_dataset(Json(body): Json<CreateDatasetBody>) -> Result<Json<Valu
     let mut args = vec!["create".to_string()];
     args.extend(body.options);
     args.push(body.name.clone());
-    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    executor::zfs(&args_ref).await?;
+    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    executor::zfs(&refs).await?;
     Ok(Json(json!({ "message": format!("Dataset '{}' created", body.name) })))
 }
 
 async fn get_dataset(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
-    let raw = executor::zfs(&["list", "-H", "-p", "-o", "name,used,avail,refer,mountpoint", &name]).await?;
-    let line = raw.lines().next().ok_or_else(|| ApiError::NotFound(format!("Dataset '{name}' not found")))?;
+    let raw = executor::zfs(&[
+        "list", "-H", "-p",
+        "-o", "name,used,avail,refer,mountpoint",
+        &name,
+    ])
+    .await?;
+    let line = raw
+        .lines()
+        .next()
+        .ok_or_else(|| ApiError::NotFound(format!("Dataset '{name}' not found")))?;
     let c: Vec<&str> = line.split('\t').collect();
     Ok(Json(json!({
         "name":       c.first().unwrap_or(&""),
@@ -88,37 +111,51 @@ async fn destroy_dataset(Path(name): Path<String>) -> Result<Json<Value>, ApiErr
     Ok(Json(json!({ "message": format!("Dataset '{name}' destroyed") })))
 }
 
-async fn mount_dataset(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
-    executor::zfs(&["mount", &name]).await?;
-    Ok(Json(json!({ "message": format!("Dataset '{name}' mounted") })))
+async fn mount_dataset(Json(body): Json<NameBody>) -> Result<Json<Value>, ApiError> {
+    if body.name.is_empty() {
+        return Err(ApiError::BadRequest("'name' is required".into()));
+    }
+    executor::zfs(&["mount", &body.name]).await?;
+    Ok(Json(json!({ "message": format!("Dataset '{}' mounted", body.name) })))
 }
 
-async fn unmount_dataset(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
-    executor::zfs(&["unmount", &name]).await?;
-    Ok(Json(json!({ "message": format!("Dataset '{name}' unmounted") })))
+async fn unmount_dataset(Json(body): Json<NameBody>) -> Result<Json<Value>, ApiError> {
+    if body.name.is_empty() {
+        return Err(ApiError::BadRequest("'name' is required".into()));
+    }
+    executor::zfs(&["unmount", &body.name]).await?;
+    Ok(Json(json!({ "message": format!("Dataset '{}' unmounted", body.name) })))
 }
 
-async fn rename_dataset(
-    Path(name): Path<String>,
-    Json(body): Json<RenameBody>,
-) -> Result<Json<Value>, ApiError> {
-    if body.new_name.is_empty() {
-        return Err(ApiError::BadRequest("'new_name' is required".into()));
+async fn rename_dataset(Json(body): Json<RenameBody>) -> Result<Json<Value>, ApiError> {
+    if body.name.is_empty() || body.new_name.is_empty() {
+        return Err(ApiError::BadRequest("'name' and 'new_name' are required".into()));
     }
     let mut args = vec!["rename".to_string()];
     if body.recursive {
         args.push("-r".to_string());
     }
-    args.push(name.clone());
+    args.push(body.name.clone());
     args.push(body.new_name.clone());
-    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    executor::zfs(&args_ref).await?;
-    Ok(Json(json!({ "message": format!("Renamed '{name}' → '{}'", body.new_name) })))
+    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    executor::zfs(&refs).await?;
+    Ok(Json(json!({ "message": format!("Renamed '{}' → '{}'", body.name, body.new_name) })))
 }
 
-async fn dataset_space(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
-    let raw = executor::zfs(&["list", "-H", "-p", "-o", "name,used,avail,refer,quota,reservation", &name]).await?;
-    let line = raw.lines().next().ok_or_else(|| ApiError::NotFound(format!("Dataset '{name}' not found")))?;
+async fn dataset_space(Query(q): Query<SpaceQuery>) -> Result<Json<Value>, ApiError> {
+    if q.name.is_empty() {
+        return Err(ApiError::BadRequest("query param 'name' is required".into()));
+    }
+    let raw = executor::zfs(&[
+        "list", "-H", "-p",
+        "-o", "name,used,avail,refer,quota,reservation",
+        &q.name,
+    ])
+    .await?;
+    let line = raw
+        .lines()
+        .next()
+        .ok_or_else(|| ApiError::NotFound(format!("Dataset '{}' not found", q.name)))?;
     let c: Vec<&str> = line.split('\t').collect();
     Ok(Json(json!({
         "name":        c.first().unwrap_or(&""),
