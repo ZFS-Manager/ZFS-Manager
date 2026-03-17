@@ -1,0 +1,5 @@
+{
+  "name": "ZFS Nexus",
+  "description": "A modern ZFS management and monitoring dashboard for RAID systems, datasets, and ACLs.",
+  "requestFramePermissions": []
+}

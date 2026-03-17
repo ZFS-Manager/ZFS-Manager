@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Plus, 
   Search, 
@@ -10,6 +10,8 @@ import {
   Database,
   Camera,
   RefreshCw,
+  Layers,
+  LayoutDashboard,
   Zap,
   Cpu,
   ArrowUpRight,
@@ -17,23 +19,27 @@ import {
   Settings as SettingsIcon,
   ChevronRight,
   MoreHorizontal,
+  Lock,
+  Unlock,
   Terminal,
   Server,
   Key,
+  FileText,
   Info,
   AlertTriangle,
   XCircle,
   Thermometer,
   Clock,
-  CheckCircle2
+  CheckCircle2,
+  BarChart3
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Sidebar from './components/Sidebar';
 import DatasetList from './components/DatasetList';
 import ACLManager from './components/ACLManager';
-import type { ZFSPool, ZFSDataset, ZFSLog, DiskSmart } from './types';
+import StatCard from './components/StatCard';
+import { ZFSPool, ZFSDataset, DiskStat, ZFSLog, DiskSmart } from './types';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { getPools, getDatasets } from './api';
 
 // Mock Data
 const mockPools: ZFSPool[] = [
@@ -105,27 +111,6 @@ const generateMockStats = () => {
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [stats, setStats] = useState<any[]>(generateMockStats());
-  const [pools, setPools] = useState<ZFSPool[]>(mockPools);
-  const [datasets, setDatasets] = useState<ZFSDataset[]>(mockDatasets);
-
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [fetchedPools, fetchedDatasets] = await Promise.all([
-          getPools(),
-          getDatasets()
-        ]);
-        setPools(fetchedPools);
-        setDatasets(fetchedDatasets);
-      } catch (error) {
-        console.error("Failed to fetch ZFS data:", error);
-      }
-    };
-    
-    fetchData();
-    const interval = setInterval(fetchData, 10000); // Poll every 10 seconds
-    return () => clearInterval(interval);
-  }, []);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -234,7 +219,7 @@ export default function App() {
                   </button>
                 </div>
                 <div className="space-y-6">
-                  {pools.map((pool, i) => (
+                  {mockPools.map((pool, i) => (
                     <motion.div
                       key={pool.name}
                       initial={{ opacity: 0, x: 20 }}
@@ -457,7 +442,7 @@ export default function App() {
               </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              {pools.map((pool) => (
+              {mockPools.map((pool) => (
               <div key={pool.name} className="glass-panel p-8">
                 <div className="flex justify-between items-center mb-8">
                   <div className="flex items-center gap-4">
@@ -507,7 +492,7 @@ export default function App() {
           </div>
         );
       case 'datasets':
-        return <DatasetList datasets={datasets} />;
+        return <DatasetList datasets={mockDatasets} />;
       case 'snapshots':
         return (
           <div className="space-y-8">
@@ -626,7 +611,7 @@ export default function App() {
             <div className="glass-panel p-8">
               <h3 className="text-xl font-bold text-white mb-8">SMART Diagnostics</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {mockSmartData.map((smart) => (
+                {mockSmartData.map((smart, i) => (
                   <div key={smart.device} className="bg-white/5 p-6 rounded-2xl border border-white/5">
                     <div className="flex justify-between items-start mb-4">
                       <div className="p-2 bg-white/5 rounded-lg text-zfs-accent">

@@ -1,0 +1,18 @@
+﻿src/App.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/App.tsx(34,10): error TS1484: 'ZFSPool' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/App.tsx(34,19): error TS1484: 'ZFSDataset' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/App.tsx(34,31): error TS1484: 'ZFSLog' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/App.tsx(34,39): error TS1484: 'DiskSmart' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/App.tsx(629,44): error TS6133: 'i' is declared but its value is never read.
+src/components/ACLManager.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/components/ACLManager.tsx(3,10): error TS1484: 'ACLRule' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/components/ACLManager.tsx(7,17): error TS6133: 'setRules' is declared but its value is never read.
+src/components/DatasetList.tsx(1,1): error TS6133: 'React' is declared but its value is never read.
+src/components/DatasetList.tsx(2,10): error TS1484: 'ZFSDataset' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/components/DatasetList.tsx(3,51): error TS6133: 'Shield' is declared but its value is never read.
+src/components/DatasetList.tsx(3,59): error TS6133: 'Zap' is declared but its value is never read.
+src/components/PerformanceMonitor.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/components/PerformanceMonitor.tsx(3,10): error TS1484: 'DiskStat' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/components/Sidebar.tsx(1,1): error TS6133: 'React' is declared but its value is never read.
+src/components/StatCard.tsx(1,1): error TS6133: 'React' is declared but its value is never read.
+src/components/StatCard.tsx(2,10): error TS1484: 'LucideIcon' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.

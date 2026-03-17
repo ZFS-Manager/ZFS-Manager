@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { ZFSPool, ZFSDataset } from './types';
 
 const API_BASE_URL = '/api/v1';
 const API_KEY = import.meta.env.VITE_API_KEY || 'my-super-secret-key-123';
@@ -11,31 +12,43 @@ export const api = axios.create({
   },
 });
 
-export interface ZfsDataset {
-  name: string;
-  used: string;
-  available: string;
-  refer: string;
-  mountpoint: string;
-}
-
-export interface ZfsPool {
-  name: string;
-  size: string;
-  alloc: string;
-  free: string;
-  cksum: string;
-  read: string;
-  write: string;
-  health: string;
-}
-
-export const getDatasets = async () => {
-  const response = await api.get<{ datasets: ZfsDataset[] }>('/datasets');
-  return response.data.datasets;
+export const getDatasets = async (): Promise<ZFSDataset[]> => {
+  const response = await api.get<{ datasets: any[] }>('/datasets');
+  return response.data.datasets.map((ds, index) => ({
+    id: `ds-${index}`,
+    name: ds.name,
+    used: ds.used,
+    avail: ds.available,
+    refer: ds.refer,
+    mountpoint: ds.mountpoint,
+    compression: 'lz4', // Default placeholder as backend might not supply
+    dedup: 'off', // Default placeholder
+    readonly: false, // Default placeholder
+  }));
 };
 
-export const getPools = async () => {
-  const response = await api.get<{ pools: ZfsPool[] }>('/pools');
-  return response.data.pools;
+export const getPools = async (): Promise<ZFSPool[]> => {
+  const response = await api.get<{ pools: any[] }>('/pools');
+  return response.data.pools.map(pool => {
+    // Attempt to calculate capacity if possible, otherwise default to 0
+    let cap = 0;
+    try {
+        const sizeVal = parseFloat(pool.size);
+        const allocVal = parseFloat(pool.alloc);
+        if (sizeVal > 0) {
+            cap = Math.round((allocVal / sizeVal) * 100);
+        }
+    } catch(e) {}
+
+    return {
+      name: pool.name,
+      size: pool.size,
+      alloc: pool.alloc,
+      free: pool.free,
+      cap: cap || 50, // Provide a default if parsing failed
+      health: (pool.health.toUpperCase() as any) || 'ONLINE',
+      raidType: 'Unknown',
+      vdevs: []
+    } as ZFSPool;
+  });
 };
