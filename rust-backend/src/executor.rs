@@ -9,10 +9,10 @@ pub async fn zfs(args: &[&str]) -> Result<String, ApiError> {
 
 /// Run any `zpool` subcommand and return its stdout as a String.
 pub async fn zpool(args: &[&str]) -> Result<String, ApiError> {
-    run("zpool", args).await
+    command("zpool", args).await
 }
 
-async fn run(bin: &str, args: &[&str]) -> Result<String, ApiError> {
+pub async fn command(bin: &str, args: &[&str]) -> Result<String, ApiError> {
     debug!("Executing: {} {:?}", bin, args);
     let output = Command::new(bin).args(args).output().await?;
 

@@ -13,11 +13,11 @@ async fn get_system_stats() -> Result<Json<Value>, ApiError> {
     // For this demonstration, we'll use 'free' and 'uptime' if available, 
     // or just return some realistic system metrics if we're in a limited container.
     
-    let uptime = executor::command("uptime", &[]).await.unwrap_or_default();
-    let mem = executor::command("free", &["-b"]).await.unwrap_or_default();
+    let uptime = executor::command("uptime", &[]).await.unwrap_or_else(|_| String::new());
+    let mem = executor::command("free", &["-b"]).await.unwrap_or_else(|_| String::new());
     
     // Attempt to get ARC stats if on Linux
-    let arc = executor::command("cat", &["/proc/spl/kstat/zfs/arcstats"]).await.unwrap_or_default();
+    let arc = executor::command("cat", &["/proc/spl/kstat/zfs/arcstats"]).await.unwrap_or_else(|_| String::new());
 
     Ok(Json(json!({
         "uptime": uptime.trim(),
