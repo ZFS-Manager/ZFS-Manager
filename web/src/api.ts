@@ -1,6 +1,10 @@
-
 const API_BASE_URL = '/api/v1';
-const API_KEY = import.meta.env.VITE_API_KEY || 'my-super-secret-key-123';
+let API_KEY = localStorage.getItem('zfs_access_token') || import.meta.env.VITE_API_KEY || 'admin123';
+
+export const setApiKey = (key: string) => {
+  API_KEY = key;
+  localStorage.setItem('zfs_access_token', key);
+};
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = {

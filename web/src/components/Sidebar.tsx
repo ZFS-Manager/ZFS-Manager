@@ -4,8 +4,6 @@ import {
   Database, 
   Layers, 
   Camera, 
-  RefreshCw, 
-  ShieldCheck, 
   Settings, 
   HardDrive,
   Activity,
@@ -13,24 +11,26 @@ import {
   FileText
 } from 'lucide-react';
 import { motion } from 'motion/react';
-
-interface SidebarProps {
-  activeTab: string;
-  setActiveTab: (tab: string) => void;
-}
+import { NavLink, useNavigate } from 'react-router-dom';
 
 const menuItems = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'stats', label: 'Performance', icon: Activity },
-  { id: 'pools', label: 'Storage Pools', icon: Database },
-  { id: 'datasets', label: 'Datasets & Volumes', icon: Layers },
-  { id: 'properties', label: 'Properties', icon: Settings },
-  { id: 'snapshots', label: 'Snapshots', icon: Camera },
-  { id: 'logs', label: 'System Logs', icon: FileText },
-  { id: 'settings', label: 'App Settings', icon: Settings },
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
+  { id: 'stats', label: 'Performance', icon: Activity, path: '/stats' },
+  { id: 'pools', label: 'Storage Pools', icon: Database, path: '/pools' },
+  { id: 'datasets', label: 'Datasets & Volumes', icon: Layers, path: '/datasets' },
+  { id: 'snapshots', label: 'Snapshots', icon: Camera, path: '/snapshots' },
+  { id: 'logs', label: 'System Logs', icon: FileText, path: '/logs' },
+  { id: 'settings', label: 'App Settings', icon: Settings, path: '/settings' },
 ];
 
-export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
+export default function Sidebar() {
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    localStorage.removeItem('zfs_access_token');
+    window.location.href = '/login';
+  };
+
   return (
     <div className="glass-sidebar w-72 flex flex-col p-6">
       <div className="flex items-center gap-4 px-4 mb-12">
@@ -42,30 +42,39 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
 
       <nav className="flex-1 flex flex-col gap-2">
         {menuItems.map((item) => (
-          <motion.div
+          <NavLink
             key={item.id}
-            whileHover={{ x: 4 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => setActiveTab(item.id)}
-            className={`nav-item group ${activeTab === item.id ? 'nav-item-active' : ''}`}
+            to={item.path}
+            className={({ isActive }) => 
+              `nav-item group flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+                isActive ? 'nav-item-active bg-zfs-accent/10 border border-zfs-accent/20' : 'text-white/40 hover:bg-white/5 hover:text-white/60'
+              }`
+            }
           >
-            <item.icon size={20} className={activeTab === item.id ? 'text-zfs-accent' : 'text-white/40 group-hover:text-white/60'} />
-            <span className="font-medium">{item.label}</span>
-            {activeTab === item.id && (
-              <motion.div 
-                layoutId="active-pill"
-                className="ml-auto w-1.5 h-1.5 rounded-full bg-zfs-accent"
-              />
+            {({ isActive }) => (
+              <>
+                <item.icon size={20} className={isActive ? 'text-zfs-accent' : 'text-inherit'} />
+                <span className={`font-medium ${isActive ? 'text-white' : ''}`}>{item.label}</span>
+                {isActive && (
+                  <motion.div 
+                    layoutId="active-pill"
+                    className="ml-auto w-1.5 h-1.5 rounded-full bg-zfs-accent"
+                  />
+                )}
+              </>
             )}
-          </motion.div>
+          </NavLink>
         ))}
       </nav>
 
       <div className="mt-auto pt-6 border-t border-white/[0.05]">
-        <div className="nav-item group text-white/40 hover:text-rose-400 hover:bg-rose-500/10">
+        <button 
+          onClick={handleLogout}
+          className="w-full nav-item group text-white/40 hover:text-rose-400 hover:bg-rose-500/10 flex items-center gap-3 px-4 py-3 rounded-xl transition-all"
+        >
           <LogOut size={20} />
           <span className="font-medium">Logout</span>
-        </div>
+        </button>
       </div>
     </div>
   );
