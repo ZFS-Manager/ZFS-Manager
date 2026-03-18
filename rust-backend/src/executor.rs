@@ -4,7 +4,7 @@ use tracing::debug;
 
 /// Run any `zfs` subcommand and return its stdout as a String.
 pub async fn zfs(args: &[&str]) -> Result<String, ApiError> {
-    run("zfs", args).await
+    command("zfs", args).await
 }
 
 /// Run any `zpool` subcommand and return its stdout as a String.
