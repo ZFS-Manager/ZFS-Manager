@@ -1,56 +1,94 @@
-import { useState, useEffect, useCallback } from 'react';
-import {
-  Plus,
-  Search,
-  Bell,
-  User,
-  Activity,
-  HardDrive,
-  ShieldCheck,
+import React, { useState, useEffect } from 'react';
+import { 
+  Plus, 
+  Search, 
+  Bell, 
+  User, 
+  Activity, 
+  HardDrive, 
+  ShieldCheck, 
   Database,
   Camera,
   RefreshCw,
+  Layers,
+  LayoutDashboard,
   Zap,
+  Cpu,
   ArrowUpRight,
   ArrowDownRight,
   Settings as SettingsIcon,
   ChevronRight,
   MoreHorizontal,
+  Lock,
+  Unlock,
   Terminal,
   Server,
   Key,
+  FileText,
   Info,
   AlertTriangle,
   XCircle,
   Thermometer,
   Clock,
   CheckCircle2,
-  Layers,
-  Trash2,
-  Play,
-  StopCircle,
+  BarChart3
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Sidebar from './components/Sidebar';
 import DatasetList from './components/DatasetList';
 import ACLManager from './components/ACLManager';
-import type { ZFSPool, ZFSDataset, ZFSLog, DiskSmart } from './types';
-import type { Snapshot } from './api';
+import StatCard from './components/StatCard';
+import { ZFSPool, ZFSDataset, DiskStat, ZFSLog, DiskSmart } from './types';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import {
-  getPools, getDatasets, getSnapshots,
-  createSnapshot, deleteSnapshot, rollbackSnapshot,
-  startScrub, stopScrub, getPoolStatus,
-} from './api';
 
-// ─── Mock / Static Data (Non-ZFS, informational) ──────────────────────────────
+// Mock Data
+const mockPools: ZFSPool[] = [
+  {
+    name: 'tank',
+    size: '12.4TB',
+    alloc: '5.2TB',
+    free: '7.2TB',
+    cap: 42,
+    health: 'ONLINE',
+    raidType: 'RAID-Z2',
+    vdevs: [
+      { id: 'vdev-1', name: 'raidz2-0', type: 'raidz2', status: 'ONLINE', disks: ['sda', 'sdb', 'sdc', 'sdd', 'sde', 'sdf'] }
+    ]
+  },
+  {
+    name: 'fast-pool',
+    size: '1.8TB',
+    alloc: '450GB',
+    free: '1.35TB',
+    cap: 25,
+    health: 'ONLINE',
+    raidType: 'Mirror',
+    vdevs: [
+      { id: 'vdev-2', name: 'mirror-0', type: 'mirror', status: 'ONLINE', disks: ['nvme0n1', 'nvme1n1'] }
+    ]
+  }
+];
+
+const mockDatasets: ZFSDataset[] = [
+  { id: '1', name: 'tank/data', used: '2.4TB', avail: '4.8TB', refer: '2.4TB', mountpoint: '/mnt/tank/data', compression: 'lz4', dedup: 'off', readonly: false },
+  { id: '2', name: 'tank/backups', used: '1.8TB', avail: '5.4TB', refer: '1.8TB', mountpoint: '/mnt/tank/backups', compression: 'zstd', dedup: 'off', readonly: true },
+  { id: '3', name: 'fast-pool/vms', used: '320GB', avail: '1.48TB', refer: '320GB', mountpoint: '/mnt/fast/vms', compression: 'lz4', dedup: 'off', readonly: false },
+  { id: '4', name: 'fast-pool/docker', used: '85GB', avail: '1.71TB', refer: '85GB', mountpoint: '/var/lib/docker', compression: 'lz4', dedup: 'off', readonly: false },
+];
 
 const mockLogs: ZFSLog[] = [
-  { id: '1', timestamp: new Date().toLocaleString(), level: 'info', message: 'ZFS Manager UI started.', pool: '' },
+  { id: '1', timestamp: '2026-03-06 14:20:12', level: 'info', message: 'Pool "tank" scrub started.', pool: 'tank' },
+  { id: '2', timestamp: '2026-03-06 14:25:45', level: 'info', message: 'Dataset "tank/data" property "compression" set to "lz4".', pool: 'tank' },
+  { id: '3', timestamp: '2026-03-06 14:30:00', level: 'warning', message: 'Disk "sde" reported high temperature (45°C).', pool: 'tank' },
+  { id: '4', timestamp: '2026-03-06 14:32:10', level: 'info', message: 'Snapshot "tank/data@hourly-1" created.', pool: 'tank' },
+  { id: '5', timestamp: '2026-03-06 14:35:00', level: 'error', message: 'Replication task "tank/data → remote" failed: Connection timed out.', pool: 'tank' },
 ];
 
 const mockSmartData: DiskSmart[] = [
-  { device: 'sda', model: 'Unknown', serial: '-', temperature: 0, powerOnHours: 0, status: 'PASSED', reallocatedSectors: 0 },
+  { device: 'sda', model: 'Samsung SSD 870', serial: 'S5YJN123456', temperature: 32, powerOnHours: 12450, status: 'PASSED', reallocatedSectors: 0 },
+  { device: 'sdb', model: 'Samsung SSD 870', serial: 'S5YJN123457', temperature: 33, powerOnHours: 12452, status: 'PASSED', reallocatedSectors: 0 },
+  { device: 'sdc', model: 'WD Red Pro', serial: 'WD-WCC123456', temperature: 38, powerOnHours: 25600, status: 'PASSED', reallocatedSectors: 0 },
+  { device: 'sdd', model: 'WD Red Pro', serial: 'WD-WCC123457', temperature: 39, powerOnHours: 25605, status: 'PASSED', reallocatedSectors: 0 },
 ];
 
 const generateMockStats = () => {
@@ -58,7 +96,7 @@ const generateMockStats = () => {
   const now = new Date();
   for (let i = 0; i < 20; i++) {
     stats.push({
-      timestamp: new Date(now.getTime() - (20 - i) * 3000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: new Date(now.getTime() - (20 - i) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       read: Math.floor(Math.random() * 500) + 100,
       write: Math.floor(Math.random() * 300) + 50,
       iops: Math.floor(Math.random() * 5000) + 1000,
@@ -70,93 +108,10 @@ const generateMockStats = () => {
   return stats;
 };
 
-// ─── App ──────────────────────────────────────────────────────────────────────
-
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [stats, setStats] = useState<any[]>(generateMockStats());
 
-  // Real data from backend
-  const [pools, setPools] = useState<ZFSPool[]>([]);
-  const [datasets, setDatasets] = useState<ZFSDataset[]>([]);
-  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
-  const [scrubStatus, setScrubStatus] = useState<Record<string, string>>({});
-  const [logs, setLogs] = useState<ZFSLog[]>(mockLogs);
-
-  // UI state
-  const [loadingPools, setLoadingPools] = useState(true);
-  const [loadingDatasets, setLoadingDatasets] = useState(true);
-  const [loadingSnapshots, setLoadingSnapshots] = useState(true);
-  const [apiError, setApiError] = useState<string | null>(null);
-
-  // New snapshot form
-  const [newSnapName, setNewSnapName] = useState('');
-  const [snapLoading, setSnapLoading] = useState(false);
-
-  const addLog = useCallback((level: 'info' | 'warning' | 'error', message: string, pool?: string) => {
-    const entry: ZFSLog = {
-      id: Date.now().toString(),
-      timestamp: new Date().toLocaleString(),
-      level,
-      message,
-      pool: pool || '',
-    };
-    setLogs(prev => [entry, ...prev].slice(0, 100));
-  }, []);
-
-  // Fetch pools
-  const fetchPools = useCallback(async () => {
-    try {
-      const data = await getPools();
-      setPools(data);
-      setApiError(null);
-    } catch (e: any) {
-      setApiError(e?.response?.data?.error || e?.message || 'Failed to fetch pools');
-      addLog('error', `Failed to fetch pools: ${e?.message}`, '');
-    } finally {
-      setLoadingPools(false);
-    }
-  }, [addLog]);
-
-  // Fetch datasets
-  const fetchDatasets = useCallback(async () => {
-    try {
-      const data = await getDatasets();
-      setDatasets(data);
-    } catch (e: any) {
-      addLog('error', `Failed to fetch datasets: ${e?.message}`, '');
-    } finally {
-      setLoadingDatasets(false);
-    }
-  }, [addLog]);
-
-  // Fetch snapshots
-  const fetchSnapshots = useCallback(async () => {
-    try {
-      const data = await getSnapshots();
-      setSnapshots(data);
-    } catch (e: any) {
-      addLog('error', `Failed to fetch snapshots: ${e?.message}`, '');
-    } finally {
-      setLoadingSnapshots(false);
-    }
-  }, [addLog]);
-
-  // Initial load + polling
-  useEffect(() => {
-    fetchPools();
-    fetchDatasets();
-    fetchSnapshots();
-
-    const dataInterval = setInterval(() => {
-      fetchPools();
-      fetchDatasets();
-    }, 15000);
-
-    return () => clearInterval(dataInterval);
-  }, [fetchPools, fetchDatasets, fetchSnapshots]);
-
-  // Stats mock real-time ticker
   useEffect(() => {
     const interval = setInterval(() => {
       setStats(prev => {
@@ -175,102 +130,19 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // ─── Scrub Actions ────────────────────────────────────────────────────────
-
-  const handleStartScrub = async (poolName: string) => {
-    try {
-      setScrubStatus(prev => ({ ...prev, [poolName]: 'starting' }));
-      await startScrub(poolName);
-      addLog('info', `Scrub started on pool '${poolName}'`, poolName);
-      setScrubStatus(prev => ({ ...prev, [poolName]: 'running' }));
-    } catch (e: any) {
-      addLog('error', `Failed to start scrub on '${poolName}': ${e?.message}`, poolName);
-      setScrubStatus(prev => ({ ...prev, [poolName]: 'error' }));
-    }
-  };
-
-  const handleStopScrub = async (poolName: string) => {
-    try {
-      await stopScrub(poolName);
-      addLog('info', `Scrub stopped on pool '${poolName}'`, poolName);
-      setScrubStatus(prev => ({ ...prev, [poolName]: 'stopped' }));
-    } catch (e: any) {
-      addLog('error', `Failed to stop scrub on '${poolName}': ${e?.message}`, poolName);
-    }
-  };
-
-  const handleGetPoolStatus = async (poolName: string) => {
-    try {
-      const status = await getPoolStatus(poolName);
-      addLog('info', `Pool '${poolName}' status retrieved.`, poolName);
-      alert(`Pool Status: ${poolName}\n\n${status}`);
-    } catch (e: any) {
-      addLog('error', `Failed to get status for '${poolName}': ${e?.message}`, poolName);
-    }
-  };
-
-  // ─── Snapshot Actions ─────────────────────────────────────────────────────
-
-  const handleCreateSnapshot = async () => {
-    if (!newSnapName.trim()) return;
-    setSnapLoading(true);
-    try {
-      await createSnapshot(newSnapName.trim());
-      addLog('info', `Snapshot '${newSnapName}' created.`);
-      setNewSnapName('');
-      await fetchSnapshots();
-    } catch (e: any) {
-      addLog('error', `Failed to create snapshot '${newSnapName}': ${e?.message}`);
-    } finally {
-      setSnapLoading(false);
-    }
-  };
-
-  const handleDeleteSnapshot = async (name: string) => {
-    if (!confirm(`Delete snapshot '${name}'?`)) return;
-    try {
-      await deleteSnapshot(name);
-      addLog('info', `Snapshot '${name}' deleted.`);
-      await fetchSnapshots();
-    } catch (e: any) {
-      addLog('error', `Failed to delete snapshot '${name}': ${e?.message}`);
-    }
-  };
-
-  const handleRollback = async (name: string) => {
-    if (!confirm(`Rollback to snapshot '${name}'? This will discard changes since this snapshot.`)) return;
-    try {
-      await rollbackSnapshot(name);
-      addLog('warning', `Rolled back to '${name}'.`);
-      await fetchDatasets();
-    } catch (e: any) {
-      addLog('error', `Failed to rollback to '${name}': ${e?.message}`);
-    }
-  };
-
-  // ─── Tab Content ──────────────────────────────────────────────────────────
-
   const renderContent = () => {
     const currentStats = stats[stats.length - 1] || { read: 0, write: 0, iops: 0 };
 
     switch (activeTab) {
-      // ── Dashboard ──────────────────────────────────────────────────────────
       case 'dashboard':
         return (
           <div className="space-y-8">
-            {apiError && (
-              <div className="glass-panel p-4 border-rose-500/30 bg-rose-500/5 flex items-center gap-3 text-rose-400">
-                <XCircle size={20} />
-                <span className="text-sm font-medium">{apiError} — running in demo mode</span>
-              </div>
-            )}
-
             {/* Top Stats */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
               {[
-                { label: 'Total Pools', value: loadingPools ? '…' : String(pools.length), icon: Database, color: 'text-blue-400', trend: 'Live', up: true },
-                { label: 'Datasets', value: loadingDatasets ? '…' : String(datasets.length), icon: Layers, color: 'text-emerald-400', trend: 'Live', up: true },
-                { label: 'Snapshots', value: loadingSnapshots ? '…' : String(snapshots.length), icon: Camera, color: 'text-indigo-400', trend: 'Live', up: true },
+                { label: 'Total Capacity', value: '14.2 TB', icon: Database, color: 'text-blue-400', trend: '+2.4%', up: true },
+                { label: 'CPU Usage', value: '12.4%', icon: Cpu, color: 'text-emerald-400', trend: '-1.2%', up: false },
+                { label: 'System Health', value: 'Optimal', icon: ShieldCheck, color: 'text-indigo-400', trend: 'Stable', up: true },
                 { label: 'IOPS', value: `${(currentStats.iops / 1000).toFixed(1)}k`, icon: Zap, color: 'text-amber-400', trend: '+12%', up: true },
                 { label: 'Read Speed', value: `${currentStats.read} MB/s`, icon: ArrowDownRight, color: 'text-blue-500', trend: 'Live', up: true },
                 { label: 'Write Speed', value: `${currentStats.write} MB/s`, icon: ArrowUpRight, color: 'text-emerald-500', trend: 'Live', up: true },
@@ -306,69 +178,54 @@ export default function App() {
                   <div className="flex justify-between items-center mb-8">
                     <div>
                       <h3 className="text-xl font-bold text-white">System Overview</h3>
-                      <p className="text-sm text-white/40">Pool Health Summary</p>
+                      <p className="text-sm text-white/40">Nexus ZFS Node-01 Status</p>
                     </div>
                     <div className="flex gap-2">
                       <span className="status-badge status-online">Operational</span>
                     </div>
                   </div>
-                  {loadingPools ? (
-                    <div className="text-white/30 text-sm text-center py-8">Loading pools…</div>
-                  ) : pools.length === 0 ? (
-                    <div className="text-white/30 text-sm text-center py-8">No pools found</div>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {pools.map(pool => (
-                        <div key={pool.name} className="bg-white/5 p-6 rounded-2xl border border-white/5">
-                          <div className="flex items-center justify-between mb-4">
-                            <div>
-                              <p className="font-bold text-white">{pool.name}</p>
-                              <p className="text-[10px] text-white/30 uppercase tracking-widest">{pool.raidType}</p>
-                            </div>
-                            <span className={`status-badge ${pool.health === 'ONLINE' ? 'status-online' : pool.health === 'DEGRADED' ? 'status-warning' : 'status-error'}`}>
-                              {pool.health}
-                            </span>
-                          </div>
-                          <div className="space-y-2">
-                            <div className="flex justify-between text-xs">
-                              <span className="text-white/40 font-bold uppercase tracking-widest">Usage</span>
-                              <span className="text-white font-bold">{pool.cap}%</span>
-                            </div>
-                            <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
-                              <motion.div
-                                initial={{ width: 0 }}
-                                animate={{ width: `${pool.cap}%` }}
-                                className={`h-full rounded-full ${pool.cap > 80 ? 'bg-rose-500' : pool.cap > 60 ? 'bg-amber-500' : 'bg-gradient-to-r from-zfs-accent to-indigo-500'}`}
-                              />
-                            </div>
-                            <div className="flex justify-between text-[10px] font-bold text-white/20 uppercase tracking-widest">
-                              <span>{pool.alloc} Used</span>
-                              <span>{pool.free} Free</span>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="bg-white/5 p-6 rounded-2xl border border-white/5">
+                      <h4 className="text-xs font-bold text-white/40 uppercase tracking-widest mb-4">Uptime</h4>
+                      <p className="text-2xl font-bold text-white">12d 4h 32m</p>
+                      <p className="text-[10px] text-white/20 mt-1">Last reboot: 2026-02-22</p>
                     </div>
-                  )}
+                    <div className="bg-white/5 p-6 rounded-2xl border border-white/5">
+                      <h4 className="text-xs font-bold text-white/40 uppercase tracking-widest mb-4">Load Average</h4>
+                      <div className="flex gap-4">
+                        <div>
+                          <p className="text-lg font-bold text-white">0.42</p>
+                          <p className="text-[10px] text-white/20 mt-1">1 min</p>
+                        </div>
+                        <div>
+                          <p className="text-lg font-bold text-white">0.38</p>
+                          <p className="text-[10px] text-white/20 mt-1">5 min</p>
+                        </div>
+                        <div>
+                          <p className="text-lg font-bold text-white">0.31</p>
+                          <p className="text-[10px] text-white/20 mt-1">15 min</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
               <div className="space-y-8">
                 <div className="flex justify-between items-center">
                   <h3 className="text-xl font-bold text-white">Active Pools</h3>
-                  <button onClick={fetchPools} className="p-2 bg-white/5 rounded-lg text-white/40 hover:text-white transition-all">
-                    <RefreshCw size={20} />
+                  <button className="p-2 bg-white/5 rounded-lg text-white/40 hover:text-white transition-all">
+                    <Plus size={20} />
                   </button>
                 </div>
                 <div className="space-y-6">
-                  {(pools.length > 0 ? pools : []).map((pool, i) => (
+                  {mockPools.map((pool, i) => (
                     <motion.div
                       key={pool.name}
                       initial={{ opacity: 0, x: 20 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: i * 0.1 }}
                       className="glass-panel p-6 group cursor-pointer"
-                      onClick={() => handleGetPoolStatus(pool.name)}
                     >
                       <div className="flex justify-between items-start mb-6">
                         <div className="flex items-center gap-4">
@@ -377,21 +234,21 @@ export default function App() {
                           </div>
                           <div>
                             <p className="text-lg font-bold text-white">{pool.name}</p>
-                            <span className={`status-badge ${pool.health === 'ONLINE' ? 'status-online' : 'status-error'}`}>{pool.health}</span>
+                            <span className="status-badge status-online">Online</span>
                           </div>
                         </div>
                         <button className="text-white/20 hover:text-white">
                           <MoreHorizontal size={20} />
                         </button>
                       </div>
-
+                      
                       <div className="space-y-4">
                         <div className="flex justify-between text-xs">
                           <span className="text-white/40 font-bold uppercase tracking-widest">Usage</span>
                           <span className="text-white font-bold">{pool.cap}%</span>
                         </div>
                         <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
-                          <motion.div
+                          <motion.div 
                             initial={{ width: 0 }}
                             animate={{ width: `${pool.cap}%` }}
                             className="h-full bg-gradient-to-r from-zfs-accent to-indigo-500 rounded-full"
@@ -411,30 +268,17 @@ export default function App() {
                     <div className="w-10 h-10 bg-zfs-accent/20 rounded-xl flex items-center justify-center text-zfs-accent">
                       <ShieldCheck size={20} />
                     </div>
-                    <h4 className="font-bold text-white">Quick Scrub</h4>
+                    <h4 className="font-bold text-white">Scrub Status</h4>
                   </div>
-                  <p className="text-sm text-white/60 mb-4">Start a data integrity verification on all pools.</p>
-                  <div className="flex gap-2">
-                    {pools.map(pool => (
-                      <button
-                        key={pool.name}
-                        onClick={() => scrubStatus[pool.name] === 'running' ? handleStopScrub(pool.name) : handleStartScrub(pool.name)}
-                        className={`flex-1 apple-button !py-2 text-xs ${scrubStatus[pool.name] === 'running' ? 'apple-button-secondary' : 'apple-button-primary'}`}
-                      >
-                        {scrubStatus[pool.name] === 'running' ? `Stop ${pool.name}` : `Scrub ${pool.name}`}
-                      </button>
-                    ))}
-                    {pools.length === 0 && (
-                      <span className="text-white/30 text-xs">No pools available</span>
-                    )}
-                  </div>
+                  <p className="text-sm text-white/60 mb-4">Last scrub finished 2 days ago. No data errors detected.</p>
+                  <button className="w-full apple-button apple-button-primary !py-2 text-xs">
+                    Start New Scrub
+                  </button>
                 </div>
               </div>
             </div>
           </div>
         );
-
-      // ── Stats ──────────────────────────────────────────────────────────────
       case 'stats':
         return (
           <div className="space-y-8">
@@ -444,11 +288,17 @@ export default function App() {
                 <div className="flex justify-between items-center mb-8">
                   <div>
                     <h3 className="text-xl font-bold text-white">Throughput</h3>
-                    <p className="text-sm text-white/40">Real-time I/O performance</p>
+                    <p className="text-sm text-white/40">Real-time I/O performance monitoring</p>
                   </div>
                   <div className="flex gap-4">
-                    <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-zfs-accent" /><span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Read</span></div>
-                    <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-emerald-400" /><span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Write</span></div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-zfs-accent" />
+                      <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Read</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-emerald-400" />
+                      <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Write</span>
+                    </div>
                   </div>
                 </div>
                 <div className="h-[250px] w-full">
@@ -456,12 +306,12 @@ export default function App() {
                     <AreaChart data={stats}>
                       <defs>
                         <linearGradient id="colorRead" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3} />
-                          <stop offset="95%" stopColor="#3B82F6" stopOpacity={0} />
+                          <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
                         </linearGradient>
                         <linearGradient id="colorWrite" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#10B981" stopOpacity={0.3} />
-                          <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
+                          <stop offset="5%" stopColor="#10B981" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#10B981" stopOpacity={0}/>
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
@@ -482,15 +332,17 @@ export default function App() {
                     <h3 className="text-xl font-bold text-white">IOPS</h3>
                     <p className="text-sm text-white/40">Input/Output operations per second</p>
                   </div>
-                  <div className="p-2 bg-amber-500/10 rounded-lg text-amber-400"><Zap size={20} /></div>
+                  <div className="p-2 bg-amber-500/10 rounded-lg text-amber-400">
+                    <Zap size={20} />
+                  </div>
                 </div>
                 <div className="h-[250px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={stats}>
                       <defs>
                         <linearGradient id="colorIops" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.3} />
-                          <stop offset="95%" stopColor="#F59E0B" stopOpacity={0} />
+                          <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#F59E0B" stopOpacity={0}/>
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
@@ -503,7 +355,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Cache */}
+              {/* Cache Performance */}
               <div className="glass-panel p-8">
                 <div className="flex justify-between items-center mb-8">
                   <div>
@@ -511,8 +363,14 @@ export default function App() {
                     <p className="text-sm text-white/40">ARC and L2ARC hit rates</p>
                   </div>
                   <div className="flex gap-4">
-                    <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-indigo-400" /><span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">ARC Hit</span></div>
-                    <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-violet-400" /><span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">L2ARC Hit</span></div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-indigo-400" />
+                      <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">ARC Hit</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-violet-400" />
+                      <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">L2ARC Hit</span>
+                    </div>
                   </div>
                 </div>
                 <div className="h-[250px] w-full">
@@ -520,12 +378,12 @@ export default function App() {
                     <AreaChart data={stats}>
                       <defs>
                         <linearGradient id="colorArc" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#818CF8" stopOpacity={0.3} />
-                          <stop offset="95%" stopColor="#818CF8" stopOpacity={0} />
+                          <stop offset="5%" stopColor="#818CF8" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#818CF8" stopOpacity={0}/>
                         </linearGradient>
                         <linearGradient id="colorL2arc" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#A78BFA" stopOpacity={0.3} />
-                          <stop offset="95%" stopColor="#A78BFA" stopOpacity={0} />
+                          <stop offset="5%" stopColor="#A78BFA" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#A78BFA" stopOpacity={0}/>
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
@@ -546,15 +404,17 @@ export default function App() {
                     <h3 className="text-xl font-bold text-white">Latency</h3>
                     <p className="text-sm text-white/40">Average I/O response time (ms)</p>
                   </div>
-                  <div className="p-2 bg-rose-500/10 rounded-lg text-rose-400"><Clock size={20} /></div>
+                  <div className="p-2 bg-rose-500/10 rounded-lg text-rose-400">
+                    <Clock size={20} />
+                  </div>
                 </div>
                 <div className="h-[250px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={stats}>
                       <defs>
                         <linearGradient id="colorLatency" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#FB7185" stopOpacity={0.3} />
-                          <stop offset="95%" stopColor="#FB7185" stopOpacity={0} />
+                          <stop offset="5%" stopColor="#FB7185" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#FB7185" stopOpacity={0}/>
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
@@ -569,96 +429,70 @@ export default function App() {
             </div>
           </div>
         );
-
-      // ── Pools ──────────────────────────────────────────────────────────────
       case 'pools':
         return (
           <div className="space-y-8">
             <div className="flex justify-between items-center">
               <div>
                 <h2 className="text-3xl font-bold text-white">Storage Pools</h2>
-                <p className="text-white/40">Manage your ZFS storage pools</p>
+                <p className="text-white/40">Manage your ZFS storage pools and vdevs</p>
               </div>
-              <button onClick={fetchPools} className="apple-button apple-button-secondary">
-                <RefreshCw size={18} /> Refresh
+              <button className="apple-button apple-button-primary">
+                <Plus size={20} /> Create New Pool
               </button>
             </div>
-            {loadingPools ? (
-              <div className="glass-panel p-12 text-center text-white/30">Loading pools…</div>
-            ) : pools.length === 0 ? (
-              <div className="glass-panel p-12 text-center text-white/30">No pools found. The backend may not be running.</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                {pools.map(pool => (
-                  <div key={pool.name} className="glass-panel p-8">
-                    <div className="flex justify-between items-center mb-8">
-                      <div className="flex items-center gap-4">
-                        <div className="w-14 h-14 bg-zfs-accent/10 rounded-2xl flex items-center justify-center text-zfs-accent">
-                          <Database size={28} />
-                        </div>
-                        <div>
-                          <h2 className="text-2xl font-bold text-white">{pool.name}</h2>
-                          <p className="text-sm text-white/40">{pool.raidType} • {pool.size}</p>
-                        </div>
-                      </div>
-                      <span className={`status-badge ${pool.health === 'ONLINE' ? 'status-online' : pool.health === 'DEGRADED' ? 'status-warning' : 'status-error'}`}>{pool.health}</span>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {mockPools.map((pool) => (
+              <div key={pool.name} className="glass-panel p-8">
+                <div className="flex justify-between items-center mb-8">
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 bg-zfs-accent/10 rounded-2xl flex items-center justify-center text-zfs-accent">
+                      <Database size={28} />
                     </div>
-
-                    <div className="space-y-6">
-                      <div className="grid grid-cols-3 gap-4">
-                        {[
-                          { label: 'Used', value: pool.alloc },
-                          { label: 'Free', value: pool.free },
-                          { label: 'Total', value: pool.size },
-                        ].map(item => (
-                          <div key={item.label} className="bg-white/5 p-4 rounded-2xl">
-                            <p className="text-[10px] font-bold text-white/20 uppercase tracking-widest mb-1">{item.label}</p>
-                            <p className="text-lg font-bold text-white">{item.value}</p>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="space-y-2">
-                        <div className="flex justify-between text-xs">
-                          <span className="text-white/40 font-bold uppercase tracking-widest">Capacity</span>
-                          <span className="text-white font-bold">{pool.cap}%</span>
-                        </div>
-                        <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
-                          <motion.div
-                            initial={{ width: 0 }}
-                            animate={{ width: `${pool.cap}%` }}
-                            className={`h-full rounded-full ${pool.cap > 80 ? 'bg-rose-500' : pool.cap > 60 ? 'bg-amber-500' : 'bg-gradient-to-r from-zfs-accent to-indigo-500'}`}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex gap-3 pt-2">
-                        <button
-                          onClick={() => scrubStatus[pool.name] === 'running' ? handleStopScrub(pool.name) : handleStartScrub(pool.name)}
-                          className={`flex-1 apple-button !py-2 text-xs flex items-center gap-2 ${scrubStatus[pool.name] === 'running' ? 'apple-button-secondary' : 'apple-button-primary'}`}
-                        >
-                          {scrubStatus[pool.name] === 'running' ? <><StopCircle size={14} /> Stop Scrub</> : <><Play size={14} /> Start Scrub</>}
-                        </button>
-                        <button
-                          onClick={() => handleGetPoolStatus(pool.name)}
-                          className="apple-button apple-button-secondary !py-2 text-xs"
-                        >
-                          <Activity size={14} /> Status
-                        </button>
-                      </div>
+                    <div>
+                      <h2 className="text-2xl font-bold text-white">{pool.name}</h2>
+                      <p className="text-sm text-white/40">{pool.raidType} • {pool.size}</p>
                     </div>
                   </div>
-                ))}
+                  <span className="status-badge status-online">Online</span>
+                </div>
+                
+                <div className="space-y-6">
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="bg-white/5 p-4 rounded-2xl">
+                      <p className="text-[10px] font-bold text-white/20 uppercase tracking-widest mb-1">Used</p>
+                      <p className="text-lg font-bold text-white">{pool.alloc}</p>
+                    </div>
+                    <div className="bg-white/5 p-4 rounded-2xl">
+                      <p className="text-[10px] font-bold text-white/20 uppercase tracking-widest mb-1">Free</p>
+                      <p className="text-lg font-bold text-white">{pool.free}</p>
+                    </div>
+                    <div className="bg-white/5 p-4 rounded-2xl">
+                      <p className="text-[10px] font-bold text-white/20 uppercase tracking-widest mb-1">Cap</p>
+                      <p className="text-lg font-bold text-white">{pool.cap}%</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <h4 className="text-xs font-bold text-white/40 uppercase tracking-widest">Topology</h4>
+                    {pool.vdevs.map(vdev => (
+                      <div key={vdev.id} className="bg-white/5 p-4 rounded-2xl flex justify-between items-center">
+                        <div className="flex items-center gap-3">
+                          <HardDrive size={16} className="text-white/40" />
+                          <span className="text-sm font-medium">{vdev.name}</span>
+                        </div>
+                        <span className="text-[10px] font-bold text-emerald-400 uppercase">{vdev.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
-            )}
+            ))}
+            </div>
           </div>
         );
-
-      // ── Datasets ───────────────────────────────────────────────────────────
       case 'datasets':
-        return <DatasetList datasets={datasets} />;
-
-      // ── Snapshots ──────────────────────────────────────────────────────────
+        return <DatasetList datasets={mockDatasets} />;
       case 'snapshots':
         return (
           <div className="space-y-8">
@@ -667,190 +501,122 @@ export default function App() {
                 <h2 className="text-3xl font-bold text-white">Snapshots</h2>
                 <p className="text-white/40">Point-in-time recovery and scheduling</p>
               </div>
+              <button className="apple-button apple-button-primary">
+                <Camera size={20} /> Create Snapshot
+              </button>
             </div>
-
-            {/* Create Snapshot */}
-            <div className="glass-panel p-6">
-              <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-3">
-                <Camera size={20} className="text-zfs-accent" /> Create Snapshot
-              </h3>
-              <div className="flex gap-4">
-                <input
-                  type="text"
-                  placeholder="e.g. tank/data@manual-2026-03-17"
-                  value={newSnapName}
-                  onChange={e => setNewSnapName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleCreateSnapshot()}
-                  className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-zfs-accent/50"
-                />
-                <button
-                  onClick={handleCreateSnapshot}
-                  disabled={snapLoading || !newSnapName.trim()}
-                  className="apple-button apple-button-primary disabled:opacity-40"
-                >
-                  {snapLoading ? <RefreshCw size={16} className="animate-spin" /> : <Plus size={16} />}
-                  Create
-                </button>
+            <div className="glass-panel p-12 text-center">
+              <Camera size={64} className="mx-auto text-zfs-accent mb-6 opacity-20" />
+              <h2 className="text-3xl font-bold mb-2">Snapshots</h2>
+              <p className="text-white/40 max-w-md mx-auto">Point-in-time recovery, snapshot scheduling, and recursive snapshot management.</p>
+              <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6 text-left">
+                {[1, 2, 3].map(i => (
+                  <div key={i} className="bg-white/5 p-6 rounded-2xl border border-white/5">
+                    <div className="flex justify-between items-center mb-4">
+                      <Camera size={20} className="text-zfs-accent" />
+                      <span className="text-[10px] font-bold text-white/20 uppercase tracking-widest">2h ago</span>
+                    </div>
+                    <p className="font-bold text-white">tank/data@hourly-{i}</p>
+                    <p className="text-xs text-white/40 mt-1">Size: 1.2 GB</p>
+                    <button className="mt-4 w-full apple-button apple-button-secondary !py-2 text-xs">Rollback</button>
+                  </div>
+                ))}
               </div>
-            </div>
-
-            {/* Snapshot List */}
-            <div className="glass-panel overflow-hidden">
-              <div className="p-8 border-b border-white/[0.05]">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-xl font-bold text-white">All Snapshots</h3>
-                  <button onClick={fetchSnapshots} className="p-2 bg-white/5 rounded-lg text-white/40 hover:text-white transition-all">
-                    <RefreshCw size={18} />
-                  </button>
-                </div>
-              </div>
-              {loadingSnapshots ? (
-                <div className="p-12 text-center text-white/30">Loading snapshots…</div>
-              ) : snapshots.length === 0 ? (
-                <div className="p-12 text-center text-white/30">No snapshots found.</div>
-              ) : (
-                <div className="p-4 space-y-3">
-                  {snapshots.map((snap, i) => (
-                    <motion.div
-                      key={snap.name}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.03 }}
-                      className="flex items-center justify-between p-5 bg-white/[0.02] rounded-2xl hover:bg-white/[0.05] transition-all group border border-white/[0.05]"
-                    >
-                      <div className="flex items-center gap-6">
-                        <div className="w-10 h-10 bg-zfs-accent/10 rounded-xl flex items-center justify-center text-zfs-accent">
-                          <Camera size={18} />
-                        </div>
-                        <div>
-                          <p className="font-bold text-white">{snap.snapName}</p>
-                          <p className="text-[10px] text-white/30 font-mono mt-0.5">{snap.dataset}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-8">
-                        <div className="text-right">
-                          <p className="text-[9px] font-bold text-white/20 uppercase tracking-widest mb-1">Used</p>
-                          <p className="text-xs font-bold text-white/60">{snap.used}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-[9px] font-bold text-white/20 uppercase tracking-widest mb-1">Created</p>
-                          <p className="text-xs font-bold text-white/60">{snap.creation.toLocaleDateString()}</p>
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => handleRollback(snap.name)}
-                            className="px-3 py-1.5 bg-amber-500/10 text-amber-400 text-xs font-bold rounded-lg hover:bg-amber-500/20 transition-all"
-                          >
-                            Rollback
-                          </button>
-                          <button
-                            onClick={() => handleDeleteSnapshot(snap.name)}
-                            className="w-8 h-8 flex items-center justify-center rounded-xl bg-white/5 text-white/30 hover:text-rose-400 hover:bg-rose-500/10 transition-all"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
-              )}
             </div>
           </div>
         );
-
-      // ── Replication ────────────────────────────────────────────────────────
       case 'replication':
         return (
           <div className="space-y-8">
             <div className="flex justify-between items-center">
               <div>
                 <h2 className="text-3xl font-bold text-white">Replication</h2>
-                <p className="text-white/40">Remote dataset replication via ZFS send/receive</p>
+                <p className="text-white/40">Remote dataset replication and backups</p>
               </div>
+              <button className="apple-button apple-button-primary">
+                <RefreshCw size={20} /> New Replication Task
+              </button>
             </div>
             <div className="glass-panel p-12 text-center">
               <RefreshCw size={64} className="mx-auto text-zfs-accent mb-6 opacity-20" />
-              <h2 className="text-3xl font-bold mb-2">ZFS Send / Receive</h2>
-              <p className="text-white/40 max-w-md mx-auto mb-8">Use the Snapshots tab to send a snapshot to a remote destination using ZFS send/receive.</p>
-              <div className="bg-white/5 p-6 rounded-2xl border border-white/5 flex items-center justify-between text-left max-w-2xl mx-auto">
-                <div className="flex items-center gap-6">
-                  <div className="w-12 h-12 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400">
-                    <RefreshCw size={24} />
+              <h2 className="text-3xl font-bold mb-2">Replication</h2>
+              <p className="text-white/40 max-w-md mx-auto">Remote dataset replication, incremental send/receive, and backup synchronization.</p>
+              <div className="mt-8 space-y-4 text-left">
+                <div className="bg-white/5 p-6 rounded-2xl border border-white/5 flex items-center justify-between">
+                  <div className="flex items-center gap-6">
+                    <div className="w-12 h-12 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400">
+                      <RefreshCw size={24} />
+                    </div>
+                    <div>
+                      <p className="font-bold text-white">tank/data → remote-backup/data</p>
+                      <p className="text-xs text-white/40 mt-1">Status: Syncing (84%) • Last run: 5m ago</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-bold text-white">tank/data → remote-backup/data</p>
-                    <p className="text-xs text-white/40 mt-1">Use: POST /api/v1/snapshots/send</p>
+                  <div className="w-32 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                    <div className="h-full bg-emerald-500 w-[84%]" />
                   </div>
                 </div>
               </div>
             </div>
           </div>
         );
-
-      // ── Scrub & Health ─────────────────────────────────────────────────────
       case 'scrub':
         return (
           <div className="space-y-8">
-            <div>
-              <h2 className="text-3xl font-bold text-white">Scrub & Health</h2>
-              <p className="text-white/40">Data integrity verification and pool diagnostics</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              {pools.map(pool => (
-                <div key={pool.name} className="glass-panel p-8">
-                  <div className="flex items-center gap-4 mb-6">
-                    <div className="w-12 h-12 bg-zfs-accent/10 rounded-2xl flex items-center justify-center text-zfs-accent">
-                      <ShieldCheck size={24} />
+            <div className="glass-panel p-12 text-center">
+              <ShieldCheck size={64} className="mx-auto text-zfs-accent mb-6 opacity-20" />
+              <h2 className="text-3xl font-bold mb-2">Scrub & Health</h2>
+              <p className="text-white/40 max-w-md mx-auto">Data integrity verification, resilvering status, and pool health diagnostics.</p>
+              <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-8 text-left">
+                <div className="bg-white/5 p-8 rounded-3xl border border-white/5">
+                  <h4 className="text-lg font-bold mb-6">Integrity Check</h4>
+                  <div className="space-y-6">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-white/60">Last Scrub</span>
+                      <span className="text-sm font-bold">2026-03-04 12:00</span>
                     </div>
-                    <div>
-                      <h3 className="text-xl font-bold text-white">{pool.name}</h3>
-                      <span className={`status-badge ${pool.health === 'ONLINE' ? 'status-online' : 'status-error'}`}>{pool.health}</span>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-white/60">Errors Found</span>
+                      <span className="text-sm font-bold text-emerald-400">0</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-white/60">Status</span>
+                      <span className="status-badge status-online">Healthy</span>
                     </div>
                   </div>
-
-                  <div className="space-y-4 mb-6">
-                    {[
-                      { label: 'Used', value: pool.alloc },
-                      { label: 'Free', value: pool.free },
-                      { label: 'Total', value: pool.size },
-                      { label: 'Capacity', value: `${pool.cap}%` },
-                    ].map(item => (
-                      <div key={item.label} className="flex justify-between items-center p-3 bg-white/5 rounded-xl">
-                        <span className="text-sm text-white/60">{item.label}</span>
-                        <span className="text-sm font-bold text-white">{item.value}</span>
+                  <button className="mt-8 w-full apple-button apple-button-primary">Start Scrub</button>
+                </div>
+                <div className="bg-white/5 p-8 rounded-3xl border border-white/5">
+                  <h4 className="text-lg font-bold mb-6">Disk Health</h4>
+                  <div className="space-y-4">
+                    {['sda', 'sdb', 'sdc', 'sdd'].map(disk => (
+                      <div key={disk} className="flex justify-between items-center p-3 bg-white/5 rounded-xl">
+                        <div className="flex items-center gap-3">
+                          <HardDrive size={16} className="text-white/40" />
+                          <span className="text-sm font-medium">{disk}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-[10px] font-bold text-emerald-400 uppercase">Online</span>
+                          <button className="p-1.5 bg-white/5 hover:bg-white/10 rounded-lg transition-all text-white/40 hover:text-white">
+                            <Activity size={14} />
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
-
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => scrubStatus[pool.name] === 'running' ? handleStopScrub(pool.name) : handleStartScrub(pool.name)}
-                      className={`flex-1 apple-button !py-2.5 text-sm ${scrubStatus[pool.name] === 'running' ? 'apple-button-secondary' : 'apple-button-primary'}`}
-                    >
-                      {scrubStatus[pool.name] === 'running' ? <><StopCircle size={16} /> Stop Scrub</> : <><Play size={16} /> Start Scrub</>}
-                    </button>
-                    <button onClick={() => handleGetPoolStatus(pool.name)} className="apple-button apple-button-secondary !py-2.5 text-sm">
-                      <Info size={16} /> Status
-                    </button>
-                  </div>
                 </div>
-              ))}
-
-              {pools.length === 0 && (
-                <div className="glass-panel p-12 text-center text-white/30 col-span-2">No pools found.</div>
-              )}
+              </div>
             </div>
 
-            {/* Disk grid */}
             <div className="glass-panel p-8">
               <h3 className="text-xl font-bold text-white mb-8">SMART Diagnostics</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {mockSmartData.map(smart => (
+                {mockSmartData.map((smart, i) => (
                   <div key={smart.device} className="bg-white/5 p-6 rounded-2xl border border-white/5">
                     <div className="flex justify-between items-start mb-4">
-                      <div className="p-2 bg-white/5 rounded-lg text-zfs-accent"><HardDrive size={20} /></div>
+                      <div className="p-2 bg-white/5 rounded-lg text-zfs-accent">
+                        <HardDrive size={20} />
+                      </div>
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${smart.status === 'PASSED' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
                         {smart.status}
                       </span>
@@ -879,24 +645,21 @@ export default function App() {
             </div>
           </div>
         );
-
-      // ── Permissions ────────────────────────────────────────────────────────
       case 'permissions':
         return <ACLManager />;
-
-      // ── Settings ───────────────────────────────────────────────────────────
       case 'settings':
         return (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="glass-panel p-8">
               <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-3">
-                <SettingsIcon size={24} className="text-zfs-accent" /> System Settings
+                <SettingsIcon size={24} className="text-zfs-accent" />
+                System Settings
               </h3>
               <div className="space-y-6">
                 {[
-                  { label: 'API Base URL', value: '/api/v1', icon: Server },
+                  { label: 'Hostname', value: 'nexus-zfs-node-01', icon: Server },
                   { label: 'SSH Access', value: 'Enabled (Port 22)', icon: Terminal },
-                  { label: 'API Key', value: '••••••••••••', icon: Key },
+                  { label: 'Root Password', value: '••••••••••••', icon: Key },
                 ].map((item, i) => (
                   <div key={i} className="flex justify-between items-center p-4 bg-white/5 rounded-2xl">
                     <div className="flex items-center gap-4">
@@ -907,16 +670,18 @@ export default function App() {
                   </div>
                 ))}
               </div>
+              <button className="mt-8 w-full apple-button apple-button-primary">Save Changes</button>
             </div>
             <div className="glass-panel p-8">
               <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-3">
-                <ShieldCheck size={24} className="text-emerald-400" /> Security
+                <ShieldCheck size={24} className="text-emerald-400" />
+                Security
               </h3>
               <div className="space-y-4">
                 <div className="p-4 bg-white/5 rounded-2xl flex justify-between items-center">
                   <div>
-                    <p className="text-sm font-bold">API Key Authentication</p>
-                    <p className="text-xs text-white/40">X-API-Key header required on all requests</p>
+                    <p className="text-sm font-bold">Two-Factor Authentication</p>
+                    <p className="text-xs text-white/40">Secure your account with 2FA</p>
                   </div>
                   <div className="w-12 h-6 bg-emerald-500/20 rounded-full relative p-1 cursor-pointer">
                     <div className="w-4 h-4 bg-emerald-500 rounded-full ml-auto" />
@@ -924,8 +689,8 @@ export default function App() {
                 </div>
                 <div className="p-4 bg-white/5 rounded-2xl flex justify-between items-center">
                   <div>
-                    <p className="text-sm font-bold">API Documentation</p>
-                    <p className="text-xs text-white/40">GET /api/v1/pools, /datasets, /snapshots</p>
+                    <p className="text-sm font-bold">API Access</p>
+                    <p className="text-xs text-white/40">Manage API keys for automation</p>
                   </div>
                   <ChevronRight size={16} className="text-white/20" />
                 </div>
@@ -933,8 +698,6 @@ export default function App() {
             </div>
           </div>
         );
-
-      // ── Logs ───────────────────────────────────────────────────────────────
       case 'logs':
         return (
           <div className="space-y-8">
@@ -945,19 +708,17 @@ export default function App() {
                   <p className="text-sm text-white/40">Recent ZFS operations and system events</p>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => setLogs([])} className="px-4 py-2 bg-white/5 rounded-xl text-xs font-bold text-white/60 hover:bg-white/10 transition-all">Clear</button>
+                  <button className="px-4 py-2 bg-white/5 rounded-xl text-xs font-bold text-white/60 hover:bg-white/10 transition-all">Export</button>
+                  <button className="px-4 py-2 bg-white/5 rounded-xl text-xs font-bold text-white/60 hover:bg-white/10 transition-all">Clear</button>
                 </div>
               </div>
               <div className="space-y-3">
-                {logs.length === 0 && (
-                  <p className="text-white/30 text-sm text-center py-8">No logs yet.</p>
-                )}
-                {logs.map((log, i) => (
-                  <motion.div
+                {mockLogs.map((log, i) => (
+                  <motion.div 
                     key={log.id}
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.02 }}
+                    transition={{ delay: i * 0.05 }}
                     className="flex items-center gap-6 p-4 bg-white/[0.02] rounded-2xl border border-white/[0.05] hover:bg-white/[0.04] transition-all"
                   >
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
@@ -965,7 +726,9 @@ export default function App() {
                       log.level === 'warning' ? 'bg-amber-500/10 text-amber-400' :
                       'bg-zfs-accent/10 text-zfs-accent'
                     }`}>
-                      {log.level === 'error' ? <XCircle size={18} /> : log.level === 'warning' ? <AlertTriangle size={18} /> : <Info size={18} />}
+                      {log.level === 'error' ? <XCircle size={18} /> :
+                       log.level === 'warning' ? <AlertTriangle size={18} /> :
+                       <Info size={18} />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-3 mb-1">
@@ -980,7 +743,6 @@ export default function App() {
             </div>
           </div>
         );
-
       default:
         return null;
     }
@@ -989,25 +751,23 @@ export default function App() {
   return (
     <div className="flex min-h-screen bg-zfs-deep">
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
-
+      
       <main className="flex-1 ml-72 p-12 overflow-y-auto h-screen no-scrollbar">
         {/* Header */}
         <header className="flex justify-between items-center mb-12">
           <div className="flex items-center gap-6 bg-white/[0.03] border border-white/[0.05] rounded-2xl px-6 py-3 w-96 focus-within:bg-white/[0.05] focus-within:border-zfs-accent/50 transition-all">
             <Search size={18} className="text-white/30" />
-            <input
-              type="text"
-              placeholder="Search pools, datasets, or snapshots..."
+            <input 
+              type="text" 
+              placeholder="Search pools, datasets, or snapshots..." 
               className="bg-transparent border-none outline-none text-sm text-white placeholder:text-white/20 w-full"
             />
           </div>
-
+          
           <div className="flex items-center gap-6">
             <button className="w-12 h-12 flex items-center justify-center rounded-2xl bg-white/[0.03] text-white/40 hover:text-white border border-white/[0.05] transition-all relative">
               <Bell size={20} />
-              {logs.some(l => l.level === 'error') && (
-                <span className="absolute top-3.5 right-3.5 w-2 h-2 bg-rose-500 rounded-full border-2 border-zfs-deep" />
-              )}
+              <span className="absolute top-3.5 right-3.5 w-2 h-2 bg-rose-500 rounded-full border-2 border-zfs-deep" />
             </button>
             <div className="flex items-center gap-4 pl-6 border-l border-white/10">
               <div className="text-right">

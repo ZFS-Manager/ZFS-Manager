@@ -1,5 +1,6 @@
-import type { ZFSDataset } from '../types';
-import { MoreVertical, HardDrive, Settings, Plus, Lock } from 'lucide-react';
+import React from 'react';
+import { ZFSDataset } from '../types';
+import { MoreVertical, HardDrive, Settings, Plus, Shield, Zap, Lock } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface DatasetListProps {

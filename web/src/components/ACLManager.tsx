@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Shield, User, Users, Globe, Plus, Trash2, ChevronRight } from 'lucide-react';
-import type { ACLRule } from '../types';
+import { ACLRule } from '../types';
 import { motion } from 'motion/react';
 
 export default function ACLManager() {
-  const [rules] = useState<ACLRule[]>([
+  const [rules, setRules] = useState<ACLRule[]>([
     { id: '1', type: 'user', name: 'admin', permissions: ['read', 'write', 'execute'], inheritance: 'all' },
     { id: '2', type: 'group', name: 'developers', permissions: ['read', 'write'], inheritance: 'file' },
     { id: '3', type: 'everyone', name: 'everyone', permissions: ['read'], inheritance: 'none' },

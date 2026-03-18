@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import type { DiskStat } from '../types';
+import { DiskStat } from '../types';
 import { Activity, ArrowUp, ArrowDown } from 'lucide-react';
 
 export default function PerformanceMonitor() {
