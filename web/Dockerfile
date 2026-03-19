@@ -7,7 +7,9 @@ ARG VITE_API_KEY
 ENV VITE_API_KEY=$VITE_API_KEY
 
 COPY package*.json ./
-RUN npm install
+RUN apk add --no-cache python3 make g++ && \
+    npm install && \
+    apk del python3 make g++
 
 COPY . .
 RUN npm run build
