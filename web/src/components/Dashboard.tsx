@@ -168,7 +168,7 @@ export default function Dashboard({
           </div>
 
           <button className="w-full mt-8 apple-button apple-button-secondary h-10">
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 hover:text-white transition-colors">Manage Full Cluster</span>
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 hover:text-white transition-colors">Start Scrub</span>
           </button>
         </div>
       </div>

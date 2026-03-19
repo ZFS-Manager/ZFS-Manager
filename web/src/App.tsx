@@ -218,10 +218,6 @@ export default function App() {
               <Route path="/pools" element={<StoragePools pools={pools} />} />
               <Route path="/datasets" element={
                 <div className="space-y-8">
-                  <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
-                     <h2 className="text-2xl font-bold">Datasets & Volumes</h2>
-                     <button className="apple-button apple-button-primary w-fit">Create New</button>
-                  </div>
                   <DatasetList datasets={datasets} selectedName="" onSelect={() => {}} />
                   {volumes.length > 0 && (
                     <div className="space-y-4">
