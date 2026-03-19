@@ -24,7 +24,7 @@
 }
 
 .glass-sidebar {
-  @apply bg-zfs-deep/40 backdrop-blur-3xl border-r border-white/[0.05] h-screen fixed left-0 top-0 z-50;
+  @apply bg-zfs-deep/40 backdrop-blur-3xl border-r border-white/[0.05] h-screen overflow-y-auto;
 }
 
 .nav-item {
