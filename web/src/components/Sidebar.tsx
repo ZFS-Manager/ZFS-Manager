@@ -40,7 +40,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
   };
 
   return (
-    <div className={`fixed left-0 top-0 h-screen transition-all duration-500 ease-[cubic-bezier(0.2,0,0,1)] z-50 ${isCollapsed ? 'w-20' : 'w-64'}`}>
+    <div className={`h-screen transition-all duration-500 ease-[cubic-bezier(0.2,0,0,1)] z-50 ${isCollapsed ? 'w-20' : 'w-64'}`}>
       <div className="h-full glass-panel !rounded-none !border-y-0 !border-l-0 flex flex-col bg-[#07090E]/60 backdrop-blur-3xl border-r border-white/[0.04]">
         {/* Brand Section */}
         <div className="p-6 pb-4 flex items-center gap-3">
@@ -94,17 +94,6 @@ export default function Sidebar({ onClose }: SidebarProps) {
 
         {/* System State & Logout */}
         <div className="p-4 border-t border-white/[0.03]">
-          {!isCollapsed && (
-            <div className="mb-4 px-4 py-3 bg-white/[0.02] rounded-xl border border-white/[0.03]">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Node Alpha</span>
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.5)]" />
-              </div>
-              <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-                <div className="h-full bg-zfs-accent w-[42%] rounded-full shadow-[0_0_8px_rgba(56,189,248,0.2)]" />
-              </div>
-            </div>
-          )}
           <button 
             onClick={handleLogout}
             className={`w-full nav-item !text-rose-500 hover:bg-rose-500/5 group transition-all ${isCollapsed ? 'justify-center border-none' : 'border border-rose-500/10'}`}

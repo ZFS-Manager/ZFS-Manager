@@ -61,10 +61,6 @@ export default function Dashboard({
              <Activity size={16} className="text-zfs-accent" />
              <span className="text-[11px] font-black text-white/60 tracking-tight uppercase">{uptime.split(',')[0]}</span>
           </div>
-          <button className="apple-button apple-button-secondary !py-2 !px-4">
-            <Server size={14} />
-            <span className="text-[10px] font-black uppercase tracking-widest">Node Node-1</span>
-          </button>
         </div>
       </div>
 
