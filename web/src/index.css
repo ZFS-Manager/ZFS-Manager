@@ -1,86 +1,72 @@
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
   
-  --color-zfs-deep: #020617;
-  --color-zfs-navy: #0F172A;
-  --color-zfs-accent: #22D3EE;
-  --color-zfs-secondary: #818CF8;
-  --color-zfs-glow: rgba(34, 211, 238, 0.4);
+  --color-zfs-bg: #07090E;
+  --color-zfs-panel: rgba(15, 23, 42, 0.4);
+  --color-zfs-accent: #38BDF8;
+  --color-zfs-secondary: #6366F1;
+  --color-zfs-border: rgba(255, 255, 255, 0.04);
 }
 
 @layer base {
   body {
-    @apply antialiased text-slate-200 min-h-screen selection:bg-zfs-accent/30 selection:text-white;
-    background: radial-gradient(circle at top right, #0F172A 0%, #020617 100%);
+    @apply bg-zfs-bg text-slate-300 antialiased;
+    font-family: var(--font-sans);
     background-attachment: fixed;
   }
 }
 
-.glass-panel {
-  @apply bg-white/[0.02] backdrop-blur-2xl border border-white/[0.05] rounded-[2.5rem] shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] transition-all duration-500 overflow-hidden;
+@layer components {
+  .glass-panel {
+    @apply bg-zfs-panel border border-zfs-border backdrop-blur-xl rounded-[1.5rem] shadow-2xl;
+  }
+
+  .nav-item {
+    @apply flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all text-slate-500 font-bold text-[13px] hover:text-slate-300 hover:bg-white/[0.02];
+  }
+
+  .nav-item-active {
+    @apply bg-white/[0.04] text-white border border-white/[0.03];
+  }
+
+  .apple-button {
+    @apply px-5 py-2.5 rounded-xl font-bold text-[12px] transition-all active:scale-95 flex items-center justify-center gap-2;
+  }
+
+  .apple-button-primary {
+    @apply bg-white text-black hover:bg-slate-200;
+  }
+
+  .apple-button-secondary {
+    @apply bg-white/[0.03] text-slate-300 border border-white/[0.05] hover:bg-white/[0.06];
+  }
+
+  .status-badge {
+    @apply px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border;
+  }
+
+  .status-online {
+    @apply bg-emerald-400/10 text-emerald-400 border-emerald-400/20;
+  }
+
+  .status-warning {
+    @apply bg-amber-400/10 text-amber-400 border-amber-400/20;
+  }
+
+  .status-error {
+    @apply bg-rose-400/10 text-rose-400 border-rose-400/20;
+  }
 }
 
-.glass-panel:hover {
-  @apply bg-white/[0.04] border-white/[0.1] shadow-[0_8px_48px_0_rgba(0,0,0,0.5)];
-}
-
-.glass-sidebar {
-  @apply bg-[#020617]/40 backdrop-blur-3xl border-r border-white/[0.03] h-screen;
-}
-
-.nav-item {
-  @apply flex items-center gap-3 px-5 py-3.5 rounded-2xl transition-all duration-300 cursor-pointer relative;
-}
-
-.nav-item-active {
-  @apply bg-zfs-accent/5 text-zfs-accent shadow-[inset_0_0_20px_rgba(34,211,238,0.05)];
-}
-
-.nav-item:not(.nav-item-active):hover {
-  @apply bg-white/5 text-white;
-}
-
-.apple-button {
-  @apply px-8 py-4 rounded-[1.25rem] font-bold text-sm transition-all duration-500 active:scale-95 flex items-center justify-center gap-3 relative overflow-hidden;
-}
-
-.apple-button-primary {
-  @apply bg-zfs-accent text-zfs-deep hover:bg-white hover:shadow-[0_0_30px_rgba(34,211,238,0.4)] transition-all;
-}
-
-.apple-button-secondary {
-  @apply bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white border border-white/5;
-}
-
-.status-badge {
-  @apply px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-[0.15em] border transition-colors;
-}
-
-.status-online {
-  @apply bg-cyan-500/10 text-cyan-400 border-cyan-500/20 shadow-[0_0_15px_rgba(34,211,238,0.1)];
-}
-
-.status-warning {
-  @apply bg-amber-500/10 text-amber-400 border-amber-500/20;
-}
-
-.status-error {
-  @apply bg-rose-500/10 text-rose-400 border-rose-500/20;
-}
-
-@keyframes slide {
-  from { background-position: 0 0; }
-  to { background-position: 40px 40px; }
-}
-
-.animate-slide {
-  animation: slide 2s linear infinite;
-}
-
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 }
