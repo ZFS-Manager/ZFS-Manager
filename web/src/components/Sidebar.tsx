@@ -43,7 +43,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
     <motion.div 
       initial={false}
       animate={{ width: isCollapsed ? 80 : 256 }}
-      className={`glass-sidebar h-full flex flex-col relative transition-all duration-300 ${isCollapsed ? 'px-3' : 'px-6'} py-6 overflow-hidden border-r border-white/[0.05]`}
+      className={`glass-sidebar h-full flex flex-col relative transition-all duration-300 ${isCollapsed ? 'px-3' : 'px-6'} py-6 border-r border-white/[0.05]`}
     >
       {/* Mobile Close Button */}
       <button 
@@ -61,85 +61,90 @@ export default function Sidebar({ onClose }: SidebarProps) {
         {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
       </button>
 
-      <div className={`flex items-center gap-4 ${isCollapsed ? 'px-2' : 'px-4'} mb-12`}>
-        <div className="flex-shrink-0 w-10 h-10 bg-zfs-accent rounded-xl flex items-center justify-center shadow-[0_0_20px_rgba(59,130,246,0.5)]">
-          <HardDrive className="text-white" size={24} />
-        </div>
-        <AnimatePresence>
-          {!isCollapsed && (
-            <motion.h1 
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -10 }}
-              className="text-xl font-bold tracking-tight text-white whitespace-nowrap"
-            >
-              ZFS Manager
-            </motion.h1>
-          )}
-        </AnimatePresence>
-      </div>
-
-      <nav className="flex-1 flex flex-col gap-2">
-        {menuItems.map((item) => (
-          <NavLink
-            key={item.id}
-            to={item.path}
-            onClick={onClose}
-            className={({ isActive }) => 
-              `nav-item group flex items-center gap-3 ${isCollapsed ? 'justify-center px-0' : 'px-4'} py-3 rounded-xl transition-all ${
-                isActive ? 'nav-item-active bg-zfs-accent/10 border border-zfs-accent/20' : 'text-white/40 hover:bg-white/5 hover:text-white/60'
-              }`
-            }
-            title={isCollapsed ? item.label : ''}
-          >
-            {({ isActive }) => (
-              <>
-                <item.icon size={20} className={isActive ? 'text-zfs-accent' : 'text-inherit'} />
-                <AnimatePresence>
-                  {!isCollapsed && (
-                    <motion.span 
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -10 }}
-                      className={`font-medium whitespace-nowrap ${isActive ? 'text-white' : ''}`}
-                    >
-                      {item.label}
-                    </motion.span>
-                  )}
-                </AnimatePresence>
-                {isActive && !isCollapsed && (
-                  <motion.div 
-                    layoutId="active-pill"
-                    className="ml-auto w-1.5 h-1.5 rounded-full bg-zfs-accent"
-                  />
-                )}
-              </>
-            )}
-          </NavLink>
-        ))}
-      </nav>
-
-      <div className={`mt-auto pt-6 border-t border-white/[0.05] ${isCollapsed ? 'px-1' : ''}`}>
-        <button 
-          onClick={handleLogout}
-          className={`w-full nav-item group text-white/40 hover:text-rose-400 hover:bg-rose-500/10 flex items-center gap-3 ${isCollapsed ? 'justify-center px-0' : 'px-4'} py-3 rounded-xl transition-all`}
-          title={isCollapsed ? 'Logout' : ''}
-        >
-          <LogOut size={20} />
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className={`flex items-center gap-4 ${isCollapsed ? 'px-2' : 'px-4'} mb-12`}>
+          <div className="flex-shrink-0 w-10 h-10 bg-zfs-accent rounded-xl flex items-center justify-center shadow-[0_0_20px_rgba(59,130,246,0.5)]">
+            <HardDrive className="text-white" size={24} />
+          </div>
           <AnimatePresence>
             {!isCollapsed && (
-              <motion.span 
+              <motion.h1 
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
-                className="font-medium whitespace-nowrap"
+                className="text-xl font-bold tracking-tight text-white whitespace-nowrap"
               >
-                Logout
-              </motion.span>
+                ZFS Manager
+              </motion.h1>
             )}
           </AnimatePresence>
-        </button>
+        </div>
+
+        <nav className="flex-1 flex flex-col gap-2">
+          {menuItems.map((item) => (
+            <NavLink
+              key={item.id}
+              to={item.path}
+              onClick={onClose}
+              className={({ isActive }) => 
+                `nav-item group flex items-center gap-3 ${isCollapsed ? 'justify-center px-0' : 'px-4'} py-3 rounded-xl transition-all ${
+                  isActive ? 'nav-item-active bg-zfs-accent/10 border border-zfs-accent/20' : 'text-white/40 hover:bg-white/5 hover:text-white/60'
+                }`
+              }
+              title={isCollapsed ? item.label : ''}
+            >
+              {({ isActive }) => (
+                <>
+                  <item.icon size={20} className={isActive ? 'text-zfs-accent' : 'text-inherit'} />
+                  <AnimatePresence mode="wait">
+                    {!isCollapsed && (
+                      <motion.span 
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -10 }}
+                        transition={{ duration: 0.15 }}
+                        className={`font-medium whitespace-nowrap ${isActive ? 'text-white' : ''}`}
+                      >
+                        {item.label}
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                  {isActive && !isCollapsed && (
+                    <motion.div 
+                      layoutId="active-pill"
+                      className="ml-auto w-1.5 h-1.5 rounded-full bg-zfs-accent"
+                    />
+                  )}
+                </>
+              )}
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className={`mt-auto pt-6 border-t border-white/[0.05] ${isCollapsed ? 'px-1' : ''}`}>
+          <button 
+            onClick={handleLogout}
+            className={`w-full nav-item group text-white/40 hover:text-rose-400 hover:bg-rose-500/10 flex items-center gap-3 ${isCollapsed ? 'justify-center px-0' : 'px-4'} py-3 rounded-xl transition-all`}
+            title={isCollapsed ? 'Logout' : ''}
+          >
+            <LogOut size={20} />
+            <AnimatePresence mode="wait">
+              {!isCollapsed && (
+                <motion.span 
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -10 }}
+                  transition={{ duration: 0.15 }}
+                  className="font-medium whitespace-nowrap"
+                >
+                  Logout
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </button>
+        </div>
       </div>
+    </motion.div>
     </motion.div>
   );
 }
