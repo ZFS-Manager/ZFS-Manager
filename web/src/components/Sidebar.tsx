@@ -42,7 +42,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
   return (
     <div className={`h-screen transition-all duration-500 ease-[cubic-bezier(0.2,0,0,1)] z-50 ${isCollapsed ? 'w-20' : 'w-64'}`}>
       <div className="h-full glass-panel !rounded-none !border-y-0 !border-l-0 flex flex-col bg-[#07090E]/60 backdrop-blur-3xl border-r border-white/[0.04]">
-        <div className={`p-6 pb-4 flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
+        <div className={`p-6 pb-4 flex items-center ${isCollapsed ? 'justify-center' : 'justify-between gap-10'}`}>
           <div className="flex items-center gap-3">
             <div className="flex-shrink-0 w-10 h-10 bg-gradient-to-br from-zfs-accent to-zfs-secondary rounded-xl flex items-center justify-center shadow-lg shadow-zfs-accent/10">
               <HardDrive className="text-white" size={20} strokeWidth={2.5} />
@@ -54,7 +54,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
                 className="flex flex-col whitespace-nowrap overflow-hidden"
               >
                 <h1 className="text-[15px] font-black tracking-tighter text-white leading-none">ZFS <span className="text-zfs-accent">Manager</span></h1>
-                <span className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-600 mt-1">Community Edition</span>
+                <span className="text-[10px] font-black uppercase tracking-[0.15em] text-zfs-accent/40 mt-1">Actually Just Magic</span>
               </motion.div>
             )}
           </div>

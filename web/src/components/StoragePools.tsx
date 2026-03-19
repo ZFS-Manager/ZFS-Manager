@@ -61,7 +61,7 @@ export default function StoragePools({ pools }: StoragePoolsProps) {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-8 relative pb-8 mb-8 border-b border-white/[0.03]">
-              <div className="space-y-3">
+              <div className="space-y-3 pt-1.5">
                 <div className="flex justify-between items-end">
                   <span className="text-[9px] font-black text-slate-700 uppercase tracking-widest">Cluster Utilization</span>
                   <span className="text-[11px] font-black text-white">{pool.cap}%</span>

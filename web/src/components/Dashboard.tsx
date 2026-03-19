@@ -71,9 +71,9 @@ export default function Dashboard({
         ].map((stat, i) => (
           <motion.div
             key={i}
-            initial={{ opacity: 0, y: 30 }}
+            initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ type: "spring", damping: 25, stiffness: 100, delay: i * 0.1 }}
+            transition={{ duration: 0.8, ease: "circOut", delay: i * 0.08 }}
             className="glass-panel p-5 flex items-center gap-5 hover:bg-white/[0.01] transition-all border-white/[0.02]"
           >
             <div className={`p-3 rounded-xl ${stat.bg} ${stat.color} border border-white/[0.03]`}>
