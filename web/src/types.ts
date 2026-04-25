@@ -5,9 +5,12 @@ export interface ZFSPool {
   alloc: string;
   free: string;
   cap: number;
+  frag?: number;
+  dedup?: string;
   health: 'ONLINE' | 'DEGRADED' | 'FAULTED' | 'OFFLINE';
   raidType: string;
   vdevs: VDev[];
+  _raw?: any;
 }
 
 export interface VDev {
@@ -25,11 +28,13 @@ export interface ZFSDataset {
   avail: string;
   refer: string;
   mountpoint: string;
-  compression: 'on' | 'off' | 'lz4' | 'gzip' | 'zstd';
-  dedup: 'on' | 'off';
+  compression: string;
+  dedup: string;
   readonly: boolean;
   quota?: string;
   reservation?: string;
+  _usedBytes?: number;
+  _availBytes?: number;
 }
 
 export interface ZFSSnapshot {

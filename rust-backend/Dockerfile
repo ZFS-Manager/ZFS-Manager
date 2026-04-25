@@ -24,7 +24,7 @@ RUN touch src/main.rs && cargo build --release
 FROM alpine:latest
 
 # Install ZFS tools
-RUN apk add --no-cache zfs
+RUN apk add --no-cache zfs util-linux smartmontools
 
 COPY --from=builder /app/target/release/zfs-manager /usr/local/bin/zfs-manager
 

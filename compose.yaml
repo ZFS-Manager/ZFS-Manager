@@ -6,17 +6,19 @@ services:
     container_name: zfs-backend
     restart: unless-stopped
     ports:
-      - "${ZFS_BACKEND_PORT:-3000}:${ZFS_BACKEND_PORT:-3000}"
+      - "${ZFS_BACKEND_PORT:-3000}:3000"
     environment:
-      - ZFS_API_PORT=${ZFS_BACKEND_PORT:-3000}
+      - ZFS_API_PORT=3000
       - RUST_LOG=info
       - ZFS_MANAGER_DATA=/home/docker/zfs-manager
-      - ZFS_API_KEY=${ZFS_PASSWORD:-admin123}
+      - ZFS_API_KEY=${ZFS_API_KEY:-admin123}
     privileged: true
     volumes:
-      - /dev:/dev
-      - /proc:/proc
-      - /sys/module/zfs:/sys/module/zfs
+      - /dev:/dev                              # ZFS device nodes incl. /dev/zfs
+      - /proc:/proc                            # /proc/spl/kstat/zfs/arcstats etc.
+      - /sys/module/zfs:/sys/module/zfs:ro     # kernel ZFS module info
+      - /var/lib/zfs:/var/lib/zfs:ro           # ZFS cache files
+      - /tmp:/tmp                              # shared file-based pool images (/tmp/*.img)
       - /home/docker/zfs-manager:/home/docker/zfs-manager
     working_dir: /home/docker/zfs-manager
     network_mode: host
@@ -26,7 +28,7 @@ services:
       context: ./web
       dockerfile: Dockerfile
       args:
-        - VITE_API_KEY=${ZFS_PASSWORD:-admin123}
+        - VITE_API_KEY=${ZFS_API_KEY:-admin123}
     container_name: zfs-web
     extra_hosts:
       - "host.docker.internal:host-gateway"

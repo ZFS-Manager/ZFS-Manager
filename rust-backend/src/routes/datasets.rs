@@ -48,12 +48,20 @@ pub struct SpaceQuery {
     pub name: String,
 }
 
+#[derive(Deserialize, Default)]
+pub struct DestroyQuery {
+    #[serde(default)]
+    pub force: bool,
+    #[serde(default)]
+    pub recursive: bool,
+}
+
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 async fn list_datasets() -> Result<Json<Value>, ApiError> {
     let raw = executor::zfs(&[
         "list", "-H", "-p", "-t", "filesystem",
-        "-o", "name,used,avail,refer,mountpoint",
+        "-o", "name,used,avail,refer,mountpoint,compression,dedup,readonly",
     ])
     .await?;
     let datasets: Vec<Value> = raw
@@ -62,18 +70,20 @@ async fn list_datasets() -> Result<Json<Value>, ApiError> {
         .filter_map(|line| {
             let c: Vec<&str> = line.split('\t').collect();
             let name = c.first().unwrap_or(&"");
-            
-            // Filter out internal/system datasets used by TrueNAS
+
             if name.contains("/.system") || name.contains("/ix-apps") {
                 return None;
             }
 
             Some(json!({
-                "name":       name,
-                "used":       c.get(1).unwrap_or(&""),
-                "available":  c.get(2).unwrap_or(&""),
-                "refer":      c.get(3).unwrap_or(&""),
-                "mountpoint": c.get(4).unwrap_or(&""),
+                "name":        name,
+                "used":        c.get(1).unwrap_or(&""),
+                "available":   c.get(2).unwrap_or(&""),
+                "refer":       c.get(3).unwrap_or(&""),
+                "mountpoint":  c.get(4).unwrap_or(&""),
+                "compression": c.get(5).unwrap_or(&"off"),
+                "dedup":       c.get(6).unwrap_or(&"off"),
+                "readonly":    c.get(7).unwrap_or(&"off"),
             }))
         })
         .collect();
@@ -113,8 +123,16 @@ async fn get_dataset(Path(name): Path<String>) -> Result<Json<Value>, ApiError> 
     })))
 }
 
-async fn destroy_dataset(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
-    executor::zfs(&["destroy", &name]).await?;
+async fn destroy_dataset(
+    Path(name): Path<String>,
+    Query(q): Query<DestroyQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let mut args = vec!["destroy".to_string()];
+    if q.recursive { args.push("-r".to_string()); }
+    if q.force     { args.push("-f".to_string()); }
+    args.push(name.clone());
+    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    executor::zfs(&refs).await?;
     Ok(Json(json!({ "message": format!("Dataset '{name}' destroyed") })))
 }
 
