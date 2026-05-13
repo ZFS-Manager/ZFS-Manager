@@ -49,7 +49,7 @@ services:
       - ZFS_MANAGER_DATA=/home/docker/zfs-manager
       - ZFS_API_KEY=${ZFS_API_KEY:-admin123}
       - REDIS_URL=redis://localhost:6379
-      - DATABASE_URL=postgres://zfs:${POSTGRES_PASSWORD:-zfs_secret}@localhost:5432/zfs_metrics
+      - DATABASE_URL=postgres://zfs:${POSTGRES_PASSWORD:-zfs_secret}@localhost:5433/zfs_metrics
     privileged: true
     volumes:
       - /dev:/dev
