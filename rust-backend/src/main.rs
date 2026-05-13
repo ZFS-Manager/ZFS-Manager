@@ -9,12 +9,17 @@ use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
-use tracing::info;
+use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use std::sync::Arc;
 
 mod error;
 mod executor;
 mod routes;
+mod state;
+mod worker;
+
+use state::AppState;
 
 async fn auth_middleware(req: Request, next: Next) -> Result<Response, StatusCode> {
     if req.uri().path().ends_with("/health") {
@@ -33,8 +38,32 @@ async fn auth_middleware(req: Request, next: Next) -> Result<Response, StatusCod
             return Ok(next.run(req).await);
         }
     }
-    
+
     Err(StatusCode::UNAUTHORIZED)
+}
+
+async fn init_schema(client: &tokio_postgres::Client) {
+    let sql = "
+        CREATE TABLE IF NOT EXISTS zfs_metrics (
+            id BIGSERIAL PRIMARY KEY,
+            collected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            pool_name TEXT NOT NULL DEFAULT '',
+            read_bw_mb DOUBLE PRECISION DEFAULT 0,
+            write_bw_mb DOUBLE PRECISION DEFAULT 0,
+            iops DOUBLE PRECISION DEFAULT 0,
+            alloc_gb DOUBLE PRECISION DEFAULT 0,
+            free_gb DOUBLE PRECISION DEFAULT 0,
+            cpu_percent DOUBLE PRECISION DEFAULT 0,
+            arc_hit_ratio DOUBLE PRECISION DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_zfs_metrics_time ON zfs_metrics(collected_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_zfs_metrics_pool_time ON zfs_metrics(pool_name, collected_at DESC);
+    ";
+
+    match client.batch_execute(sql).await {
+        Ok(_) => info!("PostgreSQL schema initialized successfully"),
+        Err(e) => warn!("Failed to initialize PostgreSQL schema: {e}"),
+    }
 }
 
 #[tokio::main]
@@ -50,6 +79,58 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(3000);
 
+    // --- Redis connection ---
+    let redis_url = std::env::var("REDIS_URL")
+        .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+
+    let redis_conn = match redis::Client::open(redis_url.as_str()) {
+        Ok(client) => match redis::aio::ConnectionManager::new(client).await {
+            Ok(mgr) => {
+                info!("Redis connected at {redis_url}");
+                Some(mgr)
+            }
+            Err(e) => {
+                warn!("Redis connection manager failed: {e}");
+                None
+            }
+        },
+        Err(e) => {
+            warn!("Redis client open failed: {e}");
+            None
+        }
+    };
+
+    // --- PostgreSQL connection ---
+    let db_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://zfs:zfs_secret@127.0.0.1:5432/zfs_metrics".to_string());
+
+    let pg_client = match tokio_postgres::connect(&db_url, tokio_postgres::NoTls).await {
+        Ok((client, connection)) => {
+            // Spawn the connection driver task
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    warn!("PostgreSQL connection error: {e}");
+                }
+            });
+            info!("PostgreSQL connected");
+            // Initialize schema
+            init_schema(&client).await;
+            Some(Arc::new(client))
+        }
+        Err(e) => {
+            warn!("PostgreSQL connection failed: {e}");
+            None
+        }
+    };
+
+    let app_state = AppState {
+        redis: redis_conn,
+        pg: pg_client,
+    };
+
+    // Spawn background metrics worker
+    tokio::spawn(worker::run_metrics_worker(app_state.clone()));
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -64,21 +145,23 @@ async fn main() {
         .merge(routes::volumes::router())
         .merge(routes::clones::router())
         .merge(routes::properties::router())
+        .merge(routes::metrics::router(app_state.clone()))
         .layer(middleware::from_fn(auth_middleware))
         .layer(cors)
-        .layer(TraceLayer::new_for_http());
+        .layer(TraceLayer::new_for_http())
+        .layer(axum::Extension(app_state));
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
         .await
         .expect("Failed to bind port");
 
-    info!("🚀 zfs-manager listening on http://0.0.0.0:{port}");
+    info!("zfs-manager listening on http://0.0.0.0:{port}");
     info!("   API base: http://0.0.0.0:{port}/api/v1");
     if std::env::var("ZFS_API_KEY").is_ok() {
-        info!("🔐 API Key Authentication enabled!");
+        info!("API Key Authentication enabled!");
     } else {
-        info!("🔓 API Key is NOT set. API is accessible to everyone.");
+        info!("API Key is NOT set. API is accessible to everyone.");
     }
-    
+
     axum::serve(listener, app).await.expect("Server error");
 }

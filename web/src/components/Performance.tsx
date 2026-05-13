@@ -3,7 +3,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer
 } from 'recharts';
-import { Activity } from 'lucide-react';
+import { Activity, ArrowDown, ArrowUp, TrendingUp } from 'lucide-react';
 
 interface PerformanceProps {
   stats: any[];
@@ -48,6 +48,38 @@ function formatGB(v: number) {
   return `${(v * 1024).toFixed(0)} MB`;
 }
 
+function computeForecast(stats: any[]): { label: string; daysToFull: number | null } {
+  if (stats.length < 5) return { label: 'Collecting data…', daysToFull: null };
+
+  const allocs = stats.map(s => s.alloc as number);
+  const n = allocs.length;
+  const xs = Array.from({ length: n }, (_, i) => i);
+  const xMean = xs.reduce((a, b) => a + b, 0) / n;
+  const yMean = allocs.reduce((a, b) => a + b, 0) / n;
+
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (xs[i] - xMean) * (allocs[i] - yMean);
+    den += (xs[i] - xMean) ** 2;
+  }
+
+  if (den === 0) return { label: 'Stable', daysToFull: null };
+  const slope = num / den; // GB per poll interval (5s)
+
+  const last = stats[n - 1];
+  const freeGB = last.free ?? 0;
+
+  if (slope <= 0.00001) return { label: 'Stable – no growth', daysToFull: null };
+
+  // Each interval = 5s, 17280 intervals/day
+  const daysToFull = freeGB / (slope * 17280);
+
+  if (daysToFull > 365) return { label: '> 1 year', daysToFull };
+  if (daysToFull > 30) return { label: `~${Math.round(daysToFull / 30)} months`, daysToFull };
+  if (daysToFull > 1) return { label: `~${Math.round(daysToFull)} days`, daysToFull };
+  return { label: '< 1 day – CRITICAL', daysToFull };
+}
+
 // ── Clickable Legend Item ─────────────────────────────────────────────────────
 function LegendItem({
   color, label, dataKey, hidden, onToggle
@@ -86,6 +118,13 @@ export default function Performance({ stats }: PerformanceProps) {
 
   const h = (key: string) => hiddenSeries.has(key);
 
+  const latestStat = stats.length > 0 ? stats[stats.length - 1] : null;
+  const latestRead = latestStat?.read ?? 0;
+  const latestWrite = latestStat?.write ?? 0;
+  const latestIops = latestStat?.iops ?? 0;
+
+  const forecast = computeForecast(stats);
+
   return (
     <div className="space-y-10 pb-10 max-w-[1600px] mx-auto no-scrollbar">
       {stats.length === 0 && (
@@ -97,6 +136,35 @@ export default function Performance({ stats }: PerformanceProps) {
           <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">
             Awaiting real-time stream from node hardware...
           </p>
+        </div>
+      )}
+
+      {/* I/O History Summary Panel */}
+      {stats.length > 0 && (
+        <div className="glass-panel p-4 mx-4 flex items-center gap-8 justify-center">
+          <div className="flex items-center gap-3">
+            <ArrowDown size={18} style={{ color: '#22D3EE' }} />
+            <div>
+              <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Download (Read)</p>
+              <p className="text-sm font-black text-white">{formatMBs(latestRead)}</p>
+            </div>
+          </div>
+          <div className="h-8 w-px bg-white/[0.05]" />
+          <div className="flex items-center gap-3">
+            <ArrowUp size={18} style={{ color: '#818CF8' }} />
+            <div>
+              <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Upload (Write)</p>
+              <p className="text-sm font-black text-white">{formatMBs(latestWrite)}</p>
+            </div>
+          </div>
+          <div className="h-8 w-px bg-white/[0.05]" />
+          <div className="flex items-center gap-3">
+            <Activity size={18} className="text-amber-400" />
+            <div>
+              <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Current IOPS</p>
+              <p className="text-sm font-black text-white">{latestIops.toFixed(0)} ops/s</p>
+            </div>
+          </div>
         </div>
       )}
 
@@ -112,8 +180,8 @@ export default function Performance({ stats }: PerformanceProps) {
               </p>
             </div>
             <div className="flex gap-1">
-              <LegendItem color="#22D3EE" label="Read"  dataKey="read"  hidden={h('read')}  onToggle={toggleSeries} />
-              <LegendItem color="#818CF8" label="Write" dataKey="write" hidden={h('write')} onToggle={toggleSeries} />
+              <LegendItem color="#22D3EE" label="↓ Download" dataKey="read"  hidden={h('read')}  onToggle={toggleSeries} />
+              <LegendItem color="#818CF8" label="↑ Upload"   dataKey="write" hidden={h('write')} onToggle={toggleSeries} />
             </div>
           </div>
           <div className="h-[220px] w-full">
@@ -262,6 +330,15 @@ export default function Performance({ stats }: PerformanceProps) {
               <LegendItem color="#22D3EE" label="Free" dataKey="free"  hidden={h('free')}  onToggle={toggleSeries} />
             </div>
           </div>
+
+          {/* Storage Forecast callout */}
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/[0.04] mb-4">
+            <TrendingUp size={15} className="text-slate-500 flex-shrink-0" />
+            <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">
+              Forecast: Full in <span className="text-white">{forecast.label}</span>
+            </p>
+          </div>
+
           <div className="h-[220px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={stats} style={{ outline: 'none' }}>

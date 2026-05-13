@@ -2,7 +2,7 @@
 FROM rust:alpine AS builder
 
 # Required for building some async/network crates on musl
-RUN apk add --no-cache musl-dev
+RUN apk add --no-cache musl-dev gcc perl make
 
 WORKDIR /app
 

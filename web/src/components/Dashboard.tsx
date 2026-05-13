@@ -25,7 +25,8 @@ function MetricCard({ label, value, sub, icon: Icon, color, bg, delay = 0 }: any
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.6, ease: 'circOut', delay }}
+      whileHover={{ y: -3, scale: 1.02 }}
+      transition={{ duration: 0.6, ease: 'circOut', delay, type: 'spring', stiffness: 400, damping: 20 }}
       className="glass-panel p-5 flex items-center gap-4 hover:bg-white/[0.02] transition-all border-white/[0.02] group"
     >
       <div className={`p-3 rounded-2xl ${bg} border border-white/[0.04] flex-shrink-0 group-hover:scale-110 transition-transform`}>
@@ -262,13 +263,13 @@ export default function Dashboard({
               { label: 'IOPS',       value: iops,                             icon: Zap,       color: 'text-amber-400' },
               { label: 'Throughput', value: throughput,                       icon: Activity,  color: 'text-rose-400' },
             ].map((s, i) => (
-              <div key={i} className="flex flex-col gap-1.5">
+              <motion.div key={i} whileHover={{ scale: 1.05 }} className="flex flex-col gap-1.5 cursor-default">
                 <div className="flex items-center gap-1.5 opacity-40">
                   <s.icon size={11} className={s.color} />
                   <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{s.label}</span>
                 </div>
                 <p className="text-lg font-black text-white">{s.value}</p>
-              </div>
+              </motion.div>
             ))}
           </div>
         </motion.div>
@@ -301,8 +302,9 @@ export default function Dashboard({
                   key={i}
                   initial={{ opacity: 0, x: 10 }}
                   animate={{ opacity: 1, x: 0 }}
+                  whileHover={{ x: 2 }}
                   transition={{ delay: 0.5 + i * 0.05 }}
-                  className="p-4 bg-white/[0.01] rounded-2xl border border-white/[0.03] hover:border-white/[0.07] hover:bg-white/[0.02] transition-all group"
+                  className="p-4 bg-white/[0.01] rounded-2xl border border-white/[0.03] hover:border-white/[0.07] hover:bg-white/[0.02] transition-all duration-200 group"
                 >
                   <div className="flex justify-between items-center mb-3">
                     <div className="min-w-0 flex-1">

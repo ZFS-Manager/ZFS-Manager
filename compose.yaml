@@ -1,4 +1,40 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: zfs-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --save 60 1 --loglevel warning --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: zfs-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=zfs_metrics
+      - POSTGRES_USER=zfs
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-zfs_secret}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zfs -d zfs_metrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 10s
+
   zfs-backend:
     build:
       context: ./rust-backend
@@ -12,16 +48,23 @@ services:
       - RUST_LOG=info
       - ZFS_MANAGER_DATA=/home/docker/zfs-manager
       - ZFS_API_KEY=${ZFS_API_KEY:-admin123}
+      - REDIS_URL=redis://localhost:6379
+      - DATABASE_URL=postgres://zfs:${POSTGRES_PASSWORD:-zfs_secret}@localhost:5432/zfs_metrics
     privileged: true
     volumes:
-      - /dev:/dev                              # ZFS device nodes incl. /dev/zfs
-      - /proc:/proc                            # /proc/spl/kstat/zfs/arcstats etc.
-      - /sys/module/zfs:/sys/module/zfs:ro     # kernel ZFS module info
-      - /var/lib/zfs:/var/lib/zfs:ro           # ZFS cache files
-      - /tmp:/tmp                              # shared file-based pool images (/tmp/*.img)
+      - /dev:/dev
+      - /proc:/proc
+      - /sys/module/zfs:/sys/module/zfs:ro
+      - /var/lib/zfs:/var/lib/zfs:ro
+      - /tmp:/tmp
       - /home/docker/zfs-manager:/home/docker/zfs-manager
     working_dir: /home/docker/zfs-manager
     network_mode: host
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   zfs-web:
     build:
@@ -37,3 +80,7 @@ services:
       - "${ZFS_WEB_PORT:-8080}:80"
     depends_on:
       - zfs-backend
+
+volumes:
+  redis_data:
+  postgres_data:
