@@ -174,7 +174,7 @@ function StatCard({ label, value, sub, fillLine, icon: Icon, color, minHeight = 
       borderRadius: 'var(--radius-lg)', minHeight, position: 'relative',
     }}>
       <div style={{
-        position: 'absolute', top: 14, right: 14,
+        position: 'absolute', top: 12, right: 12,
         width: 28, height: 28,
         background: `color-mix(in srgb, ${c} 12%, transparent)`,
         border: `1px solid color-mix(in srgb, ${c} 25%, transparent)`,
@@ -186,27 +186,27 @@ function StatCard({ label, value, sub, fillLine, icon: Icon, color, minHeight = 
       <div style={{
         display: 'flex', flexDirection: 'column',
         justifyContent: 'center', alignItems: 'flex-start',
-        height: '100%', padding: '0 24px',
+        height: '100%', padding: '0 20px',
       }}>
-        <span style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 500, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+        <span style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 500, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
           {label}
         </span>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 26, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1, letterSpacing: '-0.02em', margin: 0, marginTop: 4 }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 28, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1, letterSpacing: '-0.02em', margin: 0, marginTop: 4 }}>
           {value}
         </div>
         {fillLine && (
           <>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: fillLine.color, marginTop: 2, fontWeight: 500 }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: fillLine.color, marginTop: 3, fontWeight: 500 }}>
               {fillLine.text}
             </div>
             {fillLine.sub && (
-              <div style={{ fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+              <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
                 {fillLine.sub}
               </div>
             )}
           </>
         )}
-        {sub && <div style={{ fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>{sub}</div>}
+        {sub && <div style={{ fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-muted)', marginTop: fillLine ? 2 : 3 }}>{sub}</div>}
       </div>
     </div>
   );

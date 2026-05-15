@@ -480,7 +480,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
           <div>
             {/* Fix #5 — 1s update section */}
             <SectionHeader label="Live I/O" badge="1 s" />
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
               <GaugeCard
                 label="↑ Read Speed"
                 value={ioReadBw >= 1000 ? (ioReadBw / 1000).toFixed(2) : ioReadBw.toFixed(1)}
