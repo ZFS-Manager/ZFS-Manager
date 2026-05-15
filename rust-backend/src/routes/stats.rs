@@ -9,18 +9,22 @@ pub fn router() -> Router {
         .route("/api/v1/system/smart/:device", get(get_smart_data))
 }
 
-fn parse_arc_stats(raw: &str) -> (f64, i64) {
-    let mut hits:     u64 = 0;
-    let mut misses:   u64 = 0;
-    let mut arc_size: i64 = 0;
+fn parse_arc_stats(raw: &str) -> (f64, i64, i64, i64, i64) {
+    let mut hits:      u64 = 0;
+    let mut misses:    u64 = 0;
+    let mut arc_size:  i64 = 0;
+    let mut meta_used: i64 = 0;
+    let mut target:    i64 = 0;
 
     for line in raw.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 3 {
             match parts[0] {
-                "hits"   => hits     = parts[2].parse().unwrap_or(0),
-                "misses" => misses   = parts[2].parse().unwrap_or(0),
-                "size"   => arc_size = parts[2].parse().unwrap_or(0),
+                "hits"          => hits      = parts[2].parse().unwrap_or(0),
+                "misses"        => misses    = parts[2].parse().unwrap_or(0),
+                "size"          => arc_size  = parts[2].parse().unwrap_or(0),
+                "arc_meta_used" => meta_used = parts[2].parse().unwrap_or(0),
+                "c"             => target    = parts[2].parse().unwrap_or(0),
                 _ => {}
             }
         }
@@ -28,7 +32,9 @@ fn parse_arc_stats(raw: &str) -> (f64, i64) {
 
     let total = hits + misses;
     let hit_ratio = if total > 0 { (hits as f64 / total as f64) * 100.0 } else { 0.0 };
-    (hit_ratio, arc_size)
+    let data_size = (arc_size - meta_used).max(0);
+    
+    (hit_ratio, arc_size, meta_used, data_size, target)
 }
 
 fn parse_loadavg(raw: &str) -> [f64; 3] {
@@ -96,7 +102,7 @@ async fn get_system_stats() -> Result<Json<Value>, ApiError> {
     let meminfo_raw = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
     let uptime_raw  = std::fs::read_to_string("/proc/uptime").unwrap_or_default();
 
-    let (arc_hit_ratio, arc_size) = parse_arc_stats(&arc_raw);
+    let (arc_hit_ratio, arc_size, arc_meta, arc_data, arc_target) = parse_arc_stats(&arc_raw);
     let cpu_load = parse_loadavg(&loadavg_raw);
     let (mem_total, mem_free, mem_available) = parse_meminfo(&meminfo_raw);
 
@@ -137,6 +143,9 @@ async fn get_system_stats() -> Result<Json<Value>, ApiError> {
         "cpu_load":       cpu_load,
         "cpu_percent":    cpu_percent,
         "arc_size":       arc_size,
+        "arc_metadata":   arc_meta,
+        "arc_data":       arc_data,
+        "arc_target":     arc_target,
         "arc_hit_ratio":  arc_hit_ratio,
         "zfs_version":    zfs_version,
         "memory": {

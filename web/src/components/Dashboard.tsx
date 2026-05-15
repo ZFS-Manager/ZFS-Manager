@@ -732,6 +732,38 @@ export default function Dashboard({
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)', width: 96, textAlign: 'right', flexShrink: 0 }}>{value}</div>
                   </div>
                 ))}
+
+                {/* ARC Detailed Breakdown */}
+                {systemStats?.arc_size > 0 && (
+                  <div style={{ marginTop: 8, paddingTop: 12, borderTop: '1px solid var(--border-subtle)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <span style={{ fontFamily: 'var(--font-ui)', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>ARC Breakdown</span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-secondary)' }}>
+                        {formatBytes(systemStats.arc_size)} / {formatBytes(systemStats.arc_target || 0)}
+                      </span>
+                    </div>
+                    <div className="progress-track" style={{ display: 'flex', overflow: 'hidden' }}>
+                      <div style={{
+                        width: `${(systemStats.arc_data / systemStats.arc_target) * 100}%`,
+                        height: '100%', background: '#3b82f6', transition: 'width 0.3s ease'
+                      }} title="Data" />
+                      <div style={{
+                        width: `${(systemStats.arc_metadata / systemStats.arc_target) * 100}%`,
+                        height: '100%', background: '#a855f7', transition: 'width 0.3s ease'
+                      }} title="Metadata" />
+                    </div>
+                    <div style={{ display: 'flex', gap: 12, marginTop: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6' }} />
+                        <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>Data: {formatBytes(systemStats.arc_data)}</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#a855f7' }} />
+                        <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>Meta: {formatBytes(systemStats.arc_metadata)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {uptime !== '—' && (
                   <div style={{ paddingTop: 10, borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>Uptime</span>
