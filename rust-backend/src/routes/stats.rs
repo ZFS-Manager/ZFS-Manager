@@ -60,7 +60,6 @@ fn parse_meminfo(raw: &str) -> (i64, i64, i64) {
     (total, free, available)
 }
 
-// Returns (total_jiffies, idle_jiffies) from /proc/stat cpu line
 fn read_cpu_jiffies() -> (u64, u64) {
     let content = std::fs::read_to_string("/proc/stat").unwrap_or_default();
     for line in content.lines() {
@@ -70,9 +69,8 @@ fn read_cpu_jiffies() -> (u64, u64) {
                 .skip(1)
                 .map(|s| s.parse().unwrap_or(0))
                 .collect();
-            // user, nice, system, idle, iowait, irq, softirq, steal, guest, guest_nice
             let idle  = vals.get(3).copied().unwrap_or(0)
-                      + vals.get(4).copied().unwrap_or(0); // idle + iowait
+                      + vals.get(4).copied().unwrap_or(0);
             let total: u64 = vals.iter().sum();
             return (total, idle);
         }
@@ -81,7 +79,6 @@ fn read_cpu_jiffies() -> (u64, u64) {
 }
 
 async fn get_system_stats() -> Result<Json<Value>, ApiError> {
-    // Two CPU readings 250ms apart for real-time CPU%
     let (t1, i1) = read_cpu_jiffies();
     tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
     let (t2, i2) = read_cpu_jiffies();
@@ -119,6 +116,20 @@ async fn get_system_stats() -> Result<Json<Value>, ApiError> {
         else              { format!("{mins}m") }
     };
 
+    // ZFS version
+    let zfs_version = tokio::process::Command::new("zfs")
+        .arg("--version")
+        .output()
+        .await
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .next()
+                .map(|l| l.trim().to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        })
+        .unwrap_or_else(|_| "unavailable".to_string());
+
     Ok(Json(json!({
         "uptime":         uptime_formatted,
         "uptime_secs":    uptime_secs,
@@ -127,6 +138,7 @@ async fn get_system_stats() -> Result<Json<Value>, ApiError> {
         "cpu_percent":    cpu_percent,
         "arc_size":       arc_size,
         "arc_hit_ratio":  arc_hit_ratio,
+        "zfs_version":    zfs_version,
         "memory": {
             "total":     mem_total,
             "free":      mem_free,

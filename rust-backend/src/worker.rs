@@ -85,7 +85,6 @@ async fn get_pool_names() -> Vec<String> {
 }
 
 /// Run `zpool iostat -H -p <pool> 1 2` and parse the last data row.
-/// Columns: name, alloc, free, read_ops, write_ops, read_bw, write_bw
 async fn get_pool_iostat(pool: &str) -> Option<(f64, f64, f64, f64, f64)> {
     let output = tokio::process::Command::new("zpool")
         .args(["iostat", "-H", "-p", pool, "1", "2"])
@@ -95,7 +94,6 @@ async fn get_pool_iostat(pool: &str) -> Option<(f64, f64, f64, f64, f64)> {
     match output {
         Ok(out) if out.status.success() => {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            // Take the last non-empty line (second interval)
             let last_line = stdout
                 .lines()
                 .filter(|l| !l.trim().is_empty())
@@ -103,7 +101,6 @@ async fn get_pool_iostat(pool: &str) -> Option<(f64, f64, f64, f64, f64)> {
                 .to_string();
 
             let cols: Vec<&str> = last_line.split('\t').collect();
-            // name alloc free read_ops write_ops read_bw write_bw
             if cols.len() < 7 {
                 return None;
             }
@@ -142,7 +139,6 @@ async fn push_to_redis(
     key_latest: &str,
     payload: &str,
 ) {
-    // RPUSH to pending list, then trim to last 2000
     let rpush_result: redis::RedisResult<i64> = redis.rpush(key_pending, payload).await;
     if let Err(e) = rpush_result {
         warn!("Redis RPUSH failed: {e}");
@@ -153,8 +149,8 @@ async fn push_to_redis(
         warn!("Redis LTRIM failed: {e}");
     }
 
-    // Also update latest key with 30s expiry
-    let set_result: redis::RedisResult<()> = redis.set_ex(key_latest, payload, 30usize).await;
+    // FIX 1: Changed 30usize to 30u64
+    let set_result: redis::RedisResult<()> = redis.set_ex(key_latest, payload, 30u64).await;
     if let Err(e) = set_result {
         warn!("Redis SET failed for latest key: {e}");
     }
@@ -165,7 +161,6 @@ async fn sync_redis_to_postgres(
     pg: &tokio_postgres::Client,
     key_pending: &str,
 ) {
-    // Get count first
     let count_result: redis::RedisResult<i64> = redis.llen(key_pending).await;
     let count = match count_result {
         Ok(n) => n,
@@ -178,9 +173,9 @@ async fn sync_redis_to_postgres(
         return;
     }
 
-    // Read all items
+    // FIX 2: Changed count - 1 (i64) to (count - 1) as isize
     let items_result: redis::RedisResult<Vec<String>> =
-        redis.lrange(key_pending, 0, count - 1).await;
+        redis.lrange(key_pending, 0, (count - 1) as isize).await;
     let items = match items_result {
         Ok(v) => v,
         Err(e) => {
@@ -230,8 +225,8 @@ async fn sync_redis_to_postgres(
         }
     }
 
-    // Delete the processed items (LTRIM from count onwards)
-    let ltrim_result: redis::RedisResult<()> = redis.ltrim(key_pending, count, -1).await;
+    // FIX 3: Changed count (i64) to count as isize
+    let ltrim_result: redis::RedisResult<()> = redis.ltrim(key_pending, count as isize, -1).await;
     if let Err(e) = ltrim_result {
         warn!("Redis LTRIM after sync failed: {e}");
     }
@@ -250,14 +245,10 @@ pub async fn run_metrics_worker(state: crate::state::AppState) {
     loop {
         ticker.tick().await;
 
-        // Collect CPU and ARC
         let cpu_percent = sample_cpu_percent().await;
         let arc_hit_ratio = read_arc_hit_ratio();
-
-        // Get pool names
         let pools = get_pool_names().await;
 
-        // Build metric entries – one per pool (or one global entry if no pools)
         let entries: Vec<serde_json::Value> = if pools.is_empty() {
             vec![serde_json::json!({
                 "pool_name": "",
@@ -289,7 +280,6 @@ pub async fn run_metrics_worker(state: crate::state::AppState) {
             result
         };
 
-        // Push to Redis
         if let Some(ref mut redis_conn) = state.redis.clone() {
             let mut conn = redis_conn.clone();
             for entry in &entries {
@@ -303,12 +293,10 @@ pub async fn run_metrics_worker(state: crate::state::AppState) {
                 push_to_redis(&mut conn, KEY_PENDING, KEY_LATEST, &payload).await;
             }
 
-            // Sync to Postgres
             if let Some(ref pg_client) = state.pg {
                 sync_redis_to_postgres(&mut conn, pg_client, KEY_PENDING).await;
             }
         } else if let Some(ref pg_client) = state.pg {
-            // No Redis – insert directly
             for entry in &entries {
                 let pool_name = entry["pool_name"].as_str().unwrap_or("").to_string();
                 let read_bw_mb = entry["read_bw_mb"].as_f64().unwrap_or(0.0);

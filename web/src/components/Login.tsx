@@ -8,106 +8,251 @@ interface LoginProps {
 
 export default function Login({ onLogin }: LoginProps) {
   const [password, setPassword] = useState('');
-  const [isError, setIsError] = useState(false);
+  const [isError, setIsError]   = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setIsError(false);
-    
     try {
       await onLogin(password);
-      // If success, App.tsx will re-render and Login will unmount
-    } catch (err) {
+    } catch {
       setIsError(true);
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 flex bg-[#070B14]">
-      {/* LEFT PANEL - visible only on lg+ screens */}
-      <div className="hidden lg:flex lg:w-[55%] flex-col justify-between p-16 border-r border-white/[0.04] relative overflow-hidden">
-        {/* Subtle dot grid background */}
-        <div className="absolute inset-0" style={{ backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px)', backgroundSize: '28px 28px' }} />
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[#070B14]/80" />
+    <div style={{
+      position: 'fixed', inset: 0, display: 'flex',
+      background: 'var(--bg-base)',
+      overflow: 'hidden',
+    }}>
+      {/* Animated grid background */}
+      <div style={{
+        position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0,
+        backgroundImage: 'linear-gradient(rgba(99,102,241,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,0.06) 1px, transparent 1px)',
+        backgroundSize: '48px 48px',
+      }} />
+      {/* Radial glow spots */}
+      {[
+        { top: '10%',  left: '15%',  size: 480, delay: '0s',   dur: '4s'  },
+        { top: '65%',  left: '5%',   size: 360, delay: '1s',   dur: '5s'  },
+        { top: '20%',  left: '75%',  size: 400, delay: '2s',   dur: '4.5s'},
+        { top: '80%',  left: '60%',  size: 320, delay: '0.5s', dur: '6s'  },
+        { top: '45%',  left: '40%',  size: 280, delay: '1.5s', dur: '3.5s'},
+      ].map((g, i) => (
+        <div key={i} className="glow-pulse" style={{
+          position: 'absolute',
+          top: g.top, left: g.left,
+          width: g.size, height: g.size,
+          borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(99,102,241,0.07) 0%, transparent 70%)',
+          transform: 'translate(-50%, -50%)',
+          pointerEvents: 'none', zIndex: 0,
+          animationDelay: g.delay,
+          animationDuration: g.dur,
+        }} />
+      ))}
+      {/* ── Left panel ── */}
+      <div style={{
+        display: 'none',
+        width: '52%',
+        flexDirection: 'column',
+        justifyContent: 'space-between',
+        padding: '48px 56px',
+        borderRight: '1px solid var(--border)',
+        background: 'var(--bg-surface)',
+        position: 'relative',
+        overflow: 'hidden',
+        zIndex: 1,
+      }} className="lg:flex">
 
-        {/* Top: Logo */}
-        <div className="relative flex items-center gap-3">
-          <div className="w-9 h-9 bg-sky-500/20 border border-sky-500/30 rounded-xl flex items-center justify-center">
-            <HardDrive size={18} className="text-sky-400" />
+        {/* Subtle grid background */}
+        <div style={{
+          position: 'absolute', inset: 0, opacity: 0.4,
+          backgroundImage: 'linear-gradient(var(--border-subtle) 1px, transparent 1px), linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px)',
+          backgroundSize: '32px 32px',
+        }} />
+
+        {/* Logo */}
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{
+            width: 34, height: 34,
+            background: 'var(--accent-dim)', border: '1px solid var(--accent-mid)',
+            borderRadius: 'var(--radius)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <HardDrive size={16} style={{ color: 'var(--accent)' }} />
           </div>
-          <span className="text-sm font-bold text-white/50 tracking-widest uppercase">ZFS Manager</span>
+          <span style={{
+            fontFamily: 'var(--font-ui)', fontSize: 14, fontWeight: 600,
+            color: 'var(--text-secondary)', letterSpacing: '-0.01em',
+          }}>
+            ZFS Manager
+          </span>
         </div>
 
-        {/* Middle: Headline */}
-        <div className="relative">
-          <p className="text-[11px] font-black text-sky-400/60 uppercase tracking-[0.3em] mb-6">Infrastructure Control</p>
-          <h1 className="text-6xl font-black text-white tracking-tighter leading-[1.05] mb-8">
+        {/* Hero text */}
+        <div style={{ position: 'relative' }}>
+          <p style={{
+            fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600,
+            color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.2em',
+            marginBottom: 20,
+          }}>
+            Infrastructure Control
+          </p>
+          <h1 style={{
+            fontFamily: 'var(--font-ui)', fontSize: 52, fontWeight: 700,
+            color: 'var(--text-primary)', letterSpacing: '-0.03em',
+            lineHeight: 1.08, marginBottom: 20,
+          }}>
             Storage<br />
-            <span className="text-white/25">at scale.</span>
+            <span style={{ color: 'var(--text-muted)', fontWeight: 300 }}>at scale.</span>
           </h1>
-          <p className="text-slate-500 text-sm leading-relaxed max-w-sm">
+          <p style={{
+            fontFamily: 'var(--font-ui)', fontSize: 14, color: 'var(--text-muted)',
+            lineHeight: 1.7, maxWidth: 340,
+          }}>
             Real-time ZFS pool management, performance telemetry, and storage analytics for production infrastructure.
           </p>
         </div>
 
-        {/* Bottom: Stats row */}
-        <div className="relative flex items-center gap-10">
-          <div>
-            <p className="text-xl font-black text-white tabular-nums">ZFS</p>
-            <p className="text-[10px] text-slate-600 uppercase tracking-[0.2em] mt-0.5">Native</p>
-          </div>
-          <div className="h-10 w-px bg-white/[0.05]" />
-          <div>
-            <p className="text-xl font-black text-white tabular-nums">OpenZFS</p>
-            <p className="text-[10px] text-slate-600 uppercase tracking-[0.2em] mt-0.5">Compatible</p>
-          </div>
-          <div className="h-10 w-px bg-white/[0.05]" />
-          <div>
-            <p className="text-xl font-black text-white tabular-nums">REST</p>
-            <p className="text-[10px] text-slate-600 uppercase tracking-[0.2em] mt-0.5">API</p>
-          </div>
+        {/* Stats row */}
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 40 }}>
+          {['ZFS Native', 'OpenZFS', 'REST API'].map((label, i) => (
+            <React.Fragment key={label}>
+              {i > 0 && <div style={{ width: 1, height: 28, background: 'var(--border)' }} />}
+              <div>
+                <div style={{
+                  fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 600,
+                  color: 'var(--text-primary)',
+                }}>
+                  {label}
+                </div>
+                <div style={{
+                  fontFamily: 'var(--font-ui)', fontSize: 10, color: 'var(--text-muted)',
+                  textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 2,
+                }}>
+                  {label === 'ZFS Native' ? 'Kernel module' : label === 'OpenZFS' ? 'Compatible' : 'v1 — stable'}
+                </div>
+              </div>
+            </React.Fragment>
+          ))}
         </div>
       </div>
 
-      {/* RIGHT PANEL - login form */}
-      <div className="flex-1 flex items-center justify-center p-8 relative">
-        <div className="absolute top-8 right-8 hidden lg:flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">System Online</span>
+      {/* ── Right panel (login form) ── */}
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 32,
+        position: 'relative',
+        zIndex: 1,
+      }}>
+
+        {/* Status pill top-right */}
+        <div style={{
+          position: 'absolute', top: 24, right: 24,
+          display: 'flex', alignItems: 'center', gap: 6,
+        }}>
+          <span style={{
+            display: 'inline-block', width: 6, height: 6, borderRadius: '50%',
+            background: 'var(--success)',
+          }} />
+          <span style={{
+            fontFamily: 'var(--font-mono)', fontSize: 10,
+            color: 'var(--text-muted)', letterSpacing: '0.05em',
+          }}>
+            System online
+          </span>
         </div>
 
         <motion.div
-          initial={{ opacity: 0, y: 16 }}
+          initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: 'easeOut' }}
-          className="w-full max-w-[380px]"
+          transition={{ duration: 0.4, ease: 'easeOut' }}
+          style={{ width: '100%', maxWidth: 420 }}
         >
-          {/* Mobile-only logo */}
-          <div className="flex items-center gap-3 mb-10 lg:hidden">
-            <div className="w-8 h-8 bg-sky-500/20 border border-sky-500/30 rounded-xl flex items-center justify-center">
-              <HardDrive size={16} className="text-sky-400" />
+          <div style={{
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 14,
+            padding: 40,
+            boxShadow: '0 8px 40px rgba(0,0,0,0.4)',
+          }}>
+          {/* Logo inside card — always visible */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 32 }}>
+            <div style={{
+              width: 32, height: 32,
+              background: 'var(--accent-dim)', border: '1px solid var(--accent-mid)',
+              borderRadius: 'var(--radius)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <HardDrive size={15} style={{ color: 'var(--accent)' }} />
             </div>
-            <span className="text-sm font-bold text-white/50 tracking-widest uppercase">ZFS Manager</span>
+            <span style={{ fontFamily: 'var(--font-ui)', fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)' }}>
+              ZFS Manager
+            </span>
           </div>
 
-          <h2 className="text-3xl font-black text-white tracking-tight mb-1">Welcome back</h2>
-          <p className="text-sm text-slate-500 mb-10">Enter your API access token to continue</p>
+          <h2 style={{
+            fontFamily: 'var(--font-ui)', fontSize: 24, fontWeight: 700,
+            color: 'var(--text-primary)', letterSpacing: '-0.02em',
+            marginBottom: 6,
+          }}>
+            Welcome back
+          </h2>
+          <p style={{
+            fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-muted)',
+            marginBottom: 32,
+          }}>
+            Enter your access key to continue
+          </p>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-[11px] font-black text-slate-500 uppercase tracking-widest mb-2">Access Token</label>
-              <div className={`flex items-center gap-3 border ${isError ? 'border-rose-500/50 bg-rose-500/5' : 'border-white/[0.08] bg-white/[0.03]'} rounded-xl px-4 py-3.5 focus-within:border-sky-500/40 focus-within:bg-white/[0.04] transition-all`}>
-                <Lock size={16} className={isError ? 'text-rose-400' : 'text-slate-600'} />
+          <form onSubmit={handleSubmit}>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{
+                display: 'block', fontFamily: 'var(--font-ui)',
+                fontSize: 11, fontWeight: 500, color: 'var(--text-muted)',
+                textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8,
+              }}>
+                Password
+              </label>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                background: 'var(--bg-elevated)',
+                border: `1px solid ${isError ? 'rgba(239,68,68,0.5)' : 'var(--border)'}`,
+                borderRadius: 'var(--radius)',
+                padding: '0 12px',
+                transition: 'border-color 0.12s',
+              }}
+              onFocus={() => {}}
+              >
+                <Lock size={14} style={{ color: isError ? 'var(--danger)' : 'var(--text-muted)', flexShrink: 0 }} />
                 <input
                   type="password"
-                  placeholder="tok_••••••••••••••••"
+                  placeholder="Enter password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  className="bg-transparent border-none outline-none text-white placeholder:text-slate-700 w-full text-sm font-mono tracking-wider"
                   autoFocus
+                  style={{
+                    flex: 1, height: 40,
+                    background: 'transparent', border: 'none', outline: 'none',
+                    fontFamily: 'var(--font-ui)', fontSize: 14,
+                    color: 'var(--text-primary)',
+                  }}
+                  onFocus={e => {
+                    const parent = e.currentTarget.parentElement as HTMLElement;
+                    if (parent) parent.style.borderColor = 'var(--accent)';
+                    if (parent) parent.style.boxShadow = '0 0 0 3px var(--accent-dim)';
+                  }}
+                  onBlur={e => {
+                    const parent = e.currentTarget.parentElement as HTMLElement;
+                    if (parent) parent.style.borderColor = isError ? 'rgba(239,68,68,0.5)' : 'var(--border)';
+                    if (parent) parent.style.boxShadow = 'none';
+                  }}
                 />
               </div>
               <AnimatePresence>
@@ -115,11 +260,15 @@ export default function Login({ onLogin }: LoginProps) {
                   <motion.p
                     initial={{ opacity: 0, y: -4 }}
                     animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -4 }}
-                    className="mt-2 text-[11px] text-rose-400 font-bold flex items-center gap-1.5"
+                    exit={{ opacity: 0 }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6,
+                      marginTop: 8, fontSize: 12,
+                      color: 'var(--danger)', fontFamily: 'var(--font-ui)',
+                    }}
                   >
-                    <AlertCircle size={11} />
-                    Invalid token — authentication failed
+                    <AlertCircle size={12} />
+                    Incorrect password — access denied
                   </motion.p>
                 )}
               </AnimatePresence>
@@ -128,24 +277,57 @@ export default function Login({ onLogin }: LoginProps) {
             <button
               type="submit"
               disabled={isLoading || !password}
-              className="w-full mt-2 py-3.5 px-6 rounded-xl font-black text-[13px] tracking-wide bg-sky-500 hover:bg-sky-400 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-all active:scale-[0.98] flex items-center justify-center gap-3"
+              style={{
+                width: '100%', height: 40,
+                background: 'var(--accent)',
+                border: 'none',
+                borderRadius: 'var(--radius)',
+                fontFamily: 'var(--font-ui)',
+                fontSize: 14, fontWeight: 600,
+                color: '#fff',
+                cursor: isLoading || !password ? 'not-allowed' : 'pointer',
+                opacity: isLoading || !password ? 0.5 : 1,
+                transition: 'all 0.12s',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              }}
+              onMouseEnter={e => { if (!isLoading && password) (e.currentTarget as HTMLElement).style.background = '#4f52e8'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'var(--accent)'; }}
             >
               {isLoading ? (
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <div style={{
+                  width: 16, height: 16, borderRadius: '50%',
+                  border: '2px solid rgba(255,255,255,0.3)',
+                  borderTopColor: '#fff',
+                  animation: 'spin 0.7s linear infinite',
+                }} />
               ) : (
                 <>
-                  <span>Continue</span>
-                  <ArrowRight size={16} strokeWidth={2.5} />
+                  Continue
+                  <ArrowRight size={15} strokeWidth={2.5} />
                 </>
               )}
             </button>
           </form>
 
-          <p className="mt-8 text-center text-[11px] text-slate-700">
-            Protected by API key authentication · TLS encrypted
+          <p style={{
+            marginTop: 24, textAlign: 'center',
+            fontFamily: 'var(--font-ui)', fontSize: 11,
+            color: 'var(--text-muted)',
+          }}>
+            Password-protected · TLS encrypted
           </p>
+          </div>
         </motion.div>
       </div>
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes glowPulse {
+          0%, 100% { opacity: 0.03; transform: translate(-50%, -50%) scale(1); }
+          50%       { opacity: 0.07; transform: translate(-50%, -50%) scale(1.15); }
+        }
+        .glow-pulse { animation: glowPulse 4s ease-in-out infinite; }
+      `}</style>
     </div>
   );
 }

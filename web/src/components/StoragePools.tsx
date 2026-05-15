@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Database, RefreshCw, ShieldCheck, ChevronDown,
-  CheckCircle, XCircle, Loader2, Plus, Trash2, AlertTriangle, X,
-  HardDrive, Zap, Expand, RotateCcw, ChevronRight, Monitor,
-  Activity, Info, Download, ArrowLeftRight, Cpu
+  Database, RefreshCw, ChevronDown, CheckCircle, XCircle,
+  Loader2, Plus, Trash2, AlertTriangle, X, HardDrive,
+  ArrowLeftRight, Download, Expand, RotateCcw, ChevronRight,
+  Activity, Info, Cpu,
 } from 'lucide-react';
 import { ZFSPool } from '../types';
 import { api, formatBytes } from '../api';
@@ -12,6 +12,7 @@ import { api, formatBytes } from '../api';
 interface StoragePoolsProps {
   pools: ZFSPool[];
   onRefresh: () => void;
+  zfsVersion?: string;
 }
 
 type ScrubState = 'idle' | 'running' | 'success' | 'error';
@@ -26,34 +27,64 @@ interface ScrubProgress {
 }
 
 const VDEV_INFO: Record<VdevType, { min: number; label: string; desc: string; color: string }> = {
-  stripe:  { min: 1, label: 'Stripe',   desc: 'Max performance, no redundancy',             color: 'text-rose-400 border-rose-400/30 bg-rose-400/8' },
-  mirror:  { min: 2, label: 'Mirror',   desc: 'Full redundancy, survives 1 disk loss',       color: 'text-emerald-400 border-emerald-400/30 bg-emerald-400/8' },
-  raidz1:  { min: 3, label: 'RAIDZ-1',  desc: 'Single parity, min 3 devices',               color: 'text-sky-400 border-sky-400/30 bg-sky-400/8' },
-  raidz2:  { min: 4, label: 'RAIDZ-2',  desc: 'Double parity, min 4 devices',               color: 'text-indigo-400 border-indigo-400/30 bg-indigo-400/8' },
-  raidz3:  { min: 5, label: 'RAIDZ-3',  desc: 'Triple parity, min 5 devices',               color: 'text-violet-400 border-violet-400/30 bg-violet-400/8' },
+  stripe: { min: 1, label: 'Stripe',  desc: 'Max performance, no redundancy',       color: 'var(--danger)'  },
+  mirror: { min: 2, label: 'Mirror',  desc: 'Full redundancy, survives 1 disk loss', color: 'var(--success)' },
+  raidz1: { min: 3, label: 'RAIDZ-1', desc: 'Single parity, min 3 devices',          color: 'var(--info)'    },
+  raidz2: { min: 4, label: 'RAIDZ-2', desc: 'Double parity, min 4 devices',          color: 'var(--accent)'  },
+  raidz3: { min: 5, label: 'RAIDZ-3', desc: 'Triple parity, min 5 devices',          color: 'var(--warning)' },
 };
 
-// ── Toast ─────────────────────────────────────────────────────────────────────
-function Toast({ msg, type, onClose }: { msg: string; type: 'success' | 'error'; onClose: () => void }) {
+/* ── Small helpers ───────────────────────────────────────────────────────────── */
+const S = {
+  modal: {
+    overlay: {
+      position: 'fixed' as const, inset: 0, zIndex: 200,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 16, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)',
+    },
+    box: {
+      background: 'var(--bg-surface)', border: '1px solid var(--border)',
+      borderRadius: 'var(--radius-lg)', padding: 28, width: '100%',
+      maxWidth: 480, boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+    },
+    title:  { fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)', margin: 0 },
+    label:  { fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase' as const, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', display: 'block', marginBottom: 8 },
+    input:  { width: '100%', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 14px', fontSize: 13, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', outline: 'none', boxSizing: 'border-box' as const },
+    select: { width: '100%', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 14px', fontSize: 13, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)', outline: 'none', cursor: 'pointer' },
+  },
+};
+
+function iconBtn(onClick: () => void, icon: React.ReactNode, title: string, col = 'var(--text-muted)') {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: -20, scale: 0.95 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -10 }}
-      className={`fixed top-6 right-6 z-[300] flex items-center gap-3 px-5 py-3 rounded-2xl border shadow-2xl ${
-        type === 'success'
-          ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
-          : 'bg-rose-500/10 border-rose-500/20 text-rose-400'
-      }`}
-    >
-      {type === 'success' ? <CheckCircle size={16} strokeWidth={2.5} /> : <XCircle size={16} strokeWidth={2.5} />}
-      <span className="text-[12px] font-black">{msg}</span>
-      <button onClick={onClose} className="ml-2 opacity-50 hover:opacity-100 text-lg leading-none">&times;</button>
-    </motion.div>
+    <button title={title} onClick={onClick} style={{
+      width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+      borderRadius: 'var(--radius)', cursor: 'pointer', color: col, transition: 'all 0.12s',
+    }}>{icon}</button>
   );
 }
 
-// ── Device Picker ─────────────────────────────────────────────────────────────
+/* ── Toast ─────────────────────────────────────────────────────────────────────── */
+function Toast({ msg, type, onClose }: { msg: string; type: 'success' | 'error'; onClose: () => void }) {
+  const col = type === 'success' ? 'var(--success)' : 'var(--danger)';
+  const dim = type === 'success' ? 'var(--success-dim)' : 'var(--danger-dim)';
+  const bdr = type === 'success' ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)';
+  return (
+    <div style={{
+      position: 'fixed', top: 20, right: 24, zIndex: 300,
+      display: 'flex', alignItems: 'center', gap: 10, padding: '10px 18px',
+      borderRadius: 'var(--radius-lg)', border: `1px solid ${bdr}`,
+      background: dim, color: col, boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+      fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 600,
+    }}>
+      {type === 'success' ? <CheckCircle size={15} /> : <XCircle size={15} />}
+      {msg}
+      <button onClick={onClose} style={{ marginLeft: 6, background: 'none', border: 'none', cursor: 'pointer', color: col, opacity: 0.6, fontSize: 16, lineHeight: 1 }}>×</button>
+    </div>
+  );
+}
+
+/* ── Device Picker ────────────────────────────────────────────────────────────── */
 function DevicePicker({ onSelect, onClose }: { onSelect: (path: string) => void; onClose: () => void }) {
   const [disks, setDisks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,156 +97,103 @@ function DevicePicker({ onSelect, onClose }: { onSelect: (path: string) => void;
   }, []);
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ scale: 0.92, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9 }}
-        transition={{ duration: 0.22, ease: 'circOut' }}
-        className="glass-panel w-full max-w-md p-6 shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-5">
+    <div style={{ ...S.modal.overlay, zIndex: 300 }} onClick={onClose}>
+      <div style={{ ...S.modal.box, maxWidth: 440 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
-            <h4 className="text-base font-black text-white">Available Block Devices</h4>
-            <p className="text-[9px] font-bold text-slate-600 uppercase tracking-widest mt-0.5">lsblk output</p>
+            <h4 style={S.modal.title}>Available Block Devices</h4>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>lsblk output</p>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl text-slate-500 hover:text-white">
-            <X size={15} />
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+            <X size={16} />
           </button>
         </div>
         {loading ? (
-          <div className="flex items-center gap-3 py-8 justify-center text-slate-600">
-            <Loader2 size={16} className="animate-spin" />
-            <span className="text-[12px] font-bold">Scanning devices...</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '32px 0', justifyContent: 'center', color: 'var(--text-muted)' }}>
+            <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
+            <span style={{ fontSize: 12, fontFamily: 'var(--font-ui)' }}>Scanning devices…</span>
           </div>
         ) : disks.length === 0 ? (
-          <div className="py-8 text-center">
-            <Monitor size={32} className="text-white/5 mx-auto mb-3" strokeWidth={1} />
-            <p className="text-[11px] font-bold text-slate-600">No block devices found</p>
-            <p className="text-[10px] text-slate-700 mt-1">Enter device path manually</p>
-          </div>
+          <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: '24px 0' }}>No block devices found</p>
         ) : (
-          <div className="space-y-2">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {disks.map((disk, i) => (
-              <button
-                key={i}
-                onClick={() => { onSelect(`/dev/${disk.name}`); onClose(); }}
-                className="w-full flex items-center gap-4 p-3 rounded-xl bg-white/[0.02] border border-white/[0.04] hover:bg-sky-400/8 hover:border-sky-400/20 transition-all text-left group"
+              <button key={i} onClick={() => { onSelect(`/dev/${disk.name}`); onClose(); }} style={{
+                display: 'flex', alignItems: 'center', gap: 14, padding: '10px 14px',
+                background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                borderRadius: 'var(--radius)', cursor: 'pointer', textAlign: 'left', transition: 'all 0.12s',
+              }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; }}
               >
-                <div className="w-9 h-9 bg-white/[0.02] border border-white/[0.04] rounded-xl flex items-center justify-center text-slate-600 group-hover:text-sky-400 flex-shrink-0">
-                  <HardDrive size={16} strokeWidth={1.5} />
+                <HardDrive size={16} style={{ color: 'var(--info)', flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>/dev/{disk.name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{disk.model || ''} {disk.rota ? 'HDD' : 'SSD'}</div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[13px] font-black text-white font-mono">/dev/{disk.name}</span>
-                    <span className="text-[10px] font-black text-sky-400 ml-2">{formatBytes(disk.size, 1)}</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    {disk.model && <span className="text-[9px] font-bold text-slate-600 truncate">{disk.model}</span>}
-                    {disk.tran && <span className="text-[9px] font-black text-slate-700 uppercase bg-white/[0.02] px-1.5 py-0.5 rounded">{disk.tran}</span>}
-                    <span className="text-[9px] font-bold text-slate-700">{disk.rota ? 'HDD' : 'SSD'}</span>
-                  </div>
-                </div>
-                <ChevronRight size={12} className="text-slate-700 group-hover:text-sky-400 flex-shrink-0" />
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--info)', fontWeight: 600 }}>{formatBytes(disk.size, 1)}</span>
               </button>
             ))}
           </div>
         )}
-      </motion.div>
-    </motion.div>
+      </div>
+    </div>
   );
 }
 
-// ── SMART Data Modal ──────────────────────────────────────────────────────────
+/* ── SMART Modal ──────────────────────────────────────────────────────────────── */
 function SmartModal({ device, onClose }: { device: string; onClose: () => void }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.getSmartData(device)
-      .then(setData)
-      .catch(() => setData(null))
-      .finally(() => setLoading(false));
+    api.getSmartData(device).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
   }, [device]);
 
   const passed = data?.smart_status?.passed;
-  const temp = data?.temperature?.current;
-  const hours = data?.power_on_time?.hours;
-  const attrs = data?.ata_smart_attributes?.table || [];
+  const temp   = data?.temperature?.current;
+  const hours  = data?.power_on_time?.hours;
+  const attrs  = data?.ata_smart_attributes?.table || [];
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[250] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ scale: 0.92, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9 }}
-        transition={{ duration: 0.22, ease: 'circOut' }}
-        className="glass-panel w-full max-w-lg p-6 shadow-2xl overflow-y-auto max-h-[80vh] no-scrollbar"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-5">
+    <div style={S.modal.overlay} onClick={onClose}>
+      <div style={{ ...S.modal.box, maxWidth: 520, maxHeight: '80vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
-            <h4 className="text-base font-black text-white">SMART Data</h4>
-            <p className="text-[10px] font-mono text-slate-600 mt-0.5">{device}</p>
+            <h4 style={S.modal.title}>SMART Data</h4>
+            <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{device}</p>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl text-slate-500 hover:text-white">
-            <X size={15} />
-          </button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
         </div>
-
         {loading ? (
-          <div className="flex items-center gap-3 py-8 justify-center text-slate-600">
-            <Loader2 size={16} className="animate-spin" />
-            <span className="text-[12px] font-bold">Reading SMART data...</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '32px 0', justifyContent: 'center', color: 'var(--text-muted)' }}>
+            <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
+            <span style={{ fontSize: 12 }}>Reading SMART data…</span>
           </div>
-        ) : !data || passed === null ? (
-          <div className="py-8 text-center">
-            <Activity size={32} className="text-white/5 mx-auto mb-3" strokeWidth={1} />
-            <p className="text-[11px] font-bold text-slate-600">No SMART data available</p>
-            <p className="text-[10px] text-slate-700 mt-1">smartctl not installed or device not supported</p>
-          </div>
+        ) : !data ? (
+          <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: '24px 0' }}>No SMART data available</p>
         ) : (
-          <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-3">
-              <div className={`p-3 rounded-xl border text-center ${passed ? 'bg-emerald-400/8 border-emerald-400/20' : 'bg-rose-400/8 border-rose-400/20'}`}>
-                <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-1">Status</p>
-                <p className={`text-[13px] font-black ${passed ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {passed ? 'PASSED' : 'FAILED'}
-                </p>
-              </div>
-              {temp !== undefined && (
-                <div className="p-3 rounded-xl border bg-white/[0.02] border-white/[0.04] text-center">
-                  <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-1">Temp</p>
-                  <p className={`text-[13px] font-black ${temp > 55 ? 'text-rose-400' : temp > 45 ? 'text-amber-400' : 'text-white'}`}>
-                    {temp}°C
-                  </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+              {[
+                { label: 'Status', value: passed === true ? 'PASSED' : 'FAILED', color: passed === true ? 'var(--success)' : 'var(--danger)' },
+                ...(temp !== undefined ? [{ label: 'Temp', value: `${temp}°C`, color: temp > 55 ? 'var(--danger)' : temp > 45 ? 'var(--warning)' : 'var(--text-primary)' }] : []),
+                ...(hours !== undefined ? [{ label: 'Power-On', value: hours >= 8760 ? `${(hours/8760).toFixed(1)}y` : `${(hours/24).toFixed(0)}d`, color: 'var(--text-primary)' }] : []),
+              ].map(({ label, value, color }) => (
+                <div key={label} style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 14px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>{label}</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color }}>{value}</div>
                 </div>
-              )}
-              {hours !== undefined && (
-                <div className="p-3 rounded-xl border bg-white/[0.02] border-white/[0.04] text-center">
-                  <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-1">Power-On</p>
-                  <p className="text-[13px] font-black text-white">
-                    {hours >= 8760 ? `${(hours / 8760).toFixed(1)}y` : `${(hours / 24).toFixed(0)}d`}
-                  </p>
-                </div>
-              )}
+              ))}
             </div>
-
             {attrs.length > 0 && (
               <div>
-                <p className="text-[9px] font-black text-slate-700 uppercase tracking-widest mb-2">Attributes</p>
-                <div className="space-y-1 max-h-48 overflow-y-auto no-scrollbar">
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Attributes</div>
+                <div style={{ maxHeight: 200, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
                   {attrs.slice(0, 12).map((a: any, i: number) => (
-                    <div key={i} className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-white/[0.01] border border-white/[0.02]">
-                      <span className="text-[10px] font-bold text-slate-400 truncate max-w-[200px]">{a.name}</span>
-                      <span className={`text-[10px] font-black ml-2 ${a.thresh > 0 && a.value <= a.thresh ? 'text-rose-400' : 'text-white/60'}`}>
-                        {a.raw?.value ?? a.value}
-                      </span>
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)' }}>
+                      <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{a.name}</span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: a.thresh > 0 && a.value <= a.thresh ? 'var(--danger)' : 'var(--text-muted)', fontWeight: 600 }}>{a.raw?.value ?? a.value}</span>
                     </div>
                   ))}
                 </div>
@@ -223,20 +201,15 @@ function SmartModal({ device, onClose }: { device: string; onClose: () => void }
             )}
           </div>
         )}
-      </motion.div>
-    </motion.div>
+      </div>
+    </div>
   );
 }
 
-// ── Replace Disk Modal ────────────────────────────────────────────────────────
-function ReplaceDiskModal({
-  poolName, poolDisks, preselectedDisk, onClose, onSuccess
-}: {
-  poolName: string;
-  poolDisks: { path: string; state: string }[];
-  preselectedDisk?: string;
-  onClose: () => void;
-  onSuccess: () => void;
+/* ── Replace Disk Modal ───────────────────────────────────────────────────────── */
+function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuccess }: {
+  poolName: string; poolDisks: { path: string; state: string }[];
+  preselectedDisk?: string; onClose: () => void; onSuccess: () => void;
 }) {
   const [selectedOld, setSelectedOld] = useState(preselectedDisk || '');
   const [newDisk, setNewDisk]         = useState('');
@@ -250,167 +223,107 @@ function ReplaceDiskModal({
     if (!selectedOld) { setError('Select the disk to replace'); return; }
     if (!newDisk.trim()) { setError('New device path is required'); return; }
     setReplacing(true); setError('');
-    try {
-      await api.replaceDisk(poolName, selectedOld, newDisk.trim(), force);
-      onSuccess();
-    } catch (err: any) {
-      setError(err.message || 'Replace failed');
-    } finally {
-      setReplacing(false);
-    }
+    try { await api.replaceDisk(poolName, selectedOld, newDisk.trim(), force); onSuccess(); }
+    catch (err: any) { setError(err.message || 'Replace failed'); }
+    finally { setReplacing(false); }
   };
 
   return (
     <>
-      <AnimatePresence>
-        {showPicker && <DevicePicker onSelect={p => { setNewDisk(p); setShowPicker(false); }} onClose={() => setShowPicker(false)} />}
-      </AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md"
-        onClick={onClose}
-      >
-        <motion.div
-          initial={{ scale: 0.92, y: 24 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92 }}
-          transition={{ duration: 0.25, ease: 'circOut' }}
-          className="glass-panel w-full max-w-md p-8 shadow-2xl"
-          onClick={e => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between mb-6">
+      {showPicker && <DevicePicker onSelect={p => { setNewDisk(p); setShowPicker(false); }} onClose={() => setShowPicker(false)} />}
+      <div style={S.modal.overlay} onClick={onClose}>
+        <div style={S.modal.box} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
             <div>
-              <h3 className="text-lg font-black text-white tracking-tight">Replace Disk</h3>
-              <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mt-0.5">
+              <h3 style={S.modal.title}>Replace Disk</h3>
+              <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>
                 zpool replace {poolName} · Step {step}/2
               </p>
             </div>
-            <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl text-slate-500 hover:text-white">
-              <X size={16} />
-            </button>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
           </div>
 
-          <div className="space-y-5">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             {step === 1 ? (
               <>
-                <div>
-                  <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-3">
-                    Step 1 — Select disk to replace
-                  </p>
-                  {poolDisks.length === 0 ? (
-                    <p className="text-[11px] text-slate-600 py-4 text-center">No disks found in pool</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {poolDisks.map((d, i) => (
-                        <button
-                          key={i}
-                          onClick={() => setSelectedOld(d.path)}
-                          className={`w-full flex items-center gap-4 p-3 rounded-xl border transition-all text-left ${
-                            selectedOld === d.path
-                              ? 'bg-amber-400/10 border-amber-400/25'
-                              : 'bg-white/[0.02] border-white/[0.04] hover:border-white/[0.08]'
-                          }`}
-                        >
-                          <HardDrive size={16} className={selectedOld === d.path ? 'text-amber-400' : 'text-slate-600'} strokeWidth={1.5} />
-                          <div className="flex-1 min-w-0">
-                            <span className="text-[12px] font-black text-white font-mono block truncate">{d.path}</span>
-                            <span className={`text-[9px] font-bold uppercase tracking-widest ${d.state === 'ONLINE' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {d.state}
-                            </span>
-                          </div>
-                          {selectedOld === d.path && <CheckCircle size={14} className="text-amber-400 flex-shrink-0" />}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="flex gap-3 pt-1">
-                  <button onClick={onClose} className="flex-1 apple-button apple-button-secondary">Cancel</button>
-                  <button
-                    onClick={() => setStep(2)}
-                    disabled={!selectedOld}
-                    className="flex-1 apple-button apple-button-primary disabled:opacity-40 gap-2"
-                  >
-                    <ChevronRight size={14} />
-                    <span className="text-[10px] font-black uppercase tracking-widest">Next</span>
+                <label style={S.modal.label}>Step 1 — Select disk to replace</label>
+                {poolDisks.length === 0 ? (
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>No disks found in pool</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {poolDisks.map((d, i) => (
+                      <button key={i} onClick={() => setSelectedOld(d.path)} style={{
+                        display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
+                        background: selectedOld === d.path ? 'var(--warning-dim)' : 'var(--bg-elevated)',
+                        border: `1px solid ${selectedOld === d.path ? 'rgba(245,158,11,0.3)' : 'var(--border)'}`,
+                        borderRadius: 'var(--radius)', cursor: 'pointer', textAlign: 'left', transition: 'all 0.12s',
+                      }}>
+                        <HardDrive size={14} style={{ color: selectedOld === d.path ? 'var(--warning)' : 'var(--text-muted)', flexShrink: 0 }} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{d.path}</div>
+                          <div style={{ fontSize: 10, color: d.state === 'ONLINE' ? 'var(--success)' : 'var(--danger)', textTransform: 'uppercase', marginTop: 2 }}>{d.state}</div>
+                        </div>
+                        {selectedOld === d.path && <CheckCircle size={13} style={{ color: 'var(--warning)' }} />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
+                  <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={() => setStep(2)} disabled={!selectedOld}>
+                    <ChevronRight size={14} /> Next
                   </button>
                 </div>
               </>
             ) : (
               <>
-                <div className="p-3 rounded-xl bg-amber-400/5 border border-amber-400/15">
-                  <p className="text-[9px] font-black text-amber-400 uppercase tracking-widest mb-1">Replacing</p>
-                  <p className="text-[12px] font-mono text-white/80">{selectedOld}</p>
+                <div style={{ background: 'var(--warning-dim)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 'var(--radius)', padding: '10px 14px' }}>
+                  <div style={{ fontSize: 10, color: 'var(--warning)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Replacing</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)' }}>{selectedOld}</div>
                 </div>
-
-                <div>
-                  <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-2">
-                    Step 2 — Select replacement disk
-                  </p>
-                  <div className="flex gap-2">
-                    <input
-                      type="text" placeholder="/dev/sdb or /path/to/disk"
-                      value={newDisk} onChange={e => setNewDisk(e.target.value)}
-                      className="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-[13px] text-white font-mono placeholder:text-slate-700 focus:outline-none focus:border-sky-400/40"
-                    />
-                    <button
-                      onClick={() => setShowPicker(true)}
-                      className="px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-xl text-slate-500 hover:text-sky-400 hover:border-sky-400/30 transition-all"
-                      title="Browse block devices"
-                    >
-                      <HardDrive size={15} />
-                    </button>
-                  </div>
+                <label style={S.modal.label}>Step 2 — Select replacement disk</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input style={{ ...S.modal.input, flex: 1 }} type="text" placeholder="/dev/sdb" value={newDisk} onChange={e => setNewDisk(e.target.value)} />
+                  <button className="btn btn-secondary" onClick={() => setShowPicker(true)} title="Browse devices"><HardDrive size={14} /></button>
                 </div>
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <div
-                    onClick={() => setForce(v => !v)}
-                    className={`w-10 h-5 rounded-full transition-colors relative ${force ? 'bg-amber-400' : 'bg-white/[0.06]'}`}
-                  >
-                    <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${force ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+                  <div onClick={() => setForce(v => !v)} style={{ width: 36, height: 20, borderRadius: 10, background: force ? 'var(--warning)' : 'var(--bg-elevated)', border: '1px solid var(--border)', position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}>
+                    <div style={{ position: 'absolute', top: 2, left: force ? 17 : 2, width: 14, height: 14, borderRadius: 7, background: '#fff', transition: 'left 0.2s' }} />
                   </div>
-                  <span className="text-[10px] font-bold text-slate-400">Force replace (-f)</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)' }}>Force replace (-f)</span>
                 </label>
-
                 {error && (
-                  <div className="flex items-start gap-3 p-3 bg-rose-500/8 rounded-xl border border-rose-500/15">
-                    <XCircle size={14} className="text-rose-400 flex-shrink-0 mt-0.5" />
-                    <p className="text-[12px] font-bold text-rose-300">{error}</p>
+                  <div style={{ display: 'flex', gap: 10, padding: '10px 14px', background: 'var(--danger-dim)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)' }}>
+                    <XCircle size={14} style={{ color: 'var(--danger)', flexShrink: 0 }} />
+                    <span style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</span>
                   </div>
                 )}
-
-                <div className="flex gap-3 pt-1">
-                  <button onClick={() => setStep(1)} className="apple-button apple-button-secondary gap-1">
-                    <ChevronDown size={13} className="rotate-90" />
-                    <span className="text-[10px] font-black uppercase tracking-widest">Back</span>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button className="btn btn-secondary" onClick={() => setStep(1)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <ChevronDown size={13} style={{ transform: 'rotate(90deg)' }} /> Back
                   </button>
-                  <button
-                    onClick={handleReplace}
-                    disabled={replacing || !newDisk.trim()}
-                    className="flex-1 apple-button apple-button-primary disabled:opacity-40 gap-2"
-                  >
-                    {replacing ? <Loader2 size={14} className="animate-spin" /> : <ArrowLeftRight size={14} />}
-                    <span className="text-[10px] font-black uppercase tracking-widest">
-                      {replacing ? 'Replacing...' : 'Replace'}
-                    </span>
+                  <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleReplace} disabled={replacing || !newDisk.trim()}>
+                    {replacing ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <ArrowLeftRight size={14} />}
+                    {replacing ? 'Replacing…' : 'Replace'}
                   </button>
                 </div>
               </>
             )}
           </div>
-        </motion.div>
-      </motion.div>
+        </div>
+      </div>
     </>
   );
 }
 
-// ── Import Pool Modal ─────────────────────────────────────────────────────────
+/* ── Import Pool Modal ────────────────────────────────────────────────────────── */
 function ImportPoolModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
   const [importable, setImportable] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [poolName, setPoolName] = useState('');
-  const [dir, setDir] = useState('');
-  const [importing, setImporting] = useState(false);
-  const [error, setError] = useState('');
+  const [loading, setLoading]       = useState(true);
+  const [poolName, setPoolName]     = useState('');
+  const [dir, setDir]               = useState('');
+  const [importing, setImporting]   = useState(false);
+  const [error, setError]           = useState('');
 
   useEffect(() => {
     api.getImportablePools()
@@ -420,136 +333,72 @@ function ImportPoolModal({ onClose, onSuccess }: { onClose: () => void; onSucces
   }, []);
 
   const handleImport = async () => {
-    const name = poolName.trim();
-    if (!name) { setError('Pool name is required'); return; }
+    if (!poolName.trim()) { setError('Pool name is required'); return; }
     setImporting(true); setError('');
-    try {
-      await api.importPool(name, dir.trim() || undefined);
-      onSuccess();
-    } catch (err: any) {
-      setError(err.message || 'Import failed');
-    } finally {
-      setImporting(false);
-    }
+    try { await api.importPool(poolName.trim(), dir.trim() || undefined); onSuccess(); }
+    catch (err: any) { setError(err.message || 'Import failed'); }
+    finally { setImporting(false); }
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md"
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ scale: 0.92, y: 24 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92 }}
-        transition={{ duration: 0.25, ease: 'circOut' }}
-        className="glass-panel w-full max-w-md p-8 shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h3 className="text-lg font-black text-white tracking-tight">Import Pool</h3>
-            <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mt-0.5">zpool import</p>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl text-slate-500 hover:text-white">
-            <X size={16} />
-          </button>
+    <div style={S.modal.overlay} onClick={onClose}>
+      <div style={S.modal.box} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+          <h3 style={S.modal.title}>Import Pool</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
         </div>
-
-        <div className="space-y-5">
-          {/* Importable pools */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {loading ? (
-            <div className="flex items-center gap-3 py-4 justify-center text-slate-600">
-              <Loader2 size={14} className="animate-spin" />
-              <span className="text-[11px] font-bold">Scanning for importable pools...</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 0', justifyContent: 'center', color: 'var(--text-muted)' }}>
+              <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+              <span style={{ fontSize: 12 }}>Scanning for importable pools…</span>
             </div>
-          ) : importable.length > 0 ? (
+          ) : importable.length > 0 && (
             <div>
-              <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-2">Detected Pools</p>
-              <div className="space-y-2">
+              <label style={S.modal.label}>Detected Pools</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {importable.map((p, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setPoolName(p.name)}
-                    className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all text-left ${
-                      poolName === p.name
-                        ? 'bg-sky-400/10 border-sky-400/25'
-                        : 'bg-white/[0.02] border-white/[0.04] hover:border-white/[0.08]'
-                    }`}
-                  >
-                    <div>
-                      <span className="text-[13px] font-black text-white">{p.name}</span>
-                      {p.id && <span className="text-[9px] font-mono text-slate-600 ml-2">{p.id}</span>}
-                    </div>
-                    <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-lg border ${
-                      p.state === 'ONLINE'
-                        ? 'bg-emerald-400/8 text-emerald-400 border-emerald-400/15'
-                        : 'bg-amber-400/8 text-amber-400 border-amber-400/15'
-                    }`}>{p.state || 'UNKNOWN'}</span>
+                  <button key={i} onClick={() => setPoolName(p.name)} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px',
+                    background: poolName === p.name ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                    border: `1px solid ${poolName === p.name ? 'var(--accent-mid)' : 'var(--border)'}`,
+                    borderRadius: 'var(--radius)', cursor: 'pointer', transition: 'all 0.12s',
+                  }}>
+                    <span style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>{p.name}</span>
+                    <span className={p.state === 'ONLINE' ? 'badge badge-success' : 'badge badge-warning'}>{p.state || 'UNKNOWN'}</span>
                   </button>
                 ))}
               </div>
             </div>
-          ) : (
-            <div className="py-4 text-center">
-              <Database size={28} className="text-white/5 mx-auto mb-2" strokeWidth={1} />
-              <p className="text-[10px] font-bold text-slate-600">No importable pools detected</p>
-            </div>
           )}
-
           <div>
-            <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-2">Pool Name</label>
-            <input
-              type="text" placeholder="e.g. tank"
-              value={poolName} onChange={e => setPoolName(e.target.value)}
-              className="w-full bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-[13px] text-white placeholder:text-slate-700 focus:outline-none focus:border-sky-400/40"
-            />
+            <label style={S.modal.label}>Pool Name</label>
+            <input style={S.modal.input} type="text" placeholder="e.g. tank" value={poolName} onChange={e => setPoolName(e.target.value)} />
           </div>
-
           <div>
-            <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-2">
-              Search Directory <span className="normal-case font-bold text-slate-700 ml-1">(optional)</span>
-            </label>
-            <input
-              type="text" placeholder="/mnt/disk1 or /dev/disk/by-id/..."
-              value={dir} onChange={e => setDir(e.target.value)}
-              className="w-full bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-[13px] text-white font-mono placeholder:text-slate-700 focus:outline-none focus:border-sky-400/40"
-            />
+            <label style={S.modal.label}>Search Directory (optional)</label>
+            <input style={{ ...S.modal.input, fontFamily: 'var(--font-mono)' }} type="text" placeholder="/mnt/disk1" value={dir} onChange={e => setDir(e.target.value)} />
           </div>
-
           {error && (
-            <div className="flex items-start gap-3 p-3 bg-rose-500/8 rounded-xl border border-rose-500/15">
-              <XCircle size={14} className="text-rose-400 flex-shrink-0 mt-0.5" />
-              <p className="text-[12px] font-bold text-rose-300">{error}</p>
-            </div>
+            <div style={{ padding: '10px 14px', background: 'var(--danger-dim)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--danger)' }}>{error}</div>
           )}
-
-          <div className="flex gap-3 pt-1">
-            <button onClick={onClose} className="flex-1 apple-button apple-button-secondary">Cancel</button>
-            <button
-              onClick={handleImport}
-              disabled={importing || !poolName.trim()}
-              className="flex-1 apple-button apple-button-primary disabled:opacity-40 gap-2"
-            >
-              {importing ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-              <span className="text-[10px] font-black uppercase tracking-widest">
-                {importing ? 'Importing...' : 'Import Pool'}
-              </span>
+          <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+            <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleImport} disabled={importing || !poolName.trim()}>
+              {importing ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={14} />}
+              {importing ? 'Importing…' : 'Import Pool'}
             </button>
           </div>
         </div>
-      </motion.div>
-    </motion.div>
+      </div>
+    </div>
   );
 }
 
-// ── Expand Pool Modal ─────────────────────────────────────────────────────────
-function ExpandPoolModal({
-  poolName, poolDisks, onClose, onSuccess
-}: {
-  poolName: string;
-  poolDisks: { path: string; state: string }[];
-  onClose: () => void;
-  onSuccess: () => void;
+/* ── Expand Pool Modal ────────────────────────────────────────────────────────── */
+function ExpandPoolModal({ poolName, poolDisks, onClose, onSuccess }: {
+  poolName: string; poolDisks: { path: string; state: string }[];
+  onClose: () => void; onSuccess: () => void;
 }) {
   const [selected, setSelected] = useState('');
   const [expanding, setExpanding] = useState(false);
@@ -558,97 +407,56 @@ function ExpandPoolModal({
   const handleExpand = async () => {
     if (!selected) { setError('Select a disk to expand'); return; }
     setExpanding(true); setError('');
-    try {
-      await api.expandPool(poolName, selected);
-      onSuccess();
-    } catch (err: any) {
-      setError(err.message || 'Expand failed');
-    } finally {
-      setExpanding(false);
-    }
+    try { await api.expandPool(poolName, selected); onSuccess(); }
+    catch (err: any) { setError(err.message || 'Expand failed'); }
+    finally { setExpanding(false); }
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md"
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ scale: 0.92, y: 24 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92 }}
-        transition={{ duration: 0.25, ease: 'circOut' }}
-        className="glass-panel w-full max-w-md p-8 shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h3 className="text-lg font-black text-white tracking-tight">Expand Pool</h3>
-            <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mt-0.5">
-              zpool online -e {poolName} &lt;disk&gt;
-            </p>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl text-slate-500 hover:text-white">
-            <X size={16} />
-          </button>
+    <div style={S.modal.overlay} onClick={onClose}>
+      <div style={S.modal.box} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+          <h3 style={S.modal.title}>Expand Pool</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
         </div>
-        <div className="space-y-5">
-          <div>
-            <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-3">
-              Select disk to expand (uses full capacity after physical replacement)
-            </p>
-            {poolDisks.length === 0 ? (
-              <p className="text-[11px] text-slate-600 py-4 text-center">No disks found in pool</p>
-            ) : (
-              <div className="space-y-2">
-                {poolDisks.map((d, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setSelected(d.path)}
-                    className={`w-full flex items-center gap-4 p-3 rounded-xl border transition-all text-left ${
-                      selected === d.path
-                        ? 'bg-indigo-400/10 border-indigo-400/25'
-                        : 'bg-white/[0.02] border-white/[0.04] hover:border-white/[0.08]'
-                    }`}
-                  >
-                    <HardDrive size={16} className={selected === d.path ? 'text-indigo-400' : 'text-slate-600'} strokeWidth={1.5} />
-                    <div className="flex-1 min-w-0">
-                      <span className="text-[12px] font-black text-white font-mono block truncate">{d.path}</span>
-                      <span className={`text-[9px] font-bold uppercase tracking-widest ${d.state === 'ONLINE' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {d.state}
-                      </span>
-                    </div>
-                    {selected === d.path && <CheckCircle size={14} className="text-indigo-400 flex-shrink-0" />}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          {error && (
-            <div className="flex items-start gap-3 p-3 bg-rose-500/8 rounded-xl border border-rose-500/15">
-              <XCircle size={14} className="text-rose-400 flex-shrink-0 mt-0.5" />
-              <p className="text-[12px] font-bold text-rose-300">{error}</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <label style={S.modal.label}>Select disk to expand</label>
+          {poolDisks.length === 0 ? (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>No disks found</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {poolDisks.map((d, i) => (
+                <button key={i} onClick={() => setSelected(d.path)} style={{
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
+                  background: selected === d.path ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                  border: `1px solid ${selected === d.path ? 'var(--accent-mid)' : 'var(--border)'}`,
+                  borderRadius: 'var(--radius)', cursor: 'pointer', transition: 'all 0.12s',
+                }}>
+                  <HardDrive size={14} style={{ color: selected === d.path ? 'var(--accent)' : 'var(--text-muted)' }} />
+                  <div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{d.path}</div>
+                    <div style={{ fontSize: 10, color: d.state === 'ONLINE' ? 'var(--success)' : 'var(--danger)', textTransform: 'uppercase', marginTop: 2 }}>{d.state}</div>
+                  </div>
+                  {selected === d.path && <CheckCircle size={13} style={{ color: 'var(--accent)', marginLeft: 'auto' }} />}
+                </button>
+              ))}
             </div>
           )}
-          <div className="flex gap-3 pt-1">
-            <button onClick={onClose} className="flex-1 apple-button apple-button-secondary">Cancel</button>
-            <button
-              onClick={handleExpand}
-              disabled={expanding || !selected}
-              className="flex-1 apple-button apple-button-primary disabled:opacity-40 gap-2"
-            >
-              {expanding ? <Loader2 size={14} className="animate-spin" /> : <Expand size={14} />}
-              <span className="text-[10px] font-black uppercase tracking-widest">
-                {expanding ? 'Expanding...' : 'Expand'}
-              </span>
+          {error && <div style={{ padding: '10px 14px', background: 'var(--danger-dim)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleExpand} disabled={expanding || !selected}>
+              {expanding ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Expand size={14} />}
+              {expanding ? 'Expanding…' : 'Expand'}
             </button>
           </div>
         </div>
-      </motion.div>
-    </motion.div>
+      </div>
+    </div>
   );
 }
 
-// ── Create Pool Modal ─────────────────────────────────────────────────────────
+/* ── Create Pool Modal ────────────────────────────────────────────────────────── */
 function CreatePoolModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (name: string) => void }) {
   const [poolName, setPoolName] = useState('');
   const [vdevType, setVdevType] = useState<VdevType>('mirror');
@@ -661,8 +469,8 @@ function CreatePoolModal({ onClose, onSuccess }: { onClose: () => void; onSucces
   const [pickerTarget, setPickerTarget] = useState<number | null>(null);
 
   const info        = VDEV_INFO[vdevType];
-  const validDevices = devices.filter(d => d.trim());
-  const minMet      = validDevices.length >= info.min;
+  const validDev    = devices.filter(d => d.trim());
+  const minMet      = validDev.length >= info.min;
 
   const addDevice    = () => setDevices(d => [...d, '']);
   const removeDevice = (i: number) => setDevices(d => d.filter((_, j) => j !== i));
@@ -674,7 +482,7 @@ function CreatePoolModal({ onClose, onSuccess }: { onClose: () => void; onSucces
     else setDevices(d => [...d, path]);
   };
 
-  const buildVdevs   = (): string[] => vdevType === 'stripe' ? validDevices : [vdevType, ...validDevices];
+  const buildVdevs   = (): string[] => vdevType === 'stripe' ? validDev : [vdevType, ...validDev];
   const buildOptions = (): string[] => {
     const opts: string[] = [];
     if (ashift && ashift !== '0') opts.push('-o', `ashift=${ashift}`);
@@ -687,277 +495,149 @@ function CreatePoolModal({ onClose, onSuccess }: { onClose: () => void; onSucces
   const handleCreate = async () => {
     setError('');
     if (!poolName.trim()) { setError('Pool name is required'); return; }
-    if (validDevices.length < info.min) {
-      setError(`${info.label} requires at least ${info.min} device(s)`);
-      return;
-    }
+    if (validDev.length < info.min) { setError(`${info.label} requires at least ${info.min} device(s)`); return; }
     setCreating(true);
-    try {
-      await api.createPool(poolName.trim(), buildVdevs(), buildOptions());
-      onSuccess(poolName.trim());
-    } catch (err: any) {
-      setError(err.message || 'Pool creation failed');
-    } finally {
-      setCreating(false);
-    }
+    try { await api.createPool(poolName.trim(), buildVdevs(), buildOptions()); onSuccess(poolName.trim()); }
+    catch (err: any) { setError(err.message || 'Pool creation failed'); }
+    finally { setCreating(false); }
   };
 
   return (
     <>
-      <AnimatePresence>
-        {showPicker && (
-          <DevicePicker
-            onSelect={path => { handlePickerSelect(path); setShowPicker(false); }}
-            onClose={() => setShowPicker(false)}
-          />
-        )}
-      </AnimatePresence>
-
-      <motion.div
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md"
-        onClick={onClose}
-      >
-        <motion.div
-          initial={{ scale: 0.92, y: 24 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92 }}
-          transition={{ duration: 0.25, ease: 'circOut' }}
-          className="glass-panel w-full max-w-lg p-8 shadow-2xl overflow-y-auto max-h-[90vh] no-scrollbar"
-          onClick={e => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between mb-7">
-            <div>
-              <h3 className="text-lg font-black text-white tracking-tight">Create ZFS Pool</h3>
-              <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mt-0.5">zpool create</p>
-            </div>
-            <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl text-slate-500 hover:text-white transition-all">
-              <X size={16} />
-            </button>
+      {showPicker && (
+        <DevicePicker
+          onSelect={path => { handlePickerSelect(path); setShowPicker(false); }}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
+      <div style={S.modal.overlay} onClick={onClose}>
+        <div style={{ ...S.modal.box, maxWidth: 540, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+            <h3 style={S.modal.title}>Create ZFS Pool</h3>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
           </div>
 
-          <div className="space-y-6">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             <div>
-              <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-2">Pool Name</label>
-              <input
-                type="text" placeholder="e.g. tank, storage, data"
-                value={poolName}
-                onChange={e => setPoolName(e.target.value.replace(/[^a-zA-Z0-9_\-:.]/g, ''))}
-                className="w-full bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-[13px] text-white placeholder:text-slate-700 focus:outline-none focus:border-sky-400/40 transition-all"
-              />
+              <label style={S.modal.label}>Pool Name</label>
+              <input style={S.modal.input} type="text" placeholder="e.g. tank, storage, data" value={poolName} onChange={e => setPoolName(e.target.value.replace(/[^a-zA-Z0-9_\-:.]/g, ''))} />
             </div>
 
             <div>
-              <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-2">VDEV Type</label>
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+              <label style={S.modal.label}>VDEV Type</label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6 }}>
                 {(Object.keys(VDEV_INFO) as VdevType[]).map(t => (
-                  <button
-                    key={t}
-                    onClick={() => {
-                      setVdevType(t);
-                      const min = VDEV_INFO[t].min;
-                      setDevices(d => d.length < min ? [...d, ...Array(min - d.length).fill('')] : d);
-                    }}
-                    className={`py-2 px-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
-                      vdevType === t
-                        ? 'bg-sky-400/15 border-sky-400/30 text-sky-400'
-                        : 'bg-white/[0.02] border-white/[0.04] text-slate-600 hover:text-slate-300'
-                    }`}
-                  >
-                    {VDEV_INFO[t].label}
-                  </button>
+                  <button key={t} onClick={() => { setVdevType(t); const min = VDEV_INFO[t].min; setDevices(d => d.length < min ? [...d, ...Array(min - d.length).fill('')] : d); }} style={{
+                    padding: '8px 4px', borderRadius: 'var(--radius)', fontSize: 10, fontWeight: 700,
+                    textTransform: 'uppercase', letterSpacing: '0.05em', cursor: 'pointer', transition: 'all 0.12s',
+                    border: `1px solid ${vdevType === t ? VDEV_INFO[t].color + '44' : 'var(--border)'}`,
+                    background: vdevType === t ? VDEV_INFO[t].color + '18' : 'var(--bg-elevated)',
+                    color: vdevType === t ? VDEV_INFO[t].color : 'var(--text-muted)',
+                  }}>{VDEV_INFO[t].label}</button>
                 ))}
               </div>
-              <p className="text-[10px] font-bold text-slate-600 mt-2">{info.desc}</p>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>{info.desc}</p>
             </div>
 
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Devices / Paths</label>
-                <button
-                  onClick={() => { setPickerTarget(null); setShowPicker(true); }}
-                  className="flex items-center gap-1.5 text-[9px] font-black text-sky-400/70 hover:text-sky-400 uppercase tracking-widest transition-colors"
-                >
-                  <HardDrive size={10} />
-                  Browse Disks
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <label style={{ ...S.modal.label, marginBottom: 0 }}>Devices / Paths</label>
+                <button onClick={() => { setPickerTarget(null); setShowPicker(true); }} style={{ fontSize: 11, color: 'var(--info)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <HardDrive size={11} /> Browse Disks
                 </button>
               </div>
-              <div className="space-y-2">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {devices.map((dev, i) => (
-                  <div key={i} className="flex gap-2">
-                    <input
-                      type="text" placeholder={`/dev/sdX`}
-                      value={dev} onChange={e => setDevice(i, e.target.value)}
-                      className="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-2.5 text-[12px] text-white font-mono placeholder:text-slate-700 focus:outline-none focus:border-sky-400/40 transition-all"
-                    />
-                    <button
-                      onClick={() => openPickerFor(i)}
-                      className="w-9 h-10 flex items-center justify-center rounded-xl bg-white/[0.02] border border-white/[0.04] text-slate-600 hover:text-sky-400 hover:border-sky-400/20 transition-all flex-shrink-0"
-                    >
-                      <HardDrive size={12} />
-                    </button>
+                  <div key={i} style={{ display: 'flex', gap: 6 }}>
+                    <input style={{ ...S.modal.input, flex: 1 }} type="text" placeholder="/dev/sdX" value={dev} onChange={e => setDevice(i, e.target.value)} />
+                    <button className="btn btn-secondary" onClick={() => openPickerFor(i)} title="Browse"><HardDrive size={12} /></button>
                     {devices.length > info.min && (
-                      <button
-                        onClick={() => removeDevice(i)}
-                        className="w-9 h-10 flex items-center justify-center rounded-xl bg-rose-500/8 border border-rose-500/15 text-rose-400 hover:bg-rose-500/15 transition-all flex-shrink-0"
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      <button className="btn btn-danger" onClick={() => removeDevice(i)} title="Remove"><Trash2 size={12} /></button>
                     )}
                   </div>
                 ))}
               </div>
-              <button onClick={addDevice} className="mt-2 flex items-center gap-2 text-[10px] font-black text-sky-400 hover:text-sky-300 transition-colors">
-                <Plus size={13} strokeWidth={3} />
-                Add device
+              <button onClick={addDevice} style={{ marginTop: 8, background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--info)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Plus size={12} /> Add device
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
-                <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-2">Ashift</label>
-                <select
-                  value={ashift} onChange={e => setAshift(e.target.value)}
-                  className="w-full bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-2.5 text-[12px] text-white focus:outline-none focus:border-sky-400/40"
-                >
-                  <option value="9"  className="bg-[#07090E]">9 — 512B (HDD legacy)</option>
-                  <option value="12" className="bg-[#07090E]">12 — 4K (SSD/modern)</option>
-                  <option value="13" className="bg-[#07090E]">13 — 8K</option>
-                  <option value="0"  className="bg-[#07090E]">Auto-detect</option>
+                <label style={S.modal.label}>Ashift</label>
+                <select style={S.modal.select} value={ashift} onChange={e => setAshift(e.target.value)}>
+                  <option value="9">9 — 512B (HDD legacy)</option>
+                  <option value="12">12 — 4K (SSD/modern)</option>
+                  <option value="13">13 — 8K</option>
+                  <option value="0">Auto-detect</option>
                 </select>
               </div>
-              <div className="flex flex-col justify-end">
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <div
-                    onClick={() => setForce(v => !v)}
-                    className={`w-10 h-5 rounded-full transition-colors relative ${force ? 'bg-amber-400' : 'bg-white/[0.06]'}`}
-                  >
-                    <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${force ? 'translate-x-5' : 'translate-x-0.5'}`} />
+              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                  <div onClick={() => setForce(v => !v)} style={{ width: 36, height: 20, borderRadius: 10, background: force ? 'var(--warning)' : 'var(--bg-elevated)', border: '1px solid var(--border)', position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}>
+                    <div style={{ position: 'absolute', top: 2, left: force ? 17 : 2, width: 14, height: 14, borderRadius: 7, background: '#fff', transition: 'left 0.2s' }} />
                   </div>
-                  <span className="text-[10px] font-bold text-slate-400">Force (-f)</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Force (-f)</span>
                 </label>
-                {force && <p className="text-[9px] text-amber-400 mt-1">Overwrites existing data</p>}
               </div>
             </div>
 
-            <div>
-              <p className="text-[9px] font-black text-slate-700 uppercase tracking-widest mb-1">Command preview</p>
-              <div className="bg-black/40 rounded-xl px-4 py-3 border border-white/[0.04]">
-                <code className="text-[11px] font-mono text-sky-300/80 break-all">{preview}</code>
-              </div>
+            <div style={{ background: 'var(--bg-elevated)', borderRadius: 'var(--radius)', padding: '10px 14px', border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Command preview</div>
+              <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--info)', wordBreak: 'break-all' }}>{preview}</code>
             </div>
 
-            {!minMet && validDevices.length > 0 && (
-              <div className="flex items-center gap-2 text-amber-400">
+            {!minMet && validDev.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--warning)' }}>
                 <AlertTriangle size={14} />
-                <span className="text-[11px] font-bold">
-                  {info.label} needs at least {info.min} devices ({validDevices.length} provided)
-                </span>
+                <span style={{ fontSize: 12 }}>{info.label} needs at least {info.min} devices ({validDev.length} provided)</span>
               </div>
             )}
 
             {error && (
-              <div className="flex items-start gap-3 p-3 bg-rose-500/8 rounded-xl border border-rose-500/15">
-                <XCircle size={15} className="text-rose-400 flex-shrink-0 mt-0.5" />
-                <p className="text-[12px] font-bold text-rose-300">{error}</p>
-              </div>
+              <div style={{ padding: '10px 14px', background: 'var(--danger-dim)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--danger)' }}>{error}</div>
             )}
 
-            <div className="flex gap-3 pt-2">
-              <button onClick={onClose} className="flex-1 apple-button apple-button-secondary">Cancel</button>
-              <button
-                onClick={handleCreate}
-                disabled={creating || !poolName.trim() || !minMet}
-                className="flex-1 apple-button apple-button-primary disabled:opacity-40 gap-2"
-              >
-                {creating ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
-                <span className="text-[10px] font-black uppercase tracking-widest">
-                  {creating ? 'Creating...' : 'Create Pool'}
-                </span>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
+              <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleCreate} disabled={creating || !poolName.trim() || !minMet}>
+                {creating ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Database size={14} />}
+                {creating ? 'Creating…' : 'Create Pool'}
               </button>
             </div>
           </div>
-        </motion.div>
-      </motion.div>
+        </div>
+      </div>
     </>
   );
 }
 
-// ── Pool Action Dropdown ───────────────────────────────────────────────────────
-function PoolMenu({
-  pool, onShowStatus, onResilver, onExpand, onReplaceDisk, onClose,
-}: {
-  pool: ZFSPool;
-  onShowStatus: () => void;
-  onResilver: () => void;
-  onExpand: () => void;
-  onReplaceDisk: () => void;
-  onClose: () => void;
-}) {
-  const items = [
-    { icon: Info,          label: 'Show Status',    action: onShowStatus,   color: 'text-slate-300' },
-    { icon: RotateCcw,     label: 'ZFS Rewrite',    action: onResilver,     color: 'text-sky-400' },
-    { icon: Expand,        label: 'Expand Pool',    action: onExpand,       color: 'text-indigo-400' },
-    { icon: ArrowLeftRight, label: 'Replace Disk',  action: onReplaceDisk,  color: 'text-amber-400' },
-  ];
-
-  return (
-    <>
-      <div className="fixed inset-0 z-40" onClick={onClose} />
-      <motion.div
-        initial={{ opacity: 0, scale: 0.93, y: -6 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.93 }}
-        transition={{ duration: 0.15, ease: 'circOut' }}
-        className="absolute right-0 top-full mt-1 z-50 w-52 glass-panel py-2 shadow-2xl border border-white/[0.06]"
-      >
-        {items.map(({ icon: Icon, label, action, color }) => (
-          <button
-            key={label}
-            onClick={() => { action(); onClose(); }}
-            className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.04] transition-colors text-left"
-          >
-            <Icon size={13} className={color} />
-            <span className={`text-[11px] font-black uppercase tracking-widest ${color}`}>{label}</span>
-          </button>
-        ))}
-      </motion.div>
-    </>
-  );
-}
-
-// ── Disk Row ──────────────────────────────────────────────────────────────────
+/* ── Disk Row ─────────────────────────────────────────────────────────────────── */
 function DiskRow({ disk, poolName, onReplace, onSmartClick }: {
   disk: { path: string; state: string };
   poolName: string;
   onReplace: (disk: string) => void;
   onSmartClick: (disk: string) => void;
 }) {
+  const [hov, setHov] = useState(false);
   const isOnline = disk.state === 'ONLINE';
   return (
-    <div className="flex items-center gap-3 p-2.5 rounded-xl bg-white/[0.015] border border-white/[0.025] hover:bg-white/[0.03] transition-all group">
-      <div className={`w-7 h-7 rounded-lg border flex items-center justify-center flex-shrink-0 ${
-        isOnline ? 'bg-white/[0.02] border-white/[0.04] text-slate-500' : 'bg-rose-400/8 border-rose-400/20 text-rose-400'
-      }`}>
-        <HardDrive size={13} strokeWidth={1.5} />
+    <div onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)} style={{
+      display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+      background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+      borderRadius: 'var(--radius)', transition: 'border-color 0.12s',
+      borderColor: hov ? 'rgba(255,255,255,0.12)' : 'var(--border)',
+    }}>
+      <HardDrive size={13} style={{ color: isOnline ? 'var(--text-muted)' : 'var(--danger)', flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div title={disk.path} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-primary)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{disk.path}</div>
+        <div style={{ fontSize: 9, color: isOnline ? 'var(--text-muted)' : 'var(--danger)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{disk.state}</div>
       </div>
-      <div className="flex-1 min-w-0">
-        <span className="text-[11px] font-black text-white font-mono truncate block">{disk.path}</span>
-        <span className={`text-[9px] font-bold uppercase tracking-widest ${isOnline ? 'text-slate-700' : 'text-rose-400'}`}>
-          {disk.state}
-        </span>
-      </div>
-      <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button
-          onClick={() => onSmartClick(disk.path)}
-          title="SMART Data"
-          className="w-6 h-6 flex items-center justify-center rounded-lg bg-white/[0.02] border border-white/[0.04] text-slate-600 hover:text-sky-400 hover:border-sky-400/20 transition-all text-[9px]"
-        >
-          <Cpu size={11} />
+      <div style={{ display: 'flex', gap: 4, opacity: hov ? 1 : 0, transition: 'opacity 0.12s' }}>
+        <button title="SMART Data" onClick={() => onSmartClick(disk.path)} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-muted)' }}>
+          <Cpu size={10} />
         </button>
-        <button
-          onClick={() => onReplace(disk.path)}
-          title="Replace Disk"
-          className="w-6 h-6 flex items-center justify-center rounded-lg bg-white/[0.02] border border-white/[0.04] text-slate-600 hover:text-amber-400 hover:border-amber-400/20 transition-all"
-        >
+        <button title="Replace Disk" onClick={() => onReplace(disk.path)} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-muted)' }}>
           <ArrowLeftRight size={10} />
         </button>
       </div>
@@ -965,8 +645,18 @@ function DiskRow({ disk, poolName, onReplace, onSmartClick }: {
   );
 }
 
-// ── Main Component ─────────────────────────────────────────────────────────────
-export default function StoragePools({ pools, onRefresh }: StoragePoolsProps) {
+/* ── Raid type helpers ─────────────────────────────────────────────────────────── */
+function raidColor(raidType: string): string {
+  if (raidType.startsWith('Mirror'))  return 'var(--success)';
+  if (raidType.startsWith('RAIDZ-1')) return 'var(--info)';
+  if (raidType.startsWith('RAIDZ-2')) return 'var(--accent)';
+  if (raidType.startsWith('RAIDZ-3')) return 'var(--warning)';
+  if (raidType === 'Stripe')          return 'var(--danger)';
+  return 'var(--text-muted)';
+}
+
+/* ── Main Component ───────────────────────────────────────────────────────────── */
+export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePoolsProps) {
   const [scrubState,    setScrubState]    = useState<Record<string, ScrubState>>({});
   const [scrubProgress, setScrubProgress] = useState<Record<string, ScrubProgress>>({});
   const [expandedPool,  setExpandedPool]  = useState<string | null>(null);
@@ -974,7 +664,6 @@ export default function StoragePools({ pools, onRefresh }: StoragePoolsProps) {
   const [statusLoading, setStatusLoading] = useState<string | null>(null);
   const [showCreate,    setShowCreate]    = useState(false);
   const [showImport,    setShowImport]    = useState(false);
-  const [openMenu,      setOpenMenu]      = useState<string | null>(null);
   const [expandTarget,  setExpandTarget]  = useState<string | null>(null);
   const [replaceTarget, setReplaceTarget] = useState<{ pool: string; preselectedDisk?: string } | null>(null);
   const [smartTarget,   setSmartTarget]   = useState<string | null>(null);
@@ -988,7 +677,6 @@ export default function StoragePools({ pools, onRefresh }: StoragePoolsProps) {
     setTimeout(() => setToast(null), 4500);
   };
 
-  // Load vdevs for each pool on mount/refresh
   useEffect(() => {
     pools.forEach(pool => {
       if (!poolVdevs[pool.name]) {
@@ -996,6 +684,16 @@ export default function StoragePools({ pools, onRefresh }: StoragePoolsProps) {
           .then(res => setPoolVdevs(prev => ({ ...prev, [pool.name]: res.vdevs || [] })))
           .catch(() => {});
       }
+      api.getScrubStatus(pool.name).then(res => {
+        if (res.in_progress) {
+          setScrubState(s => ({ ...s, [pool.name]: 'running' }));
+          setScrubProgress(p => ({ ...p, [pool.name]: {
+            inProgress: true, done: false,
+            progress: res.progress || 0, timeRemaining: res.time_remaining || '', scan: res.scan || '',
+          }}));
+          startScrubPolling(pool.name);
+        }
+      }).catch(() => {});
     });
   }, [pools]);
 
@@ -1017,15 +715,6 @@ export default function StoragePools({ pools, onRefresh }: StoragePoolsProps) {
   const getPoolDisks = (poolName: string): { path: string; state: string }[] => {
     const vdevs = poolVdevs[poolName] || [];
     return vdevs.flatMap((v: any) => v.disks || []);
-  };
-
-  const getRaidTypeColor = (raidType: string): string => {
-    if (raidType.startsWith('Mirror')) return 'text-emerald-400 border-emerald-400/30 bg-emerald-400/8';
-    if (raidType.startsWith('RAIDZ-1')) return 'text-sky-400 border-sky-400/30 bg-sky-400/8';
-    if (raidType.startsWith('RAIDZ-2')) return 'text-indigo-400 border-indigo-400/30 bg-indigo-400/8';
-    if (raidType.startsWith('RAIDZ-3')) return 'text-violet-400 border-violet-400/30 bg-violet-400/8';
-    if (raidType === 'Stripe') return 'text-rose-400 border-rose-400/30 bg-rose-400/8';
-    return 'text-slate-400 border-slate-400/30 bg-slate-400/8';
   };
 
   const startScrubPolling = (poolName: string) => {
@@ -1089,353 +778,238 @@ export default function StoragePools({ pools, onRefresh }: StoragePoolsProps) {
         setPoolStatus(s => ({ ...s, [poolName]: res.status }));
       } catch (err: any) {
         setPoolStatus(s => ({ ...s, [poolName]: `Error: ${err.message}` }));
-      } finally {
-        setStatusLoading(null);
-      }
+      } finally { setStatusLoading(null); }
     }
   };
 
   return (
-    <div className="space-y-8 max-w-[1400px] mx-auto pb-10">
-      <AnimatePresence>
-        {toast && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
-      </AnimatePresence>
+    <div style={{ paddingBottom: 48 }}>
 
-      <AnimatePresence>
-        {showCreate && (
-          <CreatePoolModal
-            onClose={() => setShowCreate(false)}
-            onSuccess={(name) => {
-              setShowCreate(false);
-              showToast(`Pool "${name}" created successfully`, 'success');
-              onRefresh();
-            }}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {showImport && (
-          <ImportPoolModal
-            onClose={() => setShowImport(false)}
-            onSuccess={() => {
-              showToast('Pool imported successfully', 'success');
-              setShowImport(false);
-              onRefresh();
-            }}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {expandTarget && (
-          <ExpandPoolModal
-            poolName={expandTarget}
-            poolDisks={getPoolDisks(expandTarget)}
-            onClose={() => setExpandTarget(null)}
-            onSuccess={() => {
-              showToast(`Pool "${expandTarget}" expand command sent`, 'success');
-              setExpandTarget(null);
-              onRefresh();
-            }}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {replaceTarget && (
-          <ReplaceDiskModal
-            poolName={replaceTarget.pool}
-            poolDisks={getPoolDisks(replaceTarget.pool)}
-            preselectedDisk={replaceTarget.preselectedDisk}
-            onClose={() => setReplaceTarget(null)}
-            onSuccess={() => {
-              showToast(`Disk replacement started on "${replaceTarget.pool}"`, 'success');
-              setReplaceTarget(null);
-              onRefresh();
-            }}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {smartTarget && (
-          <SmartModal device={smartTarget} onClose={() => setSmartTarget(null)} />
-        )}
-      </AnimatePresence>
+      {/* Modals */}
+      {toast && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
+      {showCreate && (
+        <CreatePoolModal
+          onClose={() => setShowCreate(false)}
+          onSuccess={name => { setShowCreate(false); showToast(`Pool "${name}" created`, 'success'); onRefresh(); }}
+        />
+      )}
+      {showImport && (
+        <ImportPoolModal
+          onClose={() => setShowImport(false)}
+          onSuccess={() => { showToast('Pool imported', 'success'); setShowImport(false); onRefresh(); }}
+        />
+      )}
+      {expandTarget && (
+        <ExpandPoolModal
+          poolName={expandTarget}
+          poolDisks={getPoolDisks(expandTarget)}
+          onClose={() => setExpandTarget(null)}
+          onSuccess={() => { showToast(`Pool "${expandTarget}" expanded`, 'success'); setExpandTarget(null); onRefresh(); }}
+        />
+      )}
+      {replaceTarget && (
+        <ReplaceDiskModal
+          poolName={replaceTarget.pool}
+          poolDisks={getPoolDisks(replaceTarget.pool)}
+          preselectedDisk={replaceTarget.preselectedDisk}
+          onClose={() => setReplaceTarget(null)}
+          onSuccess={() => { showToast('Disk replacement started', 'success'); setReplaceTarget(null); onRefresh(); }}
+        />
+      )}
+      {smartTarget && <SmartModal device={smartTarget} onClose={() => setSmartTarget(null)} />}
 
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-3xl font-black text-white tracking-tight">Storage Pools</h2>
-          <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mt-1">
-            ZFS pool cluster telemetry · {pools.length} active
-          </p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            {pools.length} pool{pools.length !== 1 ? 's' : ''}
+          </span>
+          {zfsVersion && (
+            <span className="badge">{zfsVersion.replace('zfs-', '')}</span>
+          )}
         </div>
-        <div className="flex items-center gap-3 self-start md:self-auto">
-          <button onClick={onRefresh} className="apple-button apple-button-secondary group">
-            <RefreshCw size={14} className="group-hover:rotate-180 transition-transform duration-500" />
-            <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Refresh</span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-secondary" onClick={onRefresh} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <RefreshCw size={13} /> Refresh
           </button>
-          <button onClick={() => setShowImport(true)} className="apple-button apple-button-secondary gap-2">
-            <Download size={14} className="text-sky-400" />
-            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Import Pool</span>
+          <button className="btn btn-secondary" onClick={() => setShowImport(true)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Download size={13} /> Import
           </button>
-          <button onClick={() => setShowCreate(true)} className="apple-button apple-button-primary gap-2">
-            <Plus size={14} strokeWidth={3} />
-            <span className="text-[10px] font-black uppercase tracking-widest">Create Pool</span>
+          <button className="btn btn-primary" onClick={() => setShowCreate(true)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Plus size={13} /> Create Pool
           </button>
         </div>
       </div>
 
       {/* Pool cards */}
-      <div className="space-y-5">
-        {pools.map((pool, idx) => {
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {pools.map(pool => {
           const state      = scrubState[pool.name] || 'idle';
           const progress   = scrubProgress[pool.name];
           const isExpanded = expandedPool === pool.name;
           const raidType   = getPoolRaidType(pool.name);
           const disks      = getPoolDisks(pool.name);
-          const raidColor  = getRaidTypeColor(raidType);
+          const rc         = raidColor(raidType);
+          const capColor   = pool.cap > 90 ? 'var(--danger)' : pool.cap > 80 ? 'var(--warning)' : 'var(--accent)';
+          const isOnline   = pool.health === 'ONLINE';
 
           return (
-            <motion.div
-              key={pool.name}
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: idx * 0.05 }}
-              className="glass-panel overflow-hidden relative"
-            >
-              <div className="absolute top-0 right-0 w-64 h-64 bg-sky-400/4 blur-[100px] rounded-full -mr-16 -mt-16 pointer-events-none" />
+            <div key={pool.name} style={{ background: 'var(--bg-surface)', border: `1px solid ${isOnline ? 'var(--border)' : 'rgba(239,68,68,0.3)'}`, borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
 
-              <div className="p-6 relative">
-                {/* Pool header */}
-                <div className="flex justify-between items-start mb-6">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-white/[0.02] border border-white/[0.05] rounded-2xl flex items-center justify-center text-sky-400">
-                      <Database size={20} strokeWidth={2} />
+              {/* Card header */}
+              <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                  {/* Name + badges */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                    <div style={{ width: 36, height: 36, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Database size={16} style={{ color: 'var(--accent)' }} />
                     </div>
                     <div>
-                      <h3 className="text-lg font-black text-white tracking-tight">{pool.name}</h3>
-                      <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
-                          pool.health === 'ONLINE'
-                            ? 'bg-emerald-400/8 text-emerald-400 border-emerald-400/15'
-                            : pool.health === 'DEGRADED'
-                            ? 'bg-amber-400/8 text-amber-400 border-amber-400/15'
-                            : 'bg-rose-400/8 text-rose-400 border-rose-400/15'
-                        }`}>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>{pool.name}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                        <span className={isOnline ? 'badge badge-success' : pool.health === 'DEGRADED' ? 'badge badge-warning' : 'badge badge-danger'}>
                           {pool.health}
                         </span>
                         {raidType !== '—' && (
-                          <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${raidColor}`}>
-                            {raidType}
-                          </span>
+                          <span className="badge" style={{ color: rc, borderColor: rc + '44', background: rc + '18' }}>{raidType}</span>
                         )}
                         {(pool as any).dedup && (pool as any).dedup !== '1.00x' && (
-                          <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">
-                            DEDUP {(pool as any).dedup}
-                          </span>
+                          <span className="badge">DEDUP {(pool as any).dedup}</span>
                         )}
                       </div>
                     </div>
                   </div>
 
-                  {/* Action text button */}
-                  <div className="relative">
+                  {/* Action buttons */}
+                  <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
                     <button
-                      onClick={() => setOpenMenu(m => m === pool.name ? null : pool.name)}
-                      className="px-4 py-2 bg-white/[0.02] hover:bg-white/[0.05] rounded-xl border border-white/[0.03] text-slate-400 hover:text-white transition-all text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5"
+                      className="btn btn-secondary"
+                      onClick={() => handleScrub(pool.name)}
+                      disabled={state === 'running'}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        color: state === 'running' ? 'var(--warning)' : state === 'success' ? 'var(--success)' : state === 'error' ? 'var(--danger)' : 'var(--text-secondary)',
+                        borderColor: state === 'running' ? 'rgba(245,158,11,0.3)' : state === 'success' ? 'rgba(34,197,94,0.3)' : undefined,
+                      }}
                     >
-                      Action
-                      <ChevronDown size={11} className={`transition-transform ${openMenu === pool.name ? 'rotate-180' : ''}`} />
+                      {state === 'running' && <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />}
+                      {state === 'success' && <CheckCircle size={13} />}
+                      {state === 'error'   && <XCircle size={13} />}
+                      {state === 'idle'    && <Activity size={13} />}
+                      {state === 'running' ? 'Scrubbing…' : state === 'success' ? 'Done' : state === 'error' ? 'Failed' : 'Scrub'}
                     </button>
-                    <AnimatePresence>
-                      {openMenu === pool.name && (
-                        <PoolMenu
-                          pool={pool}
-                          onShowStatus={() => handleToggleStatus(pool.name)}
-                          onResilver={() => handleResilver(pool.name)}
-                          onExpand={() => setExpandTarget(pool.name)}
-                          onReplaceDisk={() => setReplaceTarget({ pool: pool.name })}
-                          onClose={() => setOpenMenu(null)}
-                        />
-                      )}
-                    </AnimatePresence>
+                    <button className="btn btn-secondary" onClick={() => setReplaceTarget({ pool: pool.name })} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <ArrowLeftRight size={13} /> Replace Disk
+                    </button>
+                    <button className="btn btn-secondary" onClick={() => handleToggleStatus(pool.name)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Info size={13} />
+                      {isExpanded ? 'Hide' : 'Status'}
+                    </button>
                   </div>
                 </div>
 
-                {/* Metrics */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-6 pb-6 mb-6 border-b border-white/[0.04]">
-                  <div>
-                    <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-1">Utilization</span>
-                    <div className="flex items-end gap-2">
-                      <span className="text-2xl font-black text-white">{pool.cap}%</span>
-                    </div>
-                    <div className="mt-2 h-1.5 bg-white/[0.03] rounded-full overflow-hidden">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: `${pool.cap}%` }}
-                        transition={{ duration: 1, ease: 'circOut' }}
-                        className={`h-full rounded-full ${pool.cap > 90 ? 'bg-rose-500' : pool.cap > 75 ? 'bg-amber-400' : 'bg-sky-400'}`}
-                      />
-                    </div>
-                    <p className="text-[9px] font-bold text-slate-700 mt-1">
-                      {pool.alloc} von {pool.size}
-                    </p>
+                {/* Usage bar */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <span style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--text-muted)' }}>Storage usage</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: capColor, fontWeight: 700 }}>{pool.cap}%</span>
                   </div>
-                  {[
-                    { label: 'Total Size', value: pool.size },
-                    { label: 'Allocated',  value: pool.alloc },
-                    { label: 'Free Space', value: pool.free },
-                  ].map((s, i) => (
-                    <div key={i}>
-                      <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest block mb-1 truncate">{s.label}</span>
-                      <span className="text-2xl font-black text-white tracking-tight">{s.value}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Fragmentation + disk count */}
-                <div className="flex items-center gap-4 mb-5 text-[10px]">
-                  <span className="font-black text-slate-600 uppercase tracking-widest">Fragmentation:</span>
-                  <span className={`font-black ${(pool as any).frag > 20 ? 'text-amber-400' : 'text-slate-400'}`}>
-                    {(pool as any).frag ?? 0}%
-                  </span>
-                  {disks.length > 0 && (
-                    <>
-                      <span className="text-slate-700">·</span>
-                      <span className="font-black text-slate-600 uppercase tracking-widest">{disks.length} disk{disks.length !== 1 ? 's' : ''}</span>
-                    </>
-                  )}
-                </div>
-
-                {/* Disk list */}
-                {disks.length > 0 && (
-                  <div className="mb-5">
-                    <p className="text-[9px] font-black text-slate-700 uppercase tracking-widest mb-2">Disks</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                      {disks.map((disk, di) => (
-                        <DiskRow
-                          key={di}
-                          disk={disk}
-                          poolName={pool.name}
-                          onReplace={(d) => setReplaceTarget({ pool: pool.name, preselectedDisk: d })}
-                          onSmartClick={(d) => setSmartTarget(d)}
-                        />
-                      ))}
-                    </div>
+                  <div className="progress-track" style={{ height: 6 }}>
+                    <div className="progress-fill" style={{ width: `${Math.min(pool.cap, 100)}%`, background: capColor }} />
                   </div>
-                )}
-
-                {/* Scrub progress bar */}
-                <AnimatePresence>
-                  {state === 'running' && progress && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="mb-5"
-                    >
-                      <div className="flex justify-between items-center mb-1.5">
-                        <span className="text-[9px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1.5">
-                          <Loader2 size={9} className="animate-spin" />
-                          Scrub in progress
-                        </span>
-                        <div className="flex items-center gap-3">
-                          {progress.timeRemaining && (
-                            <span className="text-[9px] font-bold text-slate-600">{progress.timeRemaining} remaining</span>
-                          )}
-                          <span className="text-[10px] font-black text-white">{progress.progress.toFixed(1)}%</span>
-                        </div>
-                      </div>
-                      <div className="h-1.5 bg-white/[0.04] rounded-full overflow-hidden">
-                        <motion.div
-                          animate={{ width: `${progress.progress}%` }}
-                          transition={{ duration: 0.5, ease: 'easeOut' }}
-                          className="h-full rounded-full bg-gradient-to-r from-amber-400 to-sky-400"
-                        />
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                {/* Actions */}
-                <div className="flex flex-wrap gap-3">
-                  <button
-                    onClick={() => handleToggleStatus(pool.name)}
-                    className="apple-button apple-button-secondary !px-4 gap-2"
-                  >
-                    <ChevronDown size={14} className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">
-                      {isExpanded ? 'Hide Status' : 'Show Status'}
-                    </span>
-                  </button>
-
-                  <button
-                    onClick={() => handleScrub(pool.name)}
-                    disabled={state === 'running'}
-                    className={`ml-auto apple-button !px-5 gap-2 transition-all ${
-                      state === 'running' ? 'bg-amber-400/10 border border-amber-400/20 text-amber-400 cursor-not-allowed'
-                      : state === 'success' ? 'bg-emerald-400/10 border border-emerald-400/20 text-emerald-400'
-                      : state === 'error'   ? 'bg-rose-400/10 border border-rose-400/20 text-rose-400'
-                      : 'apple-button-primary'
-                    }`}
-                  >
-                    {state === 'running' && <Loader2 size={14} className="animate-spin" />}
-                    {state === 'success' && <CheckCircle size={14} />}
-                    {state === 'error'   && <XCircle size={14} />}
-                    <span className="text-[9px] font-black uppercase tracking-widest">
-                      {state === 'running' ? 'Scrubbing...' : state === 'success' ? 'Done' : state === 'error' ? 'Failed' : 'Start Scrub'}
-                    </span>
-                  </button>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5 }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>{pool.alloc} used</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>{pool.free} free of {pool.size}</span>
+                  </div>
                 </div>
               </div>
 
-              {/* Expandable pool status */}
-              <AnimatePresence>
-                {isExpanded && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.3, ease: 'circOut' }}
-                    className="overflow-hidden border-t border-white/[0.04]"
-                  >
-                    <div className="p-6 bg-black/20">
-                      <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-4">
-                        zpool status {pool.name}
-                      </p>
-                      {statusLoading === pool.name ? (
-                        <div className="flex items-center gap-3 text-slate-600">
-                          <Loader2 size={14} className="animate-spin" />
-                          <span className="text-[11px] font-bold">Fetching status...</span>
-                        </div>
-                      ) : (
-                        <pre className="text-[11px] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed">
-                          {poolStatus[pool.name] || 'No data available'}
-                        </pre>
-                      )}
+              {/* Stats row */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 0, padding: '0', borderBottom: '1px solid var(--border)' }}>
+                {[
+                  { label: 'Fragmentation', value: `${(pool as any).frag ?? 0}%`, color: (pool as any).frag > 20 ? 'var(--warning)' : 'var(--text-primary)' },
+                  { label: 'Dedup Ratio',   value: (pool as any).dedup || '1.00x', color: 'var(--text-primary)' },
+                  { label: 'Disks',         value: disks.length > 0 ? String(disks.length) : '—', color: 'var(--text-primary)' },
+                  { label: 'RAID Type',     value: raidType,                       color: rc },
+                ].map(({ label, value, color }) => (
+                  <div key={label} style={{ padding: '14px 20px', borderRight: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', fontFamily: 'var(--font-ui)', marginBottom: 4 }}>{label}</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600, color }}>{value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Scrub progress */}
+              {state === 'running' && progress && (
+                <div style={{ padding: '12px 24px', borderBottom: '1px solid var(--border)', background: 'rgba(245,158,11,0.04)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <span style={{ fontSize: 11, color: 'var(--warning)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> Scrub in progress
+                    </span>
+                    <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                      {progress.timeRemaining && <span style={{ color: 'var(--text-muted)' }}>{progress.timeRemaining} remaining</span>}
+                      <span style={{ color: 'var(--warning)', fontWeight: 700 }}>{progress.progress.toFixed(1)}%</span>
                     </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </motion.div>
+                  </div>
+                  <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${progress.progress}%`, background: 'var(--warning)', borderRadius: 9999, transition: 'width 0.5s' }} />
+                  </div>
+                </div>
+              )}
+
+              {/* Disk list */}
+              {disks.length > 0 && (
+                <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>Disks</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6 }}>
+                    {disks.map((disk, di) => (
+                      <DiskRow key={di} disk={disk} poolName={pool.name}
+                        onReplace={d => setReplaceTarget({ pool: pool.name, preselectedDisk: d })}
+                        onSmartClick={d => setSmartTarget(d)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Advanced actions */}
+              <div style={{ padding: '12px 24px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="btn btn-ghost" onClick={() => setExpandTarget(pool.name)} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11 }}>
+                  <Expand size={12} /> Expand Pool
+                </button>
+                <button className="btn btn-ghost" onClick={() => handleResilver(pool.name)} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11 }}>
+                  <RotateCcw size={12} /> Resilver
+                </button>
+              </div>
+
+              {/* Expanded status */}
+              {isExpanded && (
+                <div style={{ padding: '20px 24px', borderTop: '1px solid var(--border)', background: 'rgba(0,0,0,0.2)' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 12 }}>
+                    zpool status {pool.name}
+                  </div>
+                  {statusLoading === pool.name ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)' }}>
+                      <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                      <span style={{ fontSize: 12 }}>Fetching status…</span>
+                    </div>
+                  ) : (
+                    <pre style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
+                      {poolStatus[pool.name] || 'No data available'}
+                    </pre>
+                  )}
+                </div>
+              )}
+            </div>
           );
         })}
 
         {pools.length === 0 && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="glass-panel p-16 flex flex-col items-center justify-center text-center"
-          >
-            <Database size={48} className="text-white/5 mb-6" strokeWidth={1} />
-            <h3 className="text-xl font-black text-white mb-2">No Pools Detected</h3>
-            <p className="text-[11px] font-bold text-slate-600 uppercase tracking-widest max-w-sm">
-              Hardware scan complete. No ZFS clusters found.
-            </p>
-          </motion.div>
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '80px 40px', textAlign: 'center' }}>
+            <Database size={48} style={{ color: 'var(--text-muted)', opacity: 0.3, margin: '0 auto 16px', display: 'block' }} strokeWidth={1} />
+            <h3 style={{ fontFamily: 'var(--font-ui)', fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>No Pools Detected</h3>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>Create or import a ZFS pool to get started.</p>
+          </div>
         )}
       </div>
     </div>

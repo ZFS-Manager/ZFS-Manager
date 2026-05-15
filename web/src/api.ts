@@ -74,7 +74,6 @@ export const api = {
   deleteDataset: (name: string, force = false, recursive = false) =>
     request<any>(`/datasets/${name}?force=${force}&recursive=${recursive}`, { method: 'DELETE' }),
   rewriteDataset: (datasetName: string) => {
-    // Extract pool name from dataset path (e.g., "tank/data" → "tank")
     const poolName = datasetName.split('/')[0];
     return request<any>(`/pools/${poolName}/resilver`, { method: 'POST' });
   },
@@ -103,4 +102,8 @@ export const api = {
   getSystemStats: () => request<any>('/stats/system'),
   getDisks:       () => request<{ blockdevices: any[] }>('/system/disks'),
   getSmartData:   (device: string) => request<any>(`/system/smart/${encodeURIComponent(device)}`),
+
+  // ── Metrics History ────────────────────────────────────────────────────────
+  getMetricsHistory: (interval: string) =>
+    request<{ metrics: any[]; interval: string; count: number }>(`/metrics/history?interval=${interval}`),
 };

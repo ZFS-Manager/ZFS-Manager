@@ -58,6 +58,10 @@ async fn init_schema(client: &tokio_postgres::Client) {
         );
         CREATE INDEX IF NOT EXISTS idx_zfs_metrics_time ON zfs_metrics(collected_at DESC);
         CREATE INDEX IF NOT EXISTS idx_zfs_metrics_pool_time ON zfs_metrics(pool_name, collected_at DESC);
+        CREATE TABLE IF NOT EXISTS ui_layouts (
+            page TEXT PRIMARY KEY,
+            layout TEXT NOT NULL
+        );
     ";
 
     match client.batch_execute(sql).await {
@@ -68,7 +72,6 @@ async fn init_schema(client: &tokio_postgres::Client) {
 
 #[tokio::main]
 async fn main() {
-    // Logging – override with RUST_LOG env var
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .with(tracing_subscriber::fmt::layer())
@@ -79,7 +82,6 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(3000);
 
-    // --- Redis connection ---
     let redis_url = std::env::var("REDIS_URL")
         .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
 
@@ -100,20 +102,17 @@ async fn main() {
         }
     };
 
-    // --- PostgreSQL connection ---
     let db_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://zfs:zfs_secret@127.0.0.1:5432/zfs_metrics".to_string());
 
     let pg_client = match tokio_postgres::connect(&db_url, tokio_postgres::NoTls).await {
         Ok((client, connection)) => {
-            // Spawn the connection driver task
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
                     warn!("PostgreSQL connection error: {e}");
                 }
             });
             info!("PostgreSQL connected");
-            // Initialize schema
             init_schema(&client).await;
             Some(Arc::new(client))
         }
@@ -128,7 +127,6 @@ async fn main() {
         pg: pg_client,
     };
 
-    // Spawn background metrics worker
     tokio::spawn(worker::run_metrics_worker(app_state.clone()));
 
     let cors = CorsLayer::new()
@@ -146,6 +144,7 @@ async fn main() {
         .merge(routes::clones::router())
         .merge(routes::properties::router())
         .merge(routes::metrics::router(app_state.clone()))
+        .merge(routes::layout::router(app_state.clone()))
         .layer(middleware::from_fn(auth_middleware))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
