@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, State},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde_json::{json, Value};

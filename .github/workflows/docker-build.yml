@@ -12,6 +12,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  BACKEND_IMAGE_NAME: ${{ github.repository }}-backend
+  WEB_IMAGE_NAME: ${{ github.repository }}-web
 
 jobs:
   build-and-push:
@@ -26,8 +28,10 @@ jobs:
         include:
           - context: ./rust-backend
             image: ${{ github.repository }}-backend
+            name: backend
           - context: ./web
             image: ${{ github.repository }}-web
+            name: web
 
     steps:
       - name: Checkout repository
@@ -46,9 +50,13 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ matrix.image }}
           tags: |
+            # Tag 'latest' only on the default branch (main)
             type=raw,value=latest,enable={{is_default_branch}}
+            # Tag 'dev' on all branches that are NOT the default branch
             type=raw,value=dev,enable=${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) && github.event_name != 'pull_request' }}
+            # Support semantic versioning tags (v1.0.0, etc)
             type=semver,pattern={{version}}
+            # Short SHA tag for every build
             type=sha,format=short
 
       - name: Build and push Docker image

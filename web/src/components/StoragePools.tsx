@@ -44,8 +44,8 @@ const S = {
     },
     box: {
       background: 'var(--bg-surface)', border: '1px solid var(--border)',
-      borderRadius: 14, padding: 28, width: '100%',
-      maxWidth: 480, boxShadow: '0 8px 40px rgba(0,0,0,0.4)',
+      borderRadius: 'var(--radius-lg)', padding: 28, width: '100%',
+      maxWidth: 480, boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
     },
     title:  { fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)', margin: 0 },
     label:  { fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase' as const, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', display: 'block', marginBottom: 8 },
@@ -544,7 +544,7 @@ function CreatePoolModal({ onClose, onSuccess, usedDisks = new Set<string>() }: 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             <div>
               <label style={S.modal.label}>Pool Name</label>
-              <input style={S.modal.input} type="text" placeholder="e.g. tank, storage, data" value={poolName} onChange={e => setPoolName(e.target.value.replace(/[^a-zA-Z0-9_\-:.]/g, ''))} />
+              <input style={S.modal.input} type="text" placeholder="e.g. tank, storage, data" value={poolName} onChange={e => setPoolName(e.target.replace(/[^a-zA-Z0-9_\-:.]/g, ''))} />
             </div>
 
             <div>
@@ -859,6 +859,9 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             {pools.length} pool{pools.length !== 1 ? 's' : ''}
           </span>
+          {zfsVersion && (
+            <span className="badge">{zfsVersion.replace('zfs-', '')}</span>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-secondary" onClick={onRefresh} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

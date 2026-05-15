@@ -122,7 +122,6 @@ const TOOLTIP_STYLE = {
 };
 const AXIS_TICK   = { fill: '#52525b', fontSize: 10 };
 const GRID_PROPS  = { strokeDasharray: '1 6' as const, stroke: 'rgba(255,255,255,0.04)', vertical: false };
-// Fix #2 — shared chart margin for all charts in dashboard
 const CHART_MARGIN = { top: 24, right: 8, left: 16, bottom: 8 };
 const MAX_TICKS    = 6;
 
@@ -655,7 +654,7 @@ export default function Dashboard({
               fillLine={fillPrediction
                 ? { text: fillPrediction.text, color: fillPrediction.color, sub: fillPrediction.windowLabel }
                 : undefined}
-              sub={`${(100 - usagePct).toFixed(1)}% free`}
+              sub={`${((totalCapacity - totalUsedStorage) / totalCapacity * 100).toFixed(1)}% free`}
               icon={TrendingUp}
               minHeight={140}
               color={
@@ -685,13 +684,11 @@ export default function Dashboard({
             <div style={{ padding: '16px 20px' }}>
               {ioData.length > 1 ? (
                 <>
-                  {/* Fix #2 — shared chart margin, overflow visible */}
                   <div style={{ height: 180, marginLeft: 8, overflow: 'visible' }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={ioData} margin={CHART_MARGIN}>
                         <CartesianGrid {...GRID_PROPS} />
                         <XAxis dataKey="timestamp" axisLine={false} tickLine={false} tick={AXIS_TICK} minTickGap={48} />
-                        {/* Fix #2 & #3 — tickCount + auto-scale */}
                         <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK}
                           tickFormatter={v => {
                             const maxV = ioData.reduce((m: number, d: any) => Math.max(m, d.read || 0, d.write || 0), 0);

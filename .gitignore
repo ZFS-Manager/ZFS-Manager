@@ -1,2 +1,31 @@
+# Rust
+/rust-backend/target/
+**/*.rs.bk
+Cargo.lock
+
+# Node / React
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+/web/.env
+/web/.env.local
+/web/.env.*.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.env
+volumes/
+postgres_data/
+redis_data/
 data/redis/
 data/postgres/

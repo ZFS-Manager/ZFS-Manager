@@ -117,7 +117,6 @@ async fn auth_middleware(
                 return Ok(next.run(req).await);
             }
         }
-
     }
 
     if !UI_FIRST_CONTACT.load(Ordering::Relaxed) {
@@ -324,7 +323,8 @@ async fn main() {
         .layer(middleware::from_fn_with_state(app_state.clone(), auth_middleware))
         .layer(middleware::from_fn(security_headers))
         .layer(cors)
-        .layer(TraceLayer::new_for_http());
+        .layer(TraceLayer::new_for_http())
+        .layer(axum::Extension(app_state));
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
         .await
