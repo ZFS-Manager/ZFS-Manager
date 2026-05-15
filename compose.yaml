@@ -9,7 +9,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -27,9 +27,8 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-zfs_secret}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/01-init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U zfs -d zfs_metrics"]
+      test: [ "CMD-SHELL", "pg_isready -U zfs -d zfs_metrics" ]
       interval: 5s
       timeout: 3s
       retries: 15
