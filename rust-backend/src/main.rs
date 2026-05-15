@@ -17,6 +17,7 @@ mod error;
 mod executor;
 mod routes;
 mod state;
+mod startup;
 mod worker;
 
 use state::AppState;
@@ -76,6 +77,8 @@ async fn main() {
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .with(tracing_subscriber::fmt::layer())
         .init();
+
+    startup::run_startup_checks().await;
 
     let port: u16 = std::env::var("ZFS_API_PORT")
         .ok()
