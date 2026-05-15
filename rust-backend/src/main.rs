@@ -12,11 +12,15 @@ use tower_http::{
 use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static UI_FIRST_CONTACT: AtomicBool = AtomicBool::new(false);
 
 mod error;
 mod executor;
 mod routes;
 mod state;
+mod startup;
 mod worker;
 
 use state::AppState;
@@ -36,6 +40,16 @@ async fn auth_middleware(req: Request, next: Next) -> Result<Response, StatusCod
         let token = auth_str.strip_prefix("Bearer ").unwrap_or(auth_str);
         if token == api_key {
             return Ok(next.run(req).await);
+        }
+    }
+
+    if !UI_FIRST_CONTACT.load(Ordering::Relaxed) {
+        if let Some(agent) = req.headers().get("user-agent") {
+            let agent_str = agent.to_str().unwrap_or("unknown");
+            if agent_str.contains("Mozilla") || agent_str.contains("Chrome") || agent_str.contains("Safari") {
+                info!("🌐 UI: First contact established from {}", req.uri());
+                UI_FIRST_CONTACT.store(true, Ordering::Relaxed);
+            }
         }
     }
 
@@ -76,6 +90,8 @@ async fn main() {
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .with(tracing_subscriber::fmt::layer())
         .init();
+
+    startup::run_startup_checks().await;
 
     let port: u16 = std::env::var("ZFS_API_PORT")
         .ok()

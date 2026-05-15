@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { HardDrive, Lock, ArrowRight, AlertCircle } from 'lucide-react';
+import { HardDrive, Lock, ArrowRight, AlertCircle, Wifi, WifiOff } from 'lucide-react';
 
 interface LoginProps {
   onLogin: (password: string) => Promise<void>;
@@ -10,6 +10,22 @@ export default function Login({ onLogin }: LoginProps) {
   const [password, setPassword] = useState('');
   const [isError, setIsError]   = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const res = await fetch('/api/v1/health');
+        if (res.ok) setBackendStatus('online');
+        else setBackendStatus('offline');
+      } catch {
+        setBackendStatus('offline');
+      }
+    };
+    checkHealth();
+    const interval = setInterval(checkHealth, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -156,17 +172,24 @@ export default function Login({ onLogin }: LoginProps) {
         {/* Status pill top-right */}
         <div style={{
           position: 'absolute', top: 24, right: 24,
-          display: 'flex', alignItems: 'center', gap: 6,
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '6px 12px', borderRadius: 20,
+          background: backendStatus === 'online' ? 'rgba(34,197,94,0.1)' : backendStatus === 'offline' ? 'rgba(239,68,68,0.1)' : 'rgba(156,163,175,0.1)',
+          border: '1px solid',
+          borderColor: backendStatus === 'online' ? 'rgba(34,197,94,0.2)' : backendStatus === 'offline' ? 'rgba(239,68,68,0.2)' : 'rgba(156,163,175,0.2)',
+          transition: 'all 0.3s ease',
         }}>
+          {backendStatus === 'online' ? (
+            <Wifi size={12} style={{ color: 'var(--success)' }} />
+          ) : (
+            <WifiOff size={12} style={{ color: backendStatus === 'offline' ? 'var(--danger)' : 'var(--text-muted)' }} />
+          )}
           <span style={{
-            display: 'inline-block', width: 6, height: 6, borderRadius: '50%',
-            background: 'var(--success)',
-          }} />
-          <span style={{
-            fontFamily: 'var(--font-mono)', fontSize: 10,
-            color: 'var(--text-muted)', letterSpacing: '0.05em',
+            fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600,
+            color: backendStatus === 'online' ? 'var(--success)' : backendStatus === 'offline' ? 'var(--danger)' : 'var(--text-muted)',
+            letterSpacing: '0.05em', textTransform: 'uppercase',
           }}>
-            System online
+            {backendStatus === 'online' ? 'Backend Online' : backendStatus === 'offline' ? 'Backend Offline' : 'Checking...'}
           </span>
         </div>
 
@@ -210,6 +233,24 @@ export default function Login({ onLogin }: LoginProps) {
           }}>
             Enter your access key to continue
           </p>
+
+          <AnimatePresence>
+            {backendStatus === 'offline' && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                style={{
+                  marginBottom: 24, padding: '10px 14px', borderRadius: 'var(--radius)',
+                  background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)',
+                  color: '#ef4444', display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.85rem'
+                }}
+              >
+                <WifiOff size={16} />
+                <span>Cannot reach backend server. Check connection.</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <form onSubmit={handleSubmit}>
             <div style={{ marginBottom: 16 }}>

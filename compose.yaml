@@ -3,9 +3,6 @@ services:
     image: redis:7-alpine
     container_name: zfs-redis
     restart: unless-stopped
-    ports:
-      - "8975:6379"
-    command: redis-server --save 60 1 --loglevel warning --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
     healthcheck:
@@ -19,8 +16,6 @@ services:
     image: postgres:16-alpine
     container_name: zfs-postgres
     restart: unless-stopped
-    ports:
-      - "5643:5432"
     environment:
       - POSTGRES_DB=zfs_metrics
       - POSTGRES_USER=zfs
@@ -45,18 +40,16 @@ services:
       - RUST_LOG=info
       - ZFS_MANAGER_DATA=/home/docker/zfs-manager
       - ZFS_API_KEY=${ZFS_API_KEY:-admin123}
-      - REDIS_URL=redis://localhost:8975
-      - DATABASE_URL=postgres://zfs:${POSTGRES_PASSWORD:-zfs_secret}@localhost:5643/zfs_metrics
+      - REDIS_URL=redis://zfs-redis:6379
+      - DATABASE_URL=postgres://zfs:${POSTGRES_PASSWORD:-zfs_secret}@zfs-postgres:5432/zfs_metrics
     privileged: true
     volumes:
       - /dev:/dev
-      - /proc:/proc
+      - /proc:/proc:ro
       - /sys/module/zfs:/sys/module/zfs:ro
       - /var/lib/zfs:/var/lib/zfs:ro
-      - /tmp:/tmp
       - /home/docker/zfs-manager:/home/docker/zfs-manager
     working_dir: /home/docker/zfs-manager
-    network_mode: host
     depends_on:
       redis:
         condition: service_healthy
@@ -66,13 +59,18 @@ services:
   zfs-web:
     image: ghcr.io/einniki/zfs-manager-web:latest
     container_name: zfs-web
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     ports:
       - "${ZFS_WEB_PORT:-8080}:80"
     command: >
-      sh -c "sed -i 's/admin123/${ZFS_API_KEY:-admin123}/g' /usr/share/nginx/html/assets/*.js && nginx -g 'daemon off;'"
+      sh -c "
+        echo '🚀 Starting Web Container Diagnostic...' &&
+        if getent hosts zfs-backend; then echo '  ✅ Network: zfs-backend is resolvable'; else echo '  ❌ Network: zfs-backend NOT found'; fi &&
+        sed -i 's/admin123/${ZFS_API_KEY:-admin123}/g' /usr/share/nginx/html/assets/*.js &&
+        echo '  ✅ Injection: API Key replacement finished' &&
+        echo '🏁 Web Diagnostic finished. Starting Nginx...' &&
+        nginx -g 'daemon off;'
+      "
     depends_on:
       - zfs-backend
 

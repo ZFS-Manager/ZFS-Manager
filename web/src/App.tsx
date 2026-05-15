@@ -112,6 +112,7 @@ export default function App() {
   const [systemStats, setSystemStats] = useState<any>(null);
   const [logs, setLogs]             = useState<ZFSLog[]>([]);
   const [loading, setLoading]       = useState(true);
+  const [globalError, setGlobalError] = useState<string | null>(null);
 
   const breakpoint = useBreakpoint();
 
@@ -249,10 +250,13 @@ export default function App() {
       }
 
       setLoading(false);
+      setGlobalError(null);
     } catch (error: any) {
       if (error.message?.includes('401')) {
         localStorage.removeItem('zfs_access_token');
         setIsAuthenticated(false);
+      } else {
+        setGlobalError(`Backend connection failed: ${error.message}`);
       }
       setLoading(false);
     }
@@ -320,6 +324,16 @@ export default function App() {
             }}
             className="no-scrollbar"
           >
+            {globalError && (
+              <div style={{
+                marginBottom: 24, padding: '12px 16px', borderRadius: 'var(--radius)',
+                background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)',
+                color: '#ef4444', display: 'flex', alignItems: 'center', gap: 12, fontSize: '0.85rem'
+              }}>
+                <span style={{ fontWeight: 600 }}>📡 Connection Issue:</span>
+                <span>{globalError}</span>
+              </div>
+            )}
             <Routes>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={

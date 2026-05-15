@@ -13,14 +13,21 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     ...options.headers,
   };
 
-  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
 
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.error || body.message || `Request failed with status ${response.status}`);
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      const errorMsg = body.error || body.message || `Request failed with status ${response.status}`;
+      console.error(`❌ API Error [${path}]:`, errorMsg);
+      throw new Error(errorMsg);
+    }
+
+    return response.json();
+  } catch (err: any) {
+    console.error(`📡 Network Error [${path}]:`, err.message || err);
+    throw err;
   }
-
-  return response.json();
 }
 
 export const formatBytes = (bytes: number | string, decimals = 2): string => {
