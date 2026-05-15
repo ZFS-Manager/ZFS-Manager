@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion';
 import { HardDrive, Lock, ArrowRight, AlertCircle, Wifi, WifiOff } from 'lucide-react';
 
 interface LoginProps {
@@ -180,9 +180,9 @@ export default function Login({ onLogin }: LoginProps) {
           transition: 'all 0.3s ease',
         }}>
           {backendStatus === 'online' ? (
-            <Wifi size={12} className="text-green-500" />
+            <Wifi size={12} style={{ color: 'var(--success)' }} />
           ) : (
-            <WifiOff size={12} className={backendStatus === 'offline' ? 'text-red-500' : 'text-gray-400'} />
+            <WifiOff size={12} style={{ color: backendStatus === 'offline' ? 'var(--danger)' : 'var(--text-muted)' }} />
           )}
           <span style={{
             fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600,
