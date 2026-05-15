@@ -428,6 +428,7 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
   };
 
   const handleRewrite = async (name: string) => {
+    if (!window.confirm(`Start rewrite (scrub) on "${name}"? This will impact performance.`)) return;
     setRewriteTarget(name);
     try {
       await api.rewriteDataset(name);

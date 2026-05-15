@@ -744,6 +744,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
   }, []);
 
   const handleScrub = async (poolName: string) => {
+    if (!window.confirm(`Start ZFS scrub on pool "${poolName}"? This may impact performance.`)) return;
     setScrubState(s => ({ ...s, [poolName]: 'running' }));
     setScrubProgress(p => ({ ...p, [poolName]: { inProgress: true, done: false, progress: 0, timeRemaining: '', scan: '' } }));
     try {
@@ -758,6 +759,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
   };
 
   const handleResilver = async (poolName: string) => {
+    if (!window.confirm(`Start ZFS resilver (scrub) on pool "${poolName}"?`)) return;
     try {
       await api.resilverPool(poolName);
       showToast(`Rewrite (scrub) started on ${poolName}`, 'success');

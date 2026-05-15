@@ -220,6 +220,7 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
 
   const handleScrub = async () => {
     if (scrubState === 'running') return;
+    if (!window.confirm(`Start ZFS scrub on pool "${pool.name}"? This may impact performance.`)) return;
     setScrubState('running');
     try {
       await api.startScrub(pool.name);
