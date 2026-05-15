@@ -72,6 +72,8 @@ services:
     restart: unless-stopped
     ports:
       - "${ZFS_WEB_PORT:-8080}:80"
+    command: >
+      sh -c "sed -i 's/admin123/${ZFS_API_KEY:-admin123}/g' /usr/share/nginx/html/assets/*.js && nginx -g 'daemon off;'"
     depends_on:
       - zfs-backend
 
