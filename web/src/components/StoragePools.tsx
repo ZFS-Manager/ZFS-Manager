@@ -44,8 +44,8 @@ const S = {
     },
     box: {
       background: 'var(--bg-surface)', border: '1px solid var(--border)',
-      borderRadius: 'var(--radius-lg)', padding: 28, width: '100%',
-      maxWidth: 480, boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+      borderRadius: 14, padding: 28, width: '100%',
+      maxWidth: 480, boxShadow: '0 8px 40px rgba(0,0,0,0.4)',
     },
     title:  { fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)', margin: 0 },
     label:  { fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase' as const, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', display: 'block', marginBottom: 8 },

@@ -29,7 +29,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
         initial={{ scale: 0.94, y: 16 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.94, y: 8 }}
         transition={{ duration: 0.2, ease: 'easeOut' }}
         className="card"
-        style={{ width: '100%', maxWidth: 440, padding: 28, boxShadow: '0 24px 64px rgba(0,0,0,0.6)' }}
+        style={{ width: '100%', maxWidth: 440, padding: 28, borderRadius: 14, boxShadow: '0 8px 40px rgba(0,0,0,0.4)' }}
         onClick={e => e.stopPropagation()}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>

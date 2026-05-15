@@ -36,7 +36,7 @@ function Modal({ title, onClose, children, maxWidth = 440 }: {
         initial={{ scale: 0.94, y: 16 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.94 }}
         transition={{ duration: 0.22, ease: 'easeOut' }}
         className="card"
-        style={{ width: '100%', maxWidth, padding: 28, overflowY: 'auto', maxHeight: '90vh' }}
+        style={{ width: '100%', maxWidth, padding: 28, borderRadius: 14, boxShadow: '0 8px 40px rgba(0,0,0,0.4)', overflowY: 'auto', maxHeight: '90vh' }}
         onClick={e => e.stopPropagation()}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
