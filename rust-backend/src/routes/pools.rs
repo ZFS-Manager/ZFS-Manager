@@ -184,11 +184,22 @@ fn extract_time_remaining(detail: &str) -> String {
 async fn list_pools() -> Result<Json<Value>, ApiError> {
     let raw = executor::zpool(&["list", "-H", "-p", "-o", "name,size,alloc,free,frag,cap,dedup,health,altroot"]).await?;
 
-    // Get available bytes per pool (accounts for ZFS overhead, parity, reservations)
     let avail_raw = executor::zfs(&["get", "-H", "-p", "-o", "name,value", "available"])
         .await
         .unwrap_or_default();
     let avail_map: std::collections::HashMap<&str, u64> = avail_raw.lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(2, '\t');
+            let name = parts.next()?;
+            let val: u64 = parts.next()?.trim().parse().ok()?;
+            Some((name, val))
+        })
+        .collect();
+
+    let used_raw = executor::zfs(&["get", "-H", "-p", "-o", "name,value", "used"])
+        .await
+        .unwrap_or_default();
+    let used_map: std::collections::HashMap<&str, u64> = used_raw.lines()
         .filter_map(|line| {
             let mut parts = line.splitn(2, '\t');
             let name = parts.next()?;
@@ -203,6 +214,7 @@ async fn list_pools() -> Result<Json<Value>, ApiError> {
             let c: Vec<&str> = line.split('\t').collect();
             let name = c.first().copied().unwrap_or("");
             let available_bytes = avail_map.get(name).copied().unwrap_or(0);
+            let used_bytes = used_map.get(name).copied().unwrap_or(0);
             json!({
                 "name":            name,
                 "size":            c.get(1).unwrap_or(&""),
@@ -214,6 +226,7 @@ async fn list_pools() -> Result<Json<Value>, ApiError> {
                 "health":          c.get(7).unwrap_or(&""),
                 "altroot":         c.get(8).unwrap_or(&""),
                 "available_bytes": available_bytes,
+                "used_bytes":      used_bytes,
             })
         })
         .collect();

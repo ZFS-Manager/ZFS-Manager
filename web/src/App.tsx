@@ -140,6 +140,8 @@ export default function App() {
   const [snapshots, setSnapshots]   = useState<any[]>([]);
   const [totalCapacity, setTotalCapacity]       = useState(0);
   const [totalUsedStorage, setTotalUsedStorage] = useState(0);
+  const [totalRawCapacity, setTotalRawCapacity] = useState(0);
+  const [totalRawUsed, setTotalRawUsed]         = useState(0);
   const [stats, setStats]           = useState<any[]>([]);
   const [liveMetrics, setLiveMetrics] = useState<any>(null);
   const [serverTimeOffsetMs, setServerTimeOffsetMs] = useState(0);
@@ -238,16 +240,20 @@ export default function App() {
         raidType: 'ZFS Pool',
         vdevs: [],
         available_bytes: Number(p.available_bytes) || 0,
-        used_bytes: Number(p.alloc) || 0,
+        used_bytes: Number(p.used_bytes) || 0,
         _raw: p,
       }));
 
-      const totalCap  = (poolsRes.pools || []).reduce((a: number, p: any) => a + (Number(p.size)  || 0), 0);
-      const totalUsed = (poolsRes.pools || []).reduce((a: number, p: any) => a + (Number(p.alloc) || 0), 0);
+      const logicalCap  = mappedPools.reduce((a, p) => a + p.used_bytes + p.available_bytes, 0);
+      const logicalUsed = mappedPools.reduce((a, p) => a + p.used_bytes, 0);
+      const rawCap      = (poolsRes.pools || []).reduce((a: number, p: any) => a + (Number(p.size)  || 0), 0);
+      const rawUsed     = (poolsRes.pools || []).reduce((a: number, p: any) => a + (Number(p.alloc) || 0), 0);
 
       setPools(mappedPools);
-      setTotalCapacity(totalCap);
-      setTotalUsedStorage(totalUsed);
+      setTotalCapacity(logicalCap);
+      setTotalUsedStorage(logicalUsed);
+      setTotalRawCapacity(rawCap);
+      setTotalRawUsed(rawUsed);
       setSnapshots(snapshotRes.snapshots || []);
 
       setDatasets((datasetsRes.datasets || []).map((d: any) => ({
@@ -419,6 +425,7 @@ export default function App() {
                 <Dashboard
                   pools={pools} datasets={datasets} snapshots={snapshots}
                   totalCapacity={totalCapacity} totalUsedStorage={totalUsedStorage}
+                  totalRawCapacity={totalRawCapacity} totalRawUsed={totalRawUsed}
                   currentStats={currentStats}
                   systemStats={systemStats} logs={logs} loading={loading} historicalStats={stats}
                 />

@@ -19,6 +19,8 @@ interface DashboardProps {
   snapshots: any[];
   totalCapacity: number;
   totalUsedStorage: number;
+  totalRawCapacity?: number;
+  totalRawUsed?: number;
   currentStats: { read: number; write: number; iops: number; readIops?: number; writeIops?: number; cpu?: number; arcHit?: number };
   systemStats?: any;
   logs?: ZFSLog[];
@@ -538,7 +540,7 @@ const WIDGET_LABELS: Record<string, string> = {
 /* ── Main Dashboard ── */
 export default function Dashboard({
   pools, datasets, snapshots,
-  totalCapacity, totalUsedStorage,
+  totalCapacity, totalUsedStorage, totalRawCapacity = 0, totalRawUsed = 0,
   currentStats, systemStats, logs = [], loading,
   historicalStats = [],
 }: DashboardProps) {
@@ -644,12 +646,13 @@ export default function Dashboard({
   const renderWidget = (id: string) => {
     switch (id) {
       case 'stats-row':
+        const rawPct = totalRawCapacity > 0 ? (totalRawUsed / totalRawCapacity) * 100 : 0;
         return (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, alignItems: 'stretch' }}>
             <StatCard
               label="Total Storage"
               value={formatBytes(totalCapacity, 1)}
-              sub={`${formatBytes(totalUsedStorage, 1)} used · ${animPct.toFixed(1)}% full`}
+              sub={`${formatBytes(totalUsedStorage, 1)} used · Raw: ${formatBytes(totalRawUsed, 1)} / ${formatBytes(totalRawCapacity, 1)} (${rawPct.toFixed(1)}%)`}
               icon={HardDrive}
               color={usagePct > 90 ? 'var(--danger)' : usagePct > 80 ? 'var(--warning)' : 'var(--accent)'}
             />
