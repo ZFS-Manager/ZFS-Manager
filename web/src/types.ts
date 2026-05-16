@@ -10,6 +10,8 @@ export interface ZFSPool {
   health: 'ONLINE' | 'DEGRADED' | 'FAULTED' | 'OFFLINE';
   raidType: string;
   vdevs: VDev[];
+  available_bytes: number;
+  used_bytes: number;
   _raw?: any;
 }
 

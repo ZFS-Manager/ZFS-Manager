@@ -237,6 +237,8 @@ export default function App() {
         health: p.health,
         raidType: 'ZFS Pool',
         vdevs: [],
+        available_bytes: Number(p.available_bytes) || 0,
+        used_bytes: Number(p.alloc) || 0,
         _raw: p,
       }));
 

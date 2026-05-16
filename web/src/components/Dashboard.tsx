@@ -565,10 +565,11 @@ export default function Dashboard({
   const allOnline = pools.length > 0 && pools.every(p => p.health === 'ONLINE');
   const freeBytes = totalCapacity - totalUsedStorage;
 
-  // Usable free space from zfs get available (available_bytes from backend)
-  const totalAvailableBytes = pools.reduce((s, p) => s + Number((p as any).available_bytes || 0), 0);
+  // Usable free space: ZFS-reported available bytes, percentage against available+alloc
+  const totalAvailableBytes = pools.reduce((s, p) => s + (p.available_bytes || 0), 0);
+  const totalUsedBytes      = pools.reduce((s, p) => s + (p.used_bytes      || 0), 0);
   const pctFree = totalAvailableBytes > 0
-    ? (totalAvailableBytes / (totalAvailableBytes + totalUsedStorage)) * 100
+    ? (totalAvailableBytes / (totalAvailableBytes + totalUsedBytes)) * 100
     : 0;
 
   // Fill prediction from shared backend endpoint
