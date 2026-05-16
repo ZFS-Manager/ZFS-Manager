@@ -54,59 +54,65 @@ function fmtDays(d: number): string {
   return `~${(d / 365).toFixed(1)} yrs`;
 }
 
-function computeFillDate(dailyGB: number, freeGB: number): { text: string; color: string } {
-  if (dailyGB < 0.001 || freeGB <= 0) return { text: '–', color: 'var(--text-muted)' };
-  const days = freeGB / dailyGB;
-  if (days > 730) return { text: '–', color: 'var(--text-muted)' };
-  const fillDate = new Date();
-  fillDate.setDate(fillDate.getDate() + Math.round(days));
-  const dd   = String(fillDate.getDate()).padStart(2, '0');
-  const mm   = String(fillDate.getMonth() + 1).padStart(2, '0');
-  const yyyy = fillDate.getFullYear();
-  const dateStr = `${dd}.${mm}.${yyyy}`;
-  if (days < 14) return { text: dateStr, color: 'var(--danger)' };
-  if (days < 90) return { text: dateStr, color: 'var(--warning)' };
-  return { text: dateStr, color: 'var(--text-secondary)' };
+function fmtTimeUntilFull(days: number): string {
+  if (!days || !isFinite(days) || days <= 0) return '–';
+  if (days < 14)  return `in ~${Math.round(days)} days`;
+  if (days < 90)  return `in ~${Math.round(days / 7)} weeks`;
+  if (days < 730) return `in ~${Math.round(days / 30)} months`;
+  return `in ~${Math.round(days / 365)} years`;
 }
 
-// Fix #7 — real time-until-full from DB history
-function useFillPrediction(freeBytes: number) {
+function fmtUsableSpace(bytes: number): string {
+  if (!bytes) return '—';
+  const tb = bytes / (1024 ** 4);
+  if (tb >= 1) return `${tb.toFixed(1)} TB`;
+  const gb = bytes / (1024 ** 3);
+  return `${gb.toFixed(1)} GB`;
+}
+
+function colorVar(c: string): string {
+  if (c === 'danger')    return 'var(--danger)';
+  if (c === 'warning')   return 'var(--warning)';
+  if (c === 'secondary') return 'var(--text-secondary)';
+  return 'var(--text-muted)';
+}
+
+// Fill prediction from the shared backend endpoint (longest window auto-selected)
+function useFillPrediction() {
   const [prediction, setPrediction] = React.useState<{
-    text: string; color: string; windowLabel: string;
+    text: string; color: string; timeText: string;
   } | null>(null);
   const loaded = React.useRef(false);
 
   React.useEffect(() => {
-    if (loaded.current || freeBytes <= 0) return;
+    if (loaded.current) return;
     loaded.current = true;
-
-    const freeGB = freeBytes / 1e9;
-    const windows = [
-      { api: '1m', label: 'last 30d' },
-      { api: '1w', label: 'last 7d' },
-      { api: '1d', label: 'last 24h' },
-      { api: '1h', label: 'last 1h' },
-    ];
-
-    (async () => {
-      for (const w of windows) {
-        try {
-          const res = await api.getMetricsHistory(w.api);
-          const metrics: any[] = res.metrics || [];
-          if (metrics.length < 2) continue;
-
-          const avgWriteMb = metrics.reduce((s: number, m: any) => s + (m.write_bw_mb || 0), 0) / metrics.length;
-          const dailyGB    = avgWriteMb * 86400 / 1024;
-          const { text, color } = computeFillDate(dailyGB, freeGB);
-          const rateStr = dailyGB < 0.001 ? '0' : dailyGB < 1 ? dailyGB.toFixed(2) : dailyGB.toFixed(1);
-
-          setPrediction({ text, color, windowLabel: `Ø ${rateStr} GB/day · ${w.label}` });
-          return;
-        } catch { /* try next */ }
+    api.getFillPrediction('auto').then(res => {
+      if (res.predictions.length > 0) {
+        // Find the pool that will fill up soonest
+        const earliest = res.predictions.reduce((min, pred) => {
+          if (pred.fill_date === '–') return min;
+          if (!min || pred.fill_date < min.fill_date) return pred;
+          return min;
+        }, null as any);
+        if (earliest) {
+          const rate = parseFloat(earliest.rate_gb_day);
+          const days = rate > 0 ? earliest.free_gb / rate : 0;
+          setPrediction({
+            text: `Full on ${earliest.fill_date}`,
+            color: colorVar(earliest.color),
+            timeText: fmtTimeUntilFull(days),
+          });
+        } else {
+          setPrediction({ text: '–', color: 'var(--text-muted)', timeText: '' });
+        }
+      } else {
+        setPrediction({ text: '–', color: 'var(--text-muted)', timeText: '' });
       }
-      setPrediction({ text: '–', color: 'var(--text-muted)', windowLabel: '' });
-    })();
-  }, [freeBytes]);
+    }).catch(() => {
+      setPrediction({ text: '–', color: 'var(--text-muted)', timeText: '' });
+    });
+  }, []);
 
   return prediction;
 }
@@ -122,7 +128,6 @@ const TOOLTIP_STYLE = {
 };
 const AXIS_TICK   = { fill: '#52525b', fontSize: 10 };
 const GRID_PROPS  = { strokeDasharray: '1 6' as const, stroke: 'rgba(255,255,255,0.04)', vertical: false };
-// Fix #2 — shared chart margin for all charts in dashboard
 const CHART_MARGIN = { top: 24, right: 8, left: 16, bottom: 8 };
 const MAX_TICKS    = 6;
 
@@ -164,7 +169,7 @@ function CapacityBanner({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull:
 /* ── Stat card ── */
 function StatCard({ label, value, sub, fillLine, icon: Icon, color, minHeight = 130 }: {
   label: string; value: string; sub?: string;
-  fillLine?: { text: string; color: string; sub?: string };
+  fillLine?: { text: string; color: string; timeText?: string };
   icon: any; color?: string; minHeight?: number;
 }) {
   const c = color || 'var(--accent)';
@@ -199,9 +204,9 @@ function StatCard({ label, value, sub, fillLine, icon: Icon, color, minHeight = 
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: fillLine.color, marginTop: 3, fontWeight: 500 }}>
               {fillLine.text}
             </div>
-            {fillLine.sub && (
-              <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                {fillLine.sub}
+            {fillLine.timeText && (
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: fillLine.color, marginTop: 2 }}>
+                {fillLine.timeText}
               </div>
             )}
           </>
@@ -545,6 +550,8 @@ export default function Dashboard({
   const [histData1d, setHistData1d] = useState<any[]>([]);
   const [histData7d, setHistData7d] = useState<any[]>([]);
   const [scrubLive,  setScrubLive]  = useState<Record<string, {inProgress: boolean; progress: number; timeRemaining: string}>>({});
+  const [ioShowRead,  setIoShowRead]  = useState(true);
+  const [ioShowWrite, setIoShowWrite] = useState(true);
 
   const usagePct = totalCapacity > 0 ? (totalUsedStorage / totalCapacity) * 100 : 0;
   const animPct  = useCounter(usagePct);
@@ -558,8 +565,14 @@ export default function Dashboard({
   const allOnline = pools.length > 0 && pools.every(p => p.health === 'ONLINE');
   const freeBytes = totalCapacity - totalUsedStorage;
 
-  // Fix #7 — real time-until-full prediction fetched from DB on page load
-  const fillPrediction = useFillPrediction(freeBytes);
+  // Usable free space from zfs get available (available_bytes from backend)
+  const totalAvailableBytes = pools.reduce((s, p) => s + Number((p as any).available_bytes || 0), 0);
+  const pctFree = totalAvailableBytes > 0
+    ? (totalAvailableBytes / (totalAvailableBytes + totalUsedStorage)) * 100
+    : 0;
+
+  // Fill prediction from shared backend endpoint
+  const fillPrediction = useFillPrediction();
   const daysUntilFull  = null; // legacy, kept for capacity banner only
 
   useEffect(() => {
@@ -651,13 +664,13 @@ export default function Dashboard({
             />
             <StatCard
               label="Available Space"
-              value={formatBytes(freeBytes, 1)}
+              value={fmtUsableSpace(totalAvailableBytes)}
               fillLine={fillPrediction
-                ? { text: fillPrediction.text, color: fillPrediction.color, sub: fillPrediction.windowLabel }
+                ? { text: fillPrediction.text, color: fillPrediction.color, timeText: fillPrediction.timeText }
                 : undefined}
-              sub={`${(100 - usagePct).toFixed(1)}% free`}
+              sub={`${pctFree.toFixed(1)}% free`}
               icon={TrendingUp}
-              minHeight={140}
+              minHeight={160}
               color={
                 fillPrediction?.color === 'var(--danger)'  ? 'var(--danger)'  :
                 fillPrediction?.color === 'var(--warning)' ? 'var(--warning)' : 'var(--success)'
@@ -672,26 +685,46 @@ export default function Dashboard({
             title="I/O Activity"
             sub={histData1d.length > 2 ? 'Last 24 hours' : 'Current session · 5s resolution'}
             right={
-              <div style={{ display: 'flex', gap: 16, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#38bdf8' }}>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  onClick={() => setIoShowRead(v => !v)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 5,
+                    height: 24, padding: '0 8px', borderRadius: 'var(--radius-sm)',
+                    border: `1px solid ${ioShowRead ? '#38bdf844' : 'var(--border)'}`,
+                    background: ioShowRead ? '#38bdf815' : 'var(--bg-elevated)',
+                    color: ioShowRead ? '#38bdf8' : 'var(--text-muted)',
+                    fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600,
+                    letterSpacing: '0.05em', cursor: 'pointer', transition: 'all 0.12s',
+                  }}
+                >
                   <ArrowUp size={10} /> Read
-                </span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#818cf8' }}>
+                </button>
+                <button
+                  onClick={() => setIoShowWrite(v => !v)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 5,
+                    height: 24, padding: '0 8px', borderRadius: 'var(--radius-sm)',
+                    border: `1px solid ${ioShowWrite ? '#818cf844' : 'var(--border)'}`,
+                    background: ioShowWrite ? '#818cf815' : 'var(--bg-elevated)',
+                    color: ioShowWrite ? '#818cf8' : 'var(--text-muted)',
+                    fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600,
+                    letterSpacing: '0.05em', cursor: 'pointer', transition: 'all 0.12s',
+                  }}
+                >
                   <ArrowDown size={10} /> Write
-                </span>
+                </button>
               </div>
             }
           >
             <div style={{ padding: '16px 20px' }}>
               {ioData.length > 1 ? (
                 <>
-                  {/* Fix #2 — shared chart margin, overflow visible */}
                   <div style={{ height: 180, marginLeft: 8, overflow: 'visible' }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={ioData} margin={CHART_MARGIN}>
                         <CartesianGrid {...GRID_PROPS} />
                         <XAxis dataKey="timestamp" axisLine={false} tickLine={false} tick={AXIS_TICK} minTickGap={48} />
-                        {/* Fix #2 & #3 — tickCount + auto-scale */}
                         <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK}
                           tickFormatter={v => {
                             const maxV = ioData.reduce((m: number, d: any) => Math.max(m, d.read || 0, d.write || 0), 0);
@@ -709,8 +742,8 @@ export default function Dashboard({
                           v >= 1000 ? `${(v/1000).toFixed(2)} GB/s` : `${v.toFixed(2)} MB/s`,
                           n === 'read' ? '↑ Read' : '↓ Write',
                         ]} />
-                        <Line type="monotone" dataKey="read"  stroke="#38bdf8" strokeWidth={1.5} dot={false} isAnimationActive={false} activeDot={{ r: 3, strokeWidth: 0 }} />
-                        <Line type="monotone" dataKey="write" stroke="#818cf8" strokeWidth={1.5} dot={false} isAnimationActive={false} activeDot={{ r: 3, strokeWidth: 0 }} />
+                        {ioShowRead  && <Line type="monotone" dataKey="read"  stroke="#38bdf8" strokeWidth={1.5} dot={false} isAnimationActive={false} activeDot={{ r: 3, strokeWidth: 0 }} />}
+                        {ioShowWrite && <Line type="monotone" dataKey="write" stroke="#818cf8" strokeWidth={1.5} dot={false} isAnimationActive={false} activeDot={{ r: 3, strokeWidth: 0 }} />}
                       </LineChart>
                     </ResponsiveContainer>
                   </div>

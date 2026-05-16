@@ -173,8 +173,42 @@ export const api = {
       write_bw_mb: number;
       read_iops: number;
       write_iops: number;
+      total_read_gb_db: number;
+      total_write_gb_db: number;
     }>('/metrics/live'),
+
+  getFillPrediction: (window = 'auto') =>
+    request<{
+      predictions: Array<{
+        pool: string;
+        fill_date: string;
+        color: string;
+        rate_gb_day: string;
+        window_used: string;
+        window_key: string;
+        alloc_gb: number;
+        free_gb: number;
+        points: number;
+        fallback: boolean;
+      }>;
+      window_used: string | null;
+      window_key: string | null;
+    }>(`/metrics/fill-prediction?window=${encodeURIComponent(window)}`),
 
   getServerTime: () =>
     request<{ now: string; timezone: string }>('/time'),
+
+  // ── Pool Settings ──────────────────────────────────────────────────────────
+  getPoolSettings: (name: string) =>
+    request<{
+      pool: string;
+      pool_props: Array<{ name: string; value: string; source: string; scope: string }>;
+      dataset_props: Array<{ name: string; value: string; source: string; scope: string }>;
+    }>(`/pools/${encodeURIComponent(name)}/settings`),
+
+  setPoolSetting: (name: string, scope: 'pool' | 'dataset', prop: string, value: string) =>
+    request<{ message: string; pool: string; scope: string; prop: string; value: string }>(
+      `/pools/${encodeURIComponent(name)}/settings`,
+      { method: 'PUT', body: JSON.stringify({ scope, prop, value }) },
+    ),
 };

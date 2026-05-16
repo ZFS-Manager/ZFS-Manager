@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  AreaChart, Area, LineChart, Line,
+  AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { Activity, HardDrive, Edit2, Check, Plus } from 'lucide-react';
@@ -19,6 +19,8 @@ interface PerformanceProps {
     write_bw_mb: number;
     read_iops: number;
     write_iops: number;
+    total_read_gb_db?: number;
+    total_write_gb_db?: number;
   } | null;
   serverTimeOffsetMs?: number;
 }
@@ -33,6 +35,11 @@ const INTERVALS: { key: Interval; label: string; api: string }[] = [
   { key: '1m',  label: '1M',  api: '1m'  },
   { key: '1y',  label: '1Y',  api: '1y'  },
 ];
+
+// Mapping from UI interval to API window for fill-prediction endpoint
+const INTERVAL_TO_WINDOW: Record<Interval, string> = {
+  '1h': '1h', '6h': '6h', '1d': '1d', '7d': '1w', '1m': '1m', '1y': '1y',
+};
 
 const INTERVAL_TO_HISTORY: Record<Interval, { api: string; hoursBack?: number }> = {
   '1h': { api: '1h' },
@@ -53,9 +60,7 @@ const C = {
   alloc: '#6366f1', free: '#22c55e',
 };
 
-// Fix #2 — shared chart margin applied to every chart
 const CHART_MARGIN = { top: 24, right: 8, left: 16, bottom: 8 };
-const MAX_TICKS = 6;
 
 const TOOLTIP_STYLE = {
   contentStyle: {
@@ -70,7 +75,6 @@ const TOOLTIP_STYLE = {
 const AXIS_TICK  = { fill: '#52525b', fontSize: 10 };
 const GRID_PROPS = { strokeDasharray: '1 6' as const, stroke: 'rgba(255,255,255,0.04)', vertical: false };
 
-// Fix #3 — auto-scale bandwidth y-axis
 function getBwScale(maxMB: number): { unit: string; fmt: (v: number) => string } {
   if (maxMB >= 1000) return { unit: 'GB/s', fmt: v => (v / 1000).toFixed(1) };
   if (maxMB >= 1)    return { unit: 'MB/s', fmt: v => v.toFixed(0) };
@@ -93,14 +97,6 @@ function fmtGB(v: number) {
   return `${(v * 1024).toFixed(0)} MB`;
 }
 
-// Fix #6 — format cumulative totals (input in MB)
-function fmtTotalMB(mb: number): { value: string; unit: string } {
-  if (mb >= 1024 * 1024) return { value: (mb / 1024 / 1024).toFixed(2), unit: 'TB' };
-  if (mb >= 1024)        return { value: (mb / 1024).toFixed(2), unit: 'GB' };
-  if (mb >= 1)           return { value: mb.toFixed(1), unit: 'MB' };
-  return { value: (mb * 1024).toFixed(0), unit: 'KB' };
-}
-
 function fmtTs(iso: string, iv: Interval) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -111,7 +107,6 @@ function fmtTs(iso: string, iv: Interval) {
   return d.toLocaleDateString('de-DE', { month: 'short', year: '2-digit' });
 }
 
-// Fix #4 — rolling average to smooth live data
 function rollingAverage(data: any[], keys: string[], window: number): any[] {
   return data.map((point, i) => {
     const start = Math.max(0, i - window + 1);
@@ -148,19 +143,23 @@ function transformHistory(metrics: any[], interval: Interval): any[] {
   }));
 }
 
-function computeFillDate(dailyGB: number, freeGB: number): { text: string; color: string } {
-  if (dailyGB < 0.001 || freeGB <= 0) return { text: '–', color: 'var(--text-muted)' };
-  const days = freeGB / dailyGB;
-  if (days > 730) return { text: '–', color: 'var(--text-muted)' };
-  const fillDate = new Date();
-  fillDate.setDate(fillDate.getDate() + Math.round(days));
-  const dd   = String(fillDate.getDate()).padStart(2, '0');
-  const mm   = String(fillDate.getMonth() + 1).padStart(2, '0');
-  const yyyy = fillDate.getFullYear();
-  const dateStr = `${dd}.${mm}.${yyyy}`;
-  if (days < 14) return { text: dateStr, color: 'var(--danger)' };
-  if (days < 90) return { text: dateStr, color: 'var(--warning)' };
-  return { text: dateStr, color: 'var(--text-secondary)' };
+// Color variable names from the backend to CSS variables
+function colorVar(c: string): string {
+  if (c === 'danger')    return 'var(--danger)';
+  if (c === 'warning')   return 'var(--warning)';
+  if (c === 'secondary') return 'var(--text-secondary)';
+  return 'var(--text-muted)';
+}
+
+// Human-readable "in ~X" countdown from free space and daily write rate
+function fmtTimeRemaining(freeGb: number, rateGbDay: string): string {
+  const rate = parseFloat(rateGbDay);
+  if (!rate || rate <= 0) return '–';
+  const days = freeGb / rate;
+  if (days < 14)  return `in ~${Math.round(days)} days`;
+  if (days < 90)  return `in ~${Math.round(days / 7)} weeks`;
+  if (days < 730) return `in ~${Math.round(days / 30)} months`;
+  return `in ~${Math.round(days / 365)} years`;
 }
 
 function Skeleton({ height = 200 }: { height?: number }) {
@@ -265,24 +264,20 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const [hidden, setHidden]             = useState<Set<string>>(new Set());
   const [smartData, setSmartData]       = useState<any[]>([]);
 
-  const [storagePredictions, setStoragePredictions] = useState<any[]>([]);
-  const [storageInsufficient, setStorageInsufficient] = useState(false);
-  const [storageFallbackLabel, setStorageFallbackLabel] = useState('');
-  const [loadingStoragePred, setLoadingStoragePred] = useState(false);
+  // Fill predictions — loaded on mount (longest window) and on interval change
+  const [fillPredictions, setFillPredictions] = useState<any[]>([]);
+  const [fillWindowLabel, setFillWindowLabel] = useState('');
+  const [loadingFill, setLoadingFill]         = useState(false);
+  // Keep last computed predictions to show in live mode
+  const lastFillRef = useRef<{ predictions: any[]; windowLabel: string }>({ predictions: [], windowLabel: '' });
 
   const liveStats = stats;
   const livePoint = liveStats.length > 0 ? liveStats[liveStats.length - 1] : null;
 
-  // IO values from 1s liveMetrics (backend reads Redis at 1s)
-  const ioReadBw    = liveMetrics?.read_bw_mb  ?? livePoint?.read      ?? 0;
-  const ioWriteBw   = liveMetrics?.write_bw_mb ?? livePoint?.write     ?? 0;
-  const ioReadIops  = liveMetrics?.read_iops   ?? livePoint?.readIops  ?? 0;
-  const ioWriteIops = liveMetrics?.write_iops  ?? livePoint?.writeIops ?? 0;
-
   const chartData = historyData;
   const secPerPt  = SECONDS_PER_POINT[interval];
 
-  // Fix #1 — live timestamps based on server time
+  // Live timestamps based on server time
   const liveDataWithTimestamps = useMemo(() => {
     const now = Date.now() + serverTimeOffsetMs;
     const n   = liveStats.length;
@@ -300,7 +295,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     });
   }, [liveStats, serverTimeOffsetMs]);
 
-  // Fix #4 — smooth live data with 3-point rolling average
+  // Smooth live data with 3-point rolling average
   const smoothedLiveData = useMemo(() =>
     rollingAverage(liveDataWithTimestamps, ['read', 'write', 'iops'], 3),
     [liveDataWithTimestamps]
@@ -311,6 +306,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     return smoothedLiveData;
   }, [liveMode, chartData, smoothedLiveData]);
 
+  // Fetch chart history when interval changes (and not in live mode)
   useEffect(() => {
     if (liveMode) return;
     setHistoryData([]);
@@ -320,6 +316,42 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
       .then(res => setHistoryData(transformHistory(res.metrics, interval)))
       .catch(() => setHistoryData([]))
       .finally(() => setLoadingHistory(false));
+  }, [interval, liveMode]);
+
+  // Fetch fill predictions — on mount use auto (longest window), on interval change use that window
+  const fetchFillPredictions = useCallback(async (windowParam: string) => {
+    setLoadingFill(true);
+    try {
+      const res = await api.getFillPrediction(windowParam);
+      if (res.predictions.length > 0) {
+        setFillPredictions(res.predictions);
+        setFillWindowLabel(res.window_used ?? '');
+        lastFillRef.current = { predictions: res.predictions, windowLabel: res.window_used ?? '' };
+      } else if (lastFillRef.current.predictions.length > 0) {
+        // Keep previous data if no result
+        setFillPredictions(lastFillRef.current.predictions);
+        setFillWindowLabel(lastFillRef.current.windowLabel);
+      }
+    } catch {
+      if (lastFillRef.current.predictions.length > 0) {
+        setFillPredictions(lastFillRef.current.predictions);
+        setFillWindowLabel(lastFillRef.current.windowLabel);
+      }
+    } finally {
+      setLoadingFill(false);
+    }
+  }, []);
+
+  // Load on mount with auto window
+  useEffect(() => {
+    fetchFillPredictions('auto');
+  }, []);
+
+  // Re-fetch when interval changes (unless in live mode)
+  useEffect(() => {
+    if (liveMode) return;
+    const w = INTERVAL_TO_WINDOW[interval];
+    fetchFillPredictions(w);
   }, [interval, liveMode]);
 
   useEffect(() => {
@@ -338,83 +370,6 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     }).catch(() => {});
   }, []);
 
-  // Storage predictions tied to main chart interval (fix new#6)
-  useEffect(() => {
-    setLoadingStoragePred(true);
-    setStorageInsufficient(false);
-    setStorageFallbackLabel('');
-
-    const cfg = INTERVAL_TO_HISTORY[interval];
-    if (!cfg) { setLoadingStoragePred(false); return; }
-
-    async function fetchForInterval(iv: Interval): Promise<any[]> {
-      const c = INTERVAL_TO_HISTORY[iv];
-      if (!c) return [];
-      const res = await api.getMetricsHistory(c.api);
-      let metrics: any[] = res.metrics || [];
-      if (c.hoursBack) {
-        const cutoff = Date.now() - c.hoursBack * 3600 * 1000;
-        metrics = metrics.filter(m => new Date(m.collected_at).getTime() >= cutoff);
-      }
-      return metrics;
-    }
-
-    function buildPredictions(metrics: any[], windowLabel: string): any[] {
-      const poolMap = new Map<string, { writes: number[]; latestFreeGb: number }>();
-      for (const m of metrics) {
-        const name = m.pool_name || 'default';
-        if (!poolMap.has(name)) poolMap.set(name, { writes: [], latestFreeGb: 0 });
-        const p = poolMap.get(name)!;
-        p.writes.push(m.write_bw_mb || 0);
-        if (m.free_gb > 0) p.latestFreeGb = m.free_gb;
-      }
-      const result: any[] = [];
-      for (const [name, data] of poolMap) {
-        if (data.writes.length < 2) continue;
-        const avgWrite = data.writes.reduce((a, b) => a + b, 0) / data.writes.length;
-        const dailyGB  = avgWrite * 86400 / 1024;
-        const { text, color } = computeFillDate(dailyGB, data.latestFreeGb);
-        const rateStr = dailyGB < 0.001 ? '0' : dailyGB < 1 ? dailyGB.toFixed(2) : dailyGB.toFixed(1);
-        result.push({ pool: name, text, color, rate: rateStr, windowLabel, points: data.writes.length });
-      }
-      return result;
-    }
-
-    (async () => {
-      try {
-        const metrics = await fetchForInterval(interval);
-        const intervalLabel = INTERVALS.find(i => i.key === interval)?.label ?? interval;
-        const preds = buildPredictions(metrics, intervalLabel);
-
-        if (preds.length > 0) {
-          setStoragePredictions(preds);
-        } else {
-          setStorageInsufficient(true);
-          const fallbackOrder: Interval[] = (['1y', '1m', '7d', '1d', '6h', '1h'] as Interval[]).filter(k => k !== interval);
-          let found = false;
-          for (const fb of fallbackOrder) {
-            try {
-              const fbMetrics = await fetchForInterval(fb);
-              const fbLabel = INTERVALS.find(i => i.key === fb)?.label ?? fb;
-              const fbPreds = buildPredictions(fbMetrics, fbLabel);
-              if (fbPreds.length > 0) {
-                setStoragePredictions(fbPreds);
-                setStorageFallbackLabel(fbLabel);
-                found = true;
-                break;
-              }
-            } catch { /* continue */ }
-          }
-          if (!found) setStoragePredictions([]);
-        }
-      } catch {
-        setStoragePredictions([]);
-      } finally {
-        setLoadingStoragePred(false);
-      }
-    })();
-  }, [interval]);
-
   const toggle = useCallback((key: string) => {
     setHidden(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
   }, []);
@@ -423,30 +378,38 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   // Stats from chart data
   const dispAvgR   = chartData.length ? chartData.reduce((s, d) => s + (d.read  || 0), 0) / chartData.length : 0;
   const dispAvgW   = chartData.length ? chartData.reduce((s, d) => s + (d.write || 0), 0) / chartData.length : 0;
-  const dispPeakR  = chartData.reduce((m, d) => Math.max(m, d.read  || 0), 0);
-  const dispPeakW  = chartData.reduce((m, d) => Math.max(m, d.write || 0), 0);
   const dispTotalR = chartData.reduce((s, d) => s + (d.read  || 0) * secPerPt / 1024, 0);
   const dispTotalW = chartData.reduce((s, d) => s + (d.write || 0) * secPerPt / 1024, 0);
 
-  const livePeakR = liveStats.reduce((m, d) => Math.max(m, d.read  || 0), 0);
-  const livePeakW = liveStats.reduce((m, d) => Math.max(m, d.write || 0), 0);
-
-  const displayData  = liveMode ? smoothedLiveData : chartData;
-  const displaySecPt = liveMode ? 5 : secPerPt;
+  const displayData   = liveMode ? smoothedLiveData : chartData;
+  const displaySecPt  = liveMode ? 5 : secPerPt;
   const dispLiveAvgR  = displayData.length ? displayData.reduce((s, d) => s + (d.read  || 0), 0) / displayData.length : 0;
   const dispLiveAvgW  = displayData.length ? displayData.reduce((s, d) => s + (d.write || 0), 0) / displayData.length : 0;
-  const dispLivePeakR = displayData.reduce((m, d) => Math.max(m, d.read  || 0), 0);
-  const dispLivePeakW = displayData.reduce((m, d) => Math.max(m, d.write || 0), 0);
   const dispLiveTotalR = displayData.reduce((s, d) => s + (d.read  || 0) * displaySecPt / 1024, 0);
   const dispLiveTotalW = displayData.reduce((s, d) => s + (d.write || 0) * displaySecPt / 1024, 0);
 
-  // Fix #3 — compute scales for charts
+  // Compute scales for charts
   const ioMaxMB = ioDisplayData.reduce((m, d) => Math.max(m, d.read || 0, d.write || 0), 0.01);
   const bwScale = getBwScale(ioMaxMB);
   const storageMaxGB = chartData.reduce((m, d) => Math.max(m, d.alloc || 0, d.free || 0), 0.01);
   const gbScale = getGbScale(storageMaxGB);
 
-  // Fix #1 — XAxis config for live mode (numeric ms timestamps)
+  // Live values: use last smoothed live point to match chart in live mode
+  const lastLivePoint = smoothedLiveData.length > 0 ? smoothedLiveData[smoothedLiveData.length - 1] : null;
+  const ioReadBw  = liveMode && lastLivePoint ? lastLivePoint.read  : (liveMetrics?.read_bw_mb  ?? livePoint?.read  ?? 0);
+  const ioWriteBw = liveMode && lastLivePoint ? lastLivePoint.write : (liveMetrics?.write_bw_mb ?? livePoint?.write ?? 0);
+  const ioReadIops  = liveMetrics?.read_iops  ?? livePoint?.readIops  ?? 0;
+  const ioWriteIops = liveMetrics?.write_iops ?? livePoint?.writeIops ?? 0;
+
+  // Peak from session data
+  const livePeakR = liveStats.reduce((m, d) => Math.max(m, d.read  || 0), 0);
+  const livePeakW = liveStats.reduce((m, d) => Math.max(m, d.write || 0), 0);
+
+  // DB totals (all-time, from backend, cached 60s)
+  const totalReadGB  = liveMetrics?.total_read_gb_db  ?? 0;
+  const totalWriteGB = liveMetrics?.total_write_gb_db ?? 0;
+
+  // XAxis config
   const liveXAxisProps = {
     dataKey: 'tsMs' as const,
     type: 'number' as const,
@@ -472,13 +435,18 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
 
   const renderWidget = (id: string): React.ReactNode => {
     switch (id) {
-
       case 'live-gauges': {
-        const totalRead  = fmtTotalMB(liveMetrics?.total_read_mb  ?? 0);
-        const totalWrite = fmtTotalMB(liveMetrics?.total_write_mb ?? 0);
+        // Format DB totals
+        const fmtTotal = (gb: number) => {
+          if (gb >= 1000) return { value: (gb / 1024).toFixed(2), unit: 'TB' };
+          if (gb >= 1)    return { value: gb.toFixed(2),          unit: 'GB' };
+          if (gb >= 0.001) return { value: (gb * 1024).toFixed(1), unit: 'MB' };
+          return { value: '0', unit: 'MB' };
+        };
+        const totalRead  = fmtTotal(totalReadGB);
+        const totalWrite = fmtTotal(totalWriteGB);
         return (
           <div>
-            {/* Fix #5 — 1s update section */}
             <SectionHeader label="Live I/O" badge="1 s" />
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
               <GaugeCard
@@ -507,23 +475,21 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
                 unit="ops/s"
                 color={C.write}
               />
-              {/* Fix #6 — Total Read and Total Write cards */}
               <GaugeCard
                 label="Total ↑ Read"
                 value={totalRead.value}
                 unit={totalRead.unit}
                 color={C.read}
-                sub="since reset"
+                sub="all time"
               />
               <GaugeCard
                 label="Total ↓ Write"
                 value={totalWrite.value}
                 unit={totalWrite.unit}
                 color={C.write}
-                sub="since reset"
+                sub="all time"
               />
             </div>
-
           </div>
         );
       }
@@ -531,7 +497,6 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
       case 'io-chart':
         return (
           <div>
-            {/* Interval selector + Live toggle */}
             <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center', flexWrap: 'wrap' }}>
               <div style={{
                 display: 'flex', background: 'var(--bg-surface)', border: '1px solid var(--border)',
@@ -606,94 +571,46 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
                   </div>
                 }
               >
-                {/* Fix #2 — overflow visible so labels aren't clipped */}
                 <div style={{ height: 240, marginLeft: 8, overflow: 'visible' }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={ioDisplayData} margin={CHART_MARGIN}>
                       <defs>
-                        <linearGradient id="perfR" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%"  stopColor={C.read}  stopOpacity={0.15} />
-                          <stop offset="95%" stopColor={C.read}  stopOpacity={0}    />
-                        </linearGradient>
-                        <linearGradient id="perfW" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%"  stopColor={C.write} stopOpacity={0.15} />
-                          <stop offset="95%" stopColor={C.write} stopOpacity={0}    />
-                        </linearGradient>
+                        <linearGradient id="gRead" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.read} stopOpacity={0.15}/><stop offset="95%" stopColor={C.read} stopOpacity={0}/></linearGradient>
+                        <linearGradient id="gWrite" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.write} stopOpacity={0.15}/><stop offset="95%" stopColor={C.write} stopOpacity={0}/></linearGradient>
                       </defs>
                       <CartesianGrid {...GRID_PROPS} />
-                      {/* Fix #1 — live mode uses numeric ms timestamps */}
-                      {liveMode
-                        ? <XAxis {...liveXAxisProps} />
-                        : <XAxis {...histXAxisProps} />
-                      }
-                      <YAxis
-                        axisLine={false} tickLine={false} tick={AXIS_TICK}
-                        tickFormatter={bwScale.fmt}
-                        tickCount={MAX_TICKS}
-                        width={64}
-                        label={{ value: bwScale.unit, angle: -90, position: 'insideLeft', offset: 8, style: { fill: '#52525b', fontSize: 9, textAnchor: 'middle' } }}
-                      />
-                      <Tooltip
-                        {...TOOLTIP_STYLE}
-                        formatter={(v: number, n: string) => [fmtBw(v), n === 'read' ? '↑ Read' : '↓ Write']}
-                        labelFormatter={liveMode ? (v: number) => new Date(v).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : undefined}
-                      />
-                      <Area type="monotone" dataKey="read"  stroke={C.read}  fill="url(#perfR)" strokeWidth={vis('read')  ? 1.5 : 0} fillOpacity={vis('read')  ? 1 : 0} isAnimationActive={false} dot={false} activeDot={{ r: 3, strokeWidth: 0 }} />
-                      <Area type="monotone" dataKey="write" stroke={C.write} fill="url(#perfW)" strokeWidth={vis('write') ? 1.5 : 0} fillOpacity={vis('write') ? 1 : 0} isAnimationActive={false} dot={false} activeDot={{ r: 3, strokeWidth: 0 }} />
+                      <XAxis {...(liveMode ? liveXAxisProps : histXAxisProps)} />
+                      <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} unit={bwScale.unit} tickFormatter={bwScale.fmt} width={40} />
+                      <Tooltip {...TOOLTIP_STYLE} labelFormatter={(v, pts) => pts?.[0]?.payload?.hhmmss ?? v} formatter={(v: number) => [fmtBw(v), '']} />
+                      {vis('read') && <Area type="monotone" dataKey="read" stroke={C.read} fill="url(#gRead)" strokeWidth={2} isAnimationActive={!liveMode} animationDuration={600} />}
+                      {vis('write') && <Area type="monotone" dataKey="write" stroke={C.write} fill="url(#gWrite)" strokeWidth={2} isAnimationActive={!liveMode} animationDuration={600} />}
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
-
-                {displayData.length > 0 && (
-                  <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)', display: 'flex', gap: 0 }}>
-                    <div style={{ flex: 1, paddingRight: 20 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
-                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.read, display: 'inline-block', flexShrink: 0 }} />
-                        <span style={{ fontFamily: 'var(--font-ui)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: C.read }}>Read</span>
-                      </div>
-                      {[
-                        { label: 'Avg ↑ Read',   value: fmtBw(liveMode ? dispLiveAvgR  : dispAvgR)   },
-                        { label: 'Peak ↑ Read',  value: fmtBw(liveMode ? dispLivePeakR : dispPeakR)  },
-                        { label: 'Total ↑ Read', value: fmtGB(liveMode ? dispLiveTotalR : dispTotalR) },
-                      ].map(({ label, value }) => (
-                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
-                          <span style={{ fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</span>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: C.read, fontWeight: 700 }}>{value}</span>
-                        </div>
-                      ))}
+                {/* Stats below chart */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginTop: 12, padding: '12px 0', borderTop: '1px solid var(--border-subtle)' }}>
+                  {[
+                    { label: 'Avg Read',   value: fmtBw(liveMode ? dispLiveAvgR  : dispAvgR)  },
+                    { label: 'Avg Write',  value: fmtBw(liveMode ? dispLiveAvgW  : dispAvgW)  },
+                    { label: 'Total Read',  value: fmtGB(liveMode ? dispLiveTotalR : dispTotalR) },
+                    { label: 'Total Write', value: fmtGB(liveMode ? dispLiveTotalW : dispTotalW) },
+                  ].map(s => (
+                    <div key={s.label}>
+                      <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>{s.label}</div>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{s.value}</div>
                     </div>
-                    <div style={{ width: 1, background: 'var(--border)', flexShrink: 0 }} />
-                    <div style={{ flex: 1, paddingLeft: 20 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
-                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.write, display: 'inline-block', flexShrink: 0 }} />
-                        <span style={{ fontFamily: 'var(--font-ui)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: C.write }}>Write</span>
-                      </div>
-                      {[
-                        { label: 'Avg ↓ Write',   value: fmtBw(liveMode ? dispLiveAvgW  : dispAvgW)   },
-                        { label: 'Peak ↓ Write',  value: fmtBw(liveMode ? dispLivePeakW : dispPeakW)  },
-                        { label: 'Total ↓ Write', value: fmtGB(liveMode ? dispLiveTotalW : dispTotalW) },
-                      ].map(({ label, value }) => (
-                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
-                          <span style={{ fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</span>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: C.write, fontWeight: 700 }}>{value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                  ))}
+                </div>
               </Panel>
             )}
           </div>
         );
 
-      case 'throughput':
-        return null;
-
       case 'storage-history':
-        return !loadingHistory && chartData.length > 0 ? (
+        return (
           <Panel
-            title="Storage Space History"
-            sub="Used vs free space over time"
+            title="Pool Capacity"
+            sub="Allocation trends"
             right={
               <div style={{ display: 'flex', gap: 6 }}>
                 <Toggle color={C.alloc} label="Used" active={vis('alloc')} onClick={() => toggle('alloc')} />
@@ -701,203 +618,149 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
               </div>
             }
           >
-            {/* Fix #2 — overflow visible + larger left margin */}
-            <div style={{ height: 200, marginLeft: 8, overflow: 'visible' }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={CHART_MARGIN}>
-                  <defs>
-                    <linearGradient id="perfAl" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor={C.alloc} stopOpacity={0.2} />
-                      <stop offset="95%" stopColor={C.alloc} stopOpacity={0}   />
-                    </linearGradient>
-                    <linearGradient id="perfFr" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor={C.free}  stopOpacity={0.12} />
-                      <stop offset="95%" stopColor={C.free}  stopOpacity={0}    />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid {...GRID_PROPS} />
-                  <XAxis {...histXAxisProps} />
-                  <YAxis
-                    axisLine={false} tickLine={false} tick={AXIS_TICK}
-                    tickFormatter={gbScale.fmt}
-                    tickCount={MAX_TICKS}
-                    width={60}
-                    label={{ value: gbScale.unit, angle: -90, position: 'insideLeft', offset: 8, style: { fill: '#52525b', fontSize: 9, textAnchor: 'middle' } }}
-                  />
-                  <Tooltip {...TOOLTIP_STYLE} formatter={(v: number, n: string) => [fmtGB(v), n === 'alloc' ? 'Used' : 'Free']} />
-                  <Area type="monotone" dataKey="alloc" stroke={C.alloc} fill="url(#perfAl)" strokeWidth={vis('alloc') ? 1.5 : 0} fillOpacity={vis('alloc') ? 1 : 0} isAnimationActive={false} dot={false} activeDot={{ r: 3, strokeWidth: 0 }} />
-                  <Area type="monotone" dataKey="free"  stroke={C.free}  fill="url(#perfFr)" strokeWidth={vis('free')  ? 1.5 : 0} fillOpacity={vis('free')  ? 1 : 0} isAnimationActive={false} dot={false} activeDot={{ r: 3, strokeWidth: 0 }} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-
-            {/* Fill date predictions — uses same interval as main chart */}
-            <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
-              <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
-                Fill Date
-              </div>
-
-              {loadingStoragePred ? (
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>Computing…</div>
-              ) : (
-                <>
-                  {storageInsufficient && storageFallbackLabel && (
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', marginBottom: 8 }}>
-                      No data for {INTERVALS.find(i => i.key === interval)?.label ?? interval} — using {storageFallbackLabel}
-                    </div>
-                  )}
-                  {storagePredictions.length === 0 ? (
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>–</div>
-                  ) : storagePredictions.map(pred => (
-                    <div key={pred.pool} style={{ marginBottom: 10 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                        <span style={{ fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-secondary)', fontWeight: 500 }}>{pred.pool}</span>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: pred.color, fontWeight: 600 }}>{pred.text}</span>
-                      </div>
-                      <div style={{ fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                        Ø {pred.rate} GB/day · {pred.windowLabel}
-                      </div>
-                    </div>
-                  ))}
-                </>
+            <div style={{ height: 240 }}>
+              {loadingHistory ? <Skeleton height={240} /> : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData} margin={CHART_MARGIN}>
+                    <CartesianGrid {...GRID_PROPS} />
+                    <XAxis {...histXAxisProps} />
+                    <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} unit={gbScale.unit} tickFormatter={gbScale.fmt} width={40} />
+                    <Tooltip {...TOOLTIP_STYLE} formatter={(v: number) => [fmtGB(v), '']} />
+                    {vis('alloc') && <Area type="stepAfter" dataKey="alloc" stroke={C.alloc} fill={C.alloc + '10'} strokeWidth={2} />}
+                    {vis('free')  && <Area type="stepAfter" dataKey="free"  stroke={C.free}  fill={C.free  + '10'} strokeWidth={2} />}
+                  </AreaChart>
+                </ResponsiveContainer>
               )}
             </div>
-          </Panel>
-        ) : null;
 
-      case 'smart-health':
-        return smartData.length > 0 ? (
-          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
-              <div>
-                <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>SMART / Disk Health</div>
-                <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{smartData.length} disk{smartData.length !== 1 ? 's' : ''} monitored</div>
-              </div>
-              <HardDrive size={15} style={{ color: 'var(--text-muted)' }} />
-            </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Device</th><th>Model</th><th>Temp</th><th>Health</th>
-                    <th>Power-On Hours</th><th>Realloc Sectors</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {smartData.map(({ disk, smart }, i) => {
-                    const passed  = smart?.smart_status?.passed ?? smart?.passed;
-                    const temp    = smart?.temperature?.current ?? smart?.temp ?? '—';
-                    const hours   = smart?.power_on_time?.hours ?? smart?.power_on_hours ?? '—';
-                    const realloc = smart?.ata_smart_attributes?.table?.find((a: any) => a.id === 5)?.raw?.value ?? '—';
+            {/* Fill predictions integrated below chart */}
+            {fillPredictions.length > 0 && (
+              <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border-subtle)' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {fillPredictions.map((p, i) => {
+                    const totalGB = (p.alloc_gb ?? 0) + (p.free_gb ?? 0);
+                    const usedPct = totalGB > 0 ? Math.min(100, (p.alloc_gb / totalGB) * 100) : 0;
+                    const capColor = usedPct > 90 ? 'var(--danger)' : usedPct > 80 ? 'var(--warning)' : 'var(--accent)';
+                    const lineColor = colorVar(p.color);
                     return (
-                      <tr key={i}>
-                        <td><span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)' }}>/dev/{disk.name || disk.path}</span></td>
-                        <td><span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{smart?.model_name || disk.model || '—'}</span></td>
-                        <td><span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: typeof temp === 'number' && temp > 55 ? 'var(--danger)' : typeof temp === 'number' && temp > 45 ? 'var(--warning)' : 'var(--text-secondary)' }}>
-                          {temp !== '—' ? `${temp}°C` : '—'}
-                        </span></td>
-                        <td><span className={passed === true ? 'badge badge-success' : passed === false ? 'badge badge-danger' : 'badge'}>{passed === true ? 'PASSED' : passed === false ? 'FAILED' : 'UNKNOWN'}</span></td>
-                        <td><span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{typeof hours === 'number' ? `${hours.toLocaleString()} h` : '—'}</span></td>
-                        <td><span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: realloc !== '—' && Number(realloc) > 0 ? 'var(--danger)' : 'var(--text-secondary)' }}>{realloc}</span></td>
-                      </tr>
+                      <div key={i} style={{ paddingBottom: i < fillPredictions.length - 1 ? 12 : 0, borderBottom: i < fillPredictions.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
+                        {/* Pool name */}
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
+                          {p.pool}
+                        </div>
+                        {/* Storage bar */}
+                        {totalGB > 0 && (
+                          <div style={{ marginBottom: 6 }}>
+                            <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden', marginBottom: 4 }}>
+                              <div style={{ height: '100%', width: `${usedPct}%`, background: capColor, borderRadius: 9999 }} />
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                              <span>{fmtGB(p.alloc_gb)} used</span>
+                              <span>{fmtGB(p.free_gb)} free of {fmtGB(totalGB)}</span>
+                            </div>
+                          </div>
+                        )}
+                        {/* Line 1: fill date */}
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600, color: lineColor }}>
+                          {p.fill_date === '–' ? '–' : `Full on ${p.fill_date}`}
+                        </div>
+                        {/* Line 2: time until full — same color, no fallback window note */}
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: lineColor, marginTop: 2 }}>
+                          {fmtTimeRemaining(p.free_gb, p.rate_gb_day)}
+                        </div>
+                      </div>
                     );
                   })}
-                </tbody>
-              </table>
+                </div>
+              </div>
+            )}
+            {!loadingFill && fillPredictions.length === 0 && (
+              <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border-subtle)', textAlign: 'center' }}>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Not enough historical write data to calculate fill date.</p>
+              </div>
+            )}
+          </Panel>
+        );
+
+      case 'smart-health':
+        return (
+          <Panel title="Disk SMART Status" sub="Physical health summary">
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
+              {smartData.length === 0 ? (
+                [1, 2, 3].map(i => <Skeleton key={i} height={80} />)
+              ) : smartData.map((d, i) => {
+                const passed = d.smart?.smart_status?.passed;
+                const temp   = d.smart?.temperature?.current;
+                const hours  = d.smart?.power_on_time?.hours;
+                return (
+                  <div key={i} style={{ background: 'var(--bg-elevated)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 14 }}>
+                    <div style={{ width: 32, height: 32, borderRadius: '50%', background: passed ? 'var(--success-dim)' : 'var(--danger-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <HardDrive size={16} style={{ color: passed ? 'var(--success)' : 'var(--danger)' }} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.disk.name}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: passed ? 'var(--success)' : 'var(--danger)' }}>{passed ? 'PASSED' : 'FAIL'}</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--text-muted)' }}>
+                        {temp !== undefined && <span>Temp: <span style={{ color: temp > 50 ? 'var(--danger)' : 'var(--text-secondary)' }}>{temp}°C</span></span>}
+                        {hours !== undefined && <span>Power-on: <span style={{ color: 'var(--text-secondary)' }}>{(hours/24).toFixed(0)}d</span></span>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          </div>
-        ) : null;
+          </Panel>
+        );
 
       default:
         return null;
     }
   };
 
-  const sortedWidgets  = [...widgets].sort((a, b) => a.order - b.order);
-  const visibleWidgets = sortedWidgets.filter(w => w.visible);
+  if (!loaded) return <div style={{ padding: 24 }}><Skeleton height={400} /></div>;
 
   return (
-    <div style={{ paddingBottom: 48 }}>
-
-      {toast && (
-        <div style={{
-          position: 'fixed', top: 20, right: 24, zIndex: 200,
-          background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius)', padding: '8px 14px',
-          fontSize: 12, fontFamily: 'var(--font-ui)', color: 'var(--text-secondary)',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-        }}>{toast}</div>
-      )}
-
-      {editMode && (
-        <div style={{
-          position: 'fixed', right: 24, top: 100, width: 220,
-          background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius-lg)', padding: 12, zIndex: 50,
-          boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-        }}>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
-            Hidden widgets
-          </div>
-          {sortedWidgets.filter(w => !w.visible).map(w => (
-            <button key={w.id} onClick={() => handleAdd(w.id)} style={{
-              display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', marginBottom: 4,
-              background: 'transparent', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-              cursor: 'pointer', color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', fontSize: 12, transition: 'all 0.12s',
-            }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; }}
-            >
-              <Plus size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-              {WIDGET_LABELS[w.id] || w.id}
-            </button>
-          ))}
-          {sortedWidgets.every(w => w.visible) && (
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textAlign: 'center' }}>All widgets visible</div>
-          )}
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.01em' }}>System Performance</h1>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-secondary" onClick={() => setEditMode(!editMode)}>
+            {editMode ? <Check size={14} /> : <Edit2 size={14} />}
+            {editMode ? 'Done' : 'Edit Layout'}
+          </button>
         </div>
-      )}
-
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
-        <button
-          onClick={() => setEditMode(m => !m)}
-          className="btn"
-          style={{
-            gap: 6,
-            background: editMode ? 'var(--accent-dim)' : 'transparent',
-            borderColor: editMode ? 'var(--accent-mid)' : 'var(--border)',
-            color: editMode ? 'var(--accent)' : 'var(--text-muted)',
-          }}
-        >
-          {editMode ? <><Check size={13} /> Done</> : <><Edit2 size={13} /> Edit Layout</>}
-        </button>
       </div>
 
-      {!loaded && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <Skeleton height={140} /><Skeleton height={280} /><Skeleton height={200} />
-        </div>
-      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        {widgets.filter(w => w.visible).map(w => (
+          <WidgetShell
+            key={w.id}
+            id={w.id}
+            editMode={editMode}
+            onDragStart={() => handleDragStart(w.id)}
+            onDragOver={() => handleDragOver(w.id)}
+            onDrop={() => handleDrop(w.id)}
+            isDragOver={dragOver === w.id}
+            onRemove={() => handleRemove(w.id)}
+          >
+            {renderWidget(w.id)}
+          </WidgetShell>
+        ))}
+      </div>
 
-      {loaded && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {visibleWidgets.map(w => {
-            const content = renderWidget(w.id);
-            if (!content) return null;
-            return (
-              <WidgetShell
-                key={w.id} id={w.id}
-                editMode={editMode}
-                onRemove={handleRemove}
-                onDragStart={handleDragStart}
-                onDragOver={handleDragOver}
-                onDrop={handleDrop}
-                isDragOver={dragOver === w.id && dragFrom !== w.id}
-              >
-                {content}
-              </WidgetShell>
-            );
-          })}
+      {editMode && (
+        <div style={{ marginTop: 32, padding: 24, border: '1px dashed var(--border)', borderRadius: 'var(--radius-lg)', textAlign: 'center' }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Hidden Widgets</h3>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
+            {widgets.filter(w => !w.visible).map(w => (
+              <button key={w.id} className="btn btn-secondary" onClick={() => handleAdd(w.id)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Plus size={14} /> {WIDGET_LABELS[w.id]}
+              </button>
+            ))}
+            {widgets.every(w => w.visible) && <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>All widgets are currently visible.</p>}
+          </div>
         </div>
       )}
     </div>

@@ -790,19 +790,15 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
                   {[{ label: 'Size', value: v.volsize }, { label: 'Used', value: v.used }].map(({ label, value }) => (
                     <div key={label}>
                       <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: 'var(--font-ui)', marginBottom: 2 }}>{label}</div>
-                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{value}</div>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>{value}</div>
                     </div>
                   ))}
                 </div>
-                <div className="row-actions" style={{ opacity: 0 }}>
-                  <button
-                    onClick={() => handleRewrite(v.name)}
-                    className="btn btn-secondary"
-                    style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}
-                  >
-                    <RotateCcw size={11} />
-                    Rewrite
-                  </button>
+                <div className="progress-track" style={{ height: 4, marginBottom: 4 }}>
+                  <div className="progress-fill" style={{
+                    width: `${Math.min((parseFloat(v.used) / parseFloat(v.volsize)) * 100, 100) || 0}%`,
+                    background: 'var(--info)'
+                  }} />
                 </div>
               </motion.div>
             ))}

@@ -4,7 +4,7 @@ import {
   Database, RefreshCw, ChevronDown, CheckCircle, XCircle,
   Loader2, Plus, Trash2, AlertTriangle, X, HardDrive,
   ArrowLeftRight, Download, Expand, RotateCcw, ChevronRight,
-  Activity, Info, Cpu,
+  Activity, Info, Cpu, Settings,
 } from 'lucide-react';
 import { ZFSPool } from '../types';
 import { api, formatBytes } from '../api';
@@ -44,8 +44,8 @@ const S = {
     },
     box: {
       background: 'var(--bg-surface)', border: '1px solid var(--border)',
-      borderRadius: 14, padding: 28, width: '100%',
-      maxWidth: 480, boxShadow: '0 8px 40px rgba(0,0,0,0.4)',
+      borderRadius: 'var(--radius-lg)', padding: 28, width: '100%',
+      maxWidth: 480, boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
     },
     title:  { fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)', margin: 0 },
     label:  { fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase' as const, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', display: 'block', marginBottom: 8 },
@@ -544,7 +544,7 @@ function CreatePoolModal({ onClose, onSuccess, usedDisks = new Set<string>() }: 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             <div>
               <label style={S.modal.label}>Pool Name</label>
-              <input style={S.modal.input} type="text" placeholder="e.g. tank, storage, data" value={poolName} onChange={e => setPoolName(e.target.value.replace(/[^a-zA-Z0-9_\-:.]/g, ''))} />
+              <input style={S.modal.input} type="text" placeholder="e.g. tank, storage, data" value={poolName} onChange={e => setPoolName(e.target.replace(/[^a-zA-Z0-9_\-:.]/g, ''))} />
             </div>
 
             <div>
@@ -669,6 +669,300 @@ function DiskRow({ disk, poolName, onReplace, onSmartClick }: {
   );
 }
 
+/* ── Pool Settings Panel ─────────────────────────────────────────────────────── */
+
+type PropDef = {
+  name: string;
+  label: string;
+  scope: 'pool' | 'dataset';
+  type: 'toggle' | 'select' | 'text';
+  options?: string[];
+};
+
+const POOL_PROP_DEFS: PropDef[] = [
+  { name: 'autoreplace',   label: 'Auto Replace',       scope: 'pool',    type: 'toggle' },
+  { name: 'autotrim',      label: 'Auto Trim',          scope: 'pool',    type: 'toggle' },
+  { name: 'autoexpand',    label: 'Auto Expand',        scope: 'pool',    type: 'toggle' },
+  { name: 'failmode',      label: 'Fail Mode',          scope: 'pool',    type: 'select', options: ['wait', 'continue', 'panic'] },
+  { name: 'comment',       label: 'Comment',            scope: 'pool',    type: 'text' },
+  { name: 'compression',   label: 'Compression',        scope: 'dataset', type: 'select', options: ['off', 'lz4', 'zstd', 'gzip', 'zle'] },
+  { name: 'atime',         label: 'Access Time',        scope: 'dataset', type: 'toggle' },
+  { name: 'relatime',      label: 'Relative Atime',     scope: 'dataset', type: 'toggle' },
+  { name: 'dedup',         label: 'Deduplication',      scope: 'dataset', type: 'toggle' },
+  { name: 'recordsize',    label: 'Record Size',        scope: 'dataset', type: 'select', options: ['512', '1K', '2K', '4K', '8K', '16K', '32K', '64K', '128K', '1M'] },
+  { name: 'xattr',         label: 'Extended Attrs',     scope: 'dataset', type: 'select', options: ['on', 'off', 'sa'] },
+  { name: 'quota',         label: 'Quota',              scope: 'dataset', type: 'text' },
+  { name: 'reservation',   label: 'Reservation',        scope: 'dataset', type: 'text' },
+  { name: 'snapdir',       label: 'Snapshot Dir',       scope: 'dataset', type: 'select', options: ['hidden', 'visible'] },
+  { name: 'sync',          label: 'Sync Mode',          scope: 'dataset', type: 'select', options: ['standard', 'always', 'disabled'] },
+];
+
+/* ── Settings Popout (slide-in from right) ──────────────────────────────────── */
+function SettingsPopout({
+  poolName,
+  onClose,
+  onSaved,
+}: {
+  poolName: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [visible, setVisible] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving,  setSaving]  = useState(false);
+  const [props,   setProps]   = useState<Record<string, string>>({});
+  const [edits,   setEdits]   = useState<Record<string, string>>({});
+  const [error,   setError]   = useState<string | null>(null);
+  const [toast,   setToast]   = useState<{ msg: string; ok: boolean } | null>(null);
+
+  useEffect(() => { requestAnimationFrame(() => setVisible(true)); }, []);
+
+  const close = () => {
+    setVisible(false);
+    setTimeout(onClose, 310);
+  };
+
+  const load = () => {
+    setLoading(true);
+    setError(null);
+    api.getPoolSettings(poolName).then(res => {
+      const map: Record<string, string> = {};
+      for (const p of [...res.pool_props, ...res.dataset_props]) map[p.name] = p.value;
+      setProps(map);
+      setEdits({ ...map });
+    }).catch(err => {
+      setError(err.message || 'Failed to load settings');
+    }).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, [poolName]);
+
+  const pendingCount = Object.entries(edits).filter(([k, v]) => v !== (props[k] ?? '')).length;
+
+  const handleSave = async () => {
+    const changed = Object.entries(edits).filter(([k, v]) => v !== (props[k] ?? ''));
+    if (changed.length === 0) { close(); return; }
+    setSaving(true);
+    try {
+      for (const [k, v] of changed) {
+        const def = POOL_PROP_DEFS.find(d => d.name === k);
+        if (def) await api.setPoolSetting(poolName, def.scope, k, v);
+      }
+      onSaved();
+      close();
+    } catch (err: any) {
+      setToast({ msg: err.message || 'Save failed', ok: false });
+      setTimeout(() => setToast(null), 4000);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
+  const poolPropDefs    = POOL_PROP_DEFS.filter(d => d.scope === 'pool');
+  const datasetPropDefs = POOL_PROP_DEFS.filter(d => d.scope === 'dataset');
+
+  const sectionLabel = (text: string) => (
+    <div style={{
+      fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
+      color: 'var(--text-muted)', fontFamily: 'var(--font-ui)',
+      paddingBottom: 8, borderBottom: '1px solid var(--border-subtle)', marginBottom: 4,
+    }}>
+      {text}
+    </div>
+  );
+
+  return (
+    <>
+      {/* Dark overlay */}
+      <div
+        onClick={close}
+        style={{
+          position: 'fixed', inset: 0, zIndex: 400,
+          background: 'rgba(0,0,0,0.4)',
+          opacity: visible ? 1 : 0,
+          transition: 'opacity 300ms ease',
+        }}
+      />
+
+      {/* Slide-in panel */}
+      <div style={{
+        position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 401,
+        width: 400, maxWidth: '100vw',
+        background: 'var(--bg-surface)',
+        borderLeft: '1px solid var(--border)',
+        display: 'flex', flexDirection: 'column',
+        transform: visible ? 'translateX(0)' : 'translateX(100%)',
+        transition: 'transform 300ms ease',
+        boxShadow: '-8px 0 40px rgba(0,0,0,0.5)',
+      }}>
+
+        {/* Header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '16px 20px', borderBottom: '1px solid var(--border)', flexShrink: 0,
+        }}>
+          <div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>
+              {poolName}
+            </div>
+            <div style={{ fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+              Pool Settings
+            </div>
+          </div>
+          <button
+            onClick={close}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'flex', alignItems: 'center' }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px' }} className="no-scrollbar">
+          {toast && (
+            <div style={{
+              margin: '12px 0', padding: '8px 14px', borderRadius: 'var(--radius)',
+              background: toast.ok ? 'var(--success-dim)' : 'var(--danger-dim)',
+              border: `1px solid ${toast.ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
+              fontSize: 12, color: toast.ok ? 'var(--success)' : 'var(--danger)',
+              fontFamily: 'var(--font-ui)',
+            }}>
+              {toast.msg}
+            </div>
+          )}
+
+          {loading ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 20 }}>
+              {[48, 48, 48, 48, 48, 48, 48].map((h, i) => (
+                <div key={i} className="skeleton" style={{ height: h, borderRadius: 'var(--radius)' }} />
+              ))}
+            </div>
+          ) : error ? (
+            <div style={{ paddingTop: 32, textAlign: 'center' }}>
+              <div style={{ fontSize: 13, color: 'var(--danger)', fontFamily: 'var(--font-ui)', marginBottom: 16 }}>{error}</div>
+              <button className="btn btn-secondary" onClick={load}>Retry</button>
+            </div>
+          ) : (
+            <>
+              <div style={{ paddingTop: 16, paddingBottom: 4 }}>
+                {sectionLabel('Pool Properties')}
+                {poolPropDefs.map(def => (
+                  <PopoutPropRow
+                    key={def.name}
+                    def={def}
+                    value={edits[def.name] ?? ''}
+                    currentValue={props[def.name] ?? ''}
+                    onChange={v => setEdits(e => ({ ...e, [def.name]: v }))}
+                  />
+                ))}
+              </div>
+              <div style={{ paddingTop: 16, paddingBottom: 20 }}>
+                {sectionLabel('Dataset Properties')}
+                {datasetPropDefs.map(def => (
+                  <PopoutPropRow
+                    key={def.name}
+                    def={def}
+                    value={edits[def.name] ?? ''}
+                    currentValue={props[def.name] ?? ''}
+                    onChange={v => setEdits(e => ({ ...e, [def.name]: v }))}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          borderTop: '1px solid var(--border)', padding: '14px 20px', flexShrink: 0,
+          background: 'var(--bg-elevated)',
+        }}>
+          {pendingCount > 0 && (
+            <div style={{ fontSize: 11, color: 'var(--accent)', fontFamily: 'var(--font-ui)', marginBottom: 10 }}>
+              {pendingCount} pending change{pendingCount !== 1 ? 's' : ''}
+            </div>
+          )}
+          <button
+            className="btn btn-primary"
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: 8 }}
+            onClick={handleSave}
+            disabled={saving || loading}
+          >
+            {saving && <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />}
+            {saving ? 'Saving…' : pendingCount > 0 ? `Save ${pendingCount} Change${pendingCount !== 1 ? 's' : ''}` : 'Save Changes'}
+          </button>
+          <button className="btn btn-secondary" style={{ width: '100%' }} onClick={close}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function PopoutPropRow({
+  def, value, currentValue, onChange,
+}: {
+  def: PropDef; value: string; currentValue: string; onChange: (v: string) => void;
+}) {
+  const changed = value !== currentValue;
+  const inputStyle: React.CSSProperties = {
+    flex: 1, height: 30, padding: '0 8px',
+    background: 'var(--bg-elevated)',
+    border: `1px solid ${changed ? 'var(--accent)' : 'var(--border)'}`,
+    borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)',
+    fontFamily: 'var(--font-mono)', fontSize: 11, outline: 'none',
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+      <div style={{ width: 130, flexShrink: 0 }}>
+        <div style={{ fontSize: 11, fontWeight: 500, color: changed ? 'var(--accent)' : 'var(--text-secondary)', fontFamily: 'var(--font-ui)' }}>
+          {def.label}
+        </div>
+        <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{def.name}</div>
+      </div>
+
+      {def.type === 'toggle' ? (
+        <button
+          onClick={() => onChange(value === 'on' ? 'off' : 'on')}
+          style={{
+            width: 44, height: 22, borderRadius: 11, flexShrink: 0,
+            background: value === 'on' ? 'var(--success)' : 'var(--bg-elevated)',
+            border: `1px solid ${value === 'on' ? 'var(--success)' : changed ? 'var(--accent)' : 'var(--border)'}`,
+            position: 'relative', cursor: 'pointer', transition: 'all 0.2s',
+          }}
+        >
+          <div style={{
+            position: 'absolute', top: 2,
+            left: value === 'on' ? 22 : 2,
+            width: 16, height: 16, borderRadius: 8,
+            background: '#fff', transition: 'left 0.2s',
+          }} />
+        </button>
+      ) : def.type === 'select' ? (
+        <select value={value} onChange={e => onChange(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+          {(def.options || []).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+        </select>
+      ) : (
+        <input
+          type="text"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder="value"
+          style={inputStyle}
+        />
+      )}
+    </div>
+  );
+}
+
 /* ── Raid type helpers ─────────────────────────────────────────────────────────── */
 function raidColor(raidType: string): string {
   if (raidType.startsWith('Mirror'))  return 'var(--success)';
@@ -693,6 +987,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
   const [smartTarget,   setSmartTarget]   = useState<string | null>(null);
   const [poolVdevs,     setPoolVdevs]     = useState<Record<string, any[]>>({});
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
+  const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null);
 
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
 
@@ -852,6 +1147,13 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
         />
       )}
       {smartTarget && <SmartModal device={smartTarget} onClose={() => setSmartTarget(null)} />}
+      {settingsOpenFor && (
+        <SettingsPopout
+          poolName={settingsOpenFor}
+          onClose={() => setSettingsOpenFor(null)}
+          onSaved={() => { showToast(`Settings saved for ${settingsOpenFor}`, 'success'); onRefresh(); }}
+        />
+      )}
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
@@ -859,6 +1161,9 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             {pools.length} pool{pools.length !== 1 ? 's' : ''}
           </span>
+          {zfsVersion && (
+            <span className="badge">{zfsVersion.replace('zfs-', '')}</span>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-secondary" onClick={onRefresh} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -936,6 +1241,14 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                     <button className="btn btn-secondary" onClick={() => handleToggleStatus(pool.name)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <Info size={13} />
                       {isExpanded ? 'Hide' : 'Status'}
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => setSettingsOpenFor(settingsOpenFor === pool.name ? null : pool.name)}
+                      title="Pool Settings"
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, color: settingsOpenFor === pool.name ? 'var(--accent)' : undefined, borderColor: settingsOpenFor === pool.name ? 'var(--accent-mid)' : undefined }}
+                    >
+                      <Settings size={13} />
                     </button>
                   </div>
                 </div>
@@ -1032,6 +1345,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                   )}
                 </div>
               )}
+
             </div>
           );
         })}
