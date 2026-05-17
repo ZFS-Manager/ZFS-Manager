@@ -151,7 +151,7 @@ function DevicePicker({ onSelect, onClose, usedDisks = new Set<string>() }: {
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{disk.model || ''} {disk.rota ? 'HDD' : 'SSD'}</div>
                   </div>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: inUse ? 'var(--text-muted)' : 'var(--info)', fontWeight: 600 }}>{formatBytes(disk.size, 1)}</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: inUse ? 'var(--text-muted)' : 'var(--info)', fontWeight: 600 }}>{formatBytes(disk.size, 2)}</span>
                 </button>
               );
             })}

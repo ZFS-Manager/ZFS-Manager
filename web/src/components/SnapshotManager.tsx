@@ -451,7 +451,7 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
                     </td>
                     <td>
                       <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
-                        {usedBytes > 0 ? formatBytes(usedBytes, 1) : snap.used || '0 B'}
+                        {usedBytes > 0 ? formatBytes(usedBytes, 2) : snap.used || '0 B'}
                       </span>
                     </td>
                     <td>

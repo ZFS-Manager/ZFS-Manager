@@ -67,9 +67,9 @@ function fmtTimeUntilFull(days: number): string {
 function fmtUsableSpace(bytes: number): string {
   if (!bytes) return '—';
   const tb = bytes / (1024 ** 4);
-  if (tb >= 1) return `${tb.toFixed(1)} TB`;
+  if (tb >= 1) return `${tb.toFixed(2)} TB`;
   const gb = bytes / (1024 ** 3);
-  return `${gb.toFixed(1)} GB`;
+  return `${gb.toFixed(2)} GB`;
 }
 
 function colorVar(c: string): string {
@@ -676,8 +676,8 @@ export default function Dashboard({
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16, alignItems: 'stretch' }}>
             <StatCard
               label="Total Storage"
-              value={formatBytes(totalCapacity, 1)}
-              sub={`${formatBytes(totalUsedStorage, 1)} used · Raw: ${formatBytes(totalRawUsed, 1)} / ${formatBytes(totalRawCapacity, 1)} (${rawPct.toFixed(1)}%)`}
+              value={formatBytes(totalCapacity, 2)}
+              sub={`${formatBytes(totalUsedStorage, 2)} used · Raw: ${formatBytes(totalRawUsed, 2)} / ${formatBytes(totalRawCapacity, 2)} (${rawPct.toFixed(2)}%)`}
               icon={HardDrive}
               color={usagePct > 90 ? 'var(--danger)' : usagePct > 80 ? 'var(--warning)' : 'var(--accent)'}
             />
@@ -699,8 +699,8 @@ export default function Dashboard({
             />
             <StatCard
               label="Used Storage"
-              value={formatBytes(totalUsedBytes, 1)}
-              sub={`Raw (incl. parity): ${formatBytes(totalRawUsed, 1)}`}
+              value={formatBytes(totalUsedBytes, 2)}
+              sub={`Raw (incl. parity): ${formatBytes(totalRawUsed, 2)}`}
               icon={Database}
               color={usagePct > 90 ? 'var(--danger)' : usagePct > 80 ? 'var(--warning)' : 'var(--accent)'}
             />
@@ -710,7 +710,7 @@ export default function Dashboard({
               fillLine={fillPrediction
                 ? { text: fillPrediction.text, color: fillPrediction.color, timeText: fillPrediction.timeText }
                 : undefined}
-              sub={`${pctFree.toFixed(1)}% free`}
+              sub={`${pctFree.toFixed(2)}% free`}
               icon={TrendingUp}
               minHeight={160}
               color={
@@ -859,7 +859,7 @@ export default function Dashboard({
               <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {[
                   { label: 'CPU',    pct: cpuPct, value: `${cpuPct.toFixed(1)}%`,  color: cpuPct > 80 ? 'var(--danger)' : 'var(--accent)' },
-                  { label: 'Memory', pct: memPct, value: memTotal ? `${formatBytes(memUsed, 1)} / ${formatBytes(memTotal, 1)}` : '—', color: memPct > 85 ? 'var(--danger)' : 'var(--info)' },
+                  { label: 'Memory', pct: memPct, value: memTotal ? `${formatBytes(memUsed, 2)} / ${formatBytes(memTotal, 2)}` : '—', color: memPct > 85 ? 'var(--danger)' : 'var(--info)' },
                   { label: 'ARC Hit', pct: arcHit, value: `${arcHit.toFixed(1)}%`, color: 'var(--success)' },
                 ].map(({ label, pct, value, color }) => (
                   <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
