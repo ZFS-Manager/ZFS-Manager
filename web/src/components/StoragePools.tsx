@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { ZFSPool } from '../types';
 import { api, formatBytes } from '../api';
+import { useNotifications } from '../context/NotificationContext';
 
 interface StoragePoolsProps {
   pools: ZFSPool[];
@@ -64,25 +65,6 @@ function iconBtn(onClick: () => void, icon: React.ReactNode, title: string, col 
   );
 }
 
-/* ── Toast ─────────────────────────────────────────────────────────────────────── */
-function Toast({ msg, type, onClose }: { msg: string; type: 'success' | 'error'; onClose: () => void }) {
-  const col = type === 'success' ? 'var(--success)' : 'var(--danger)';
-  const dim = type === 'success' ? 'var(--success-dim)' : 'var(--danger-dim)';
-  const bdr = type === 'success' ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)';
-  return (
-    <div style={{
-      position: 'fixed', top: 20, right: 24, zIndex: 300,
-      display: 'flex', alignItems: 'center', gap: 10, padding: '10px 18px',
-      borderRadius: 'var(--radius-lg)', border: `1px solid ${bdr}`,
-      background: dim, color: col, boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-      fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 600,
-    }}>
-      {type === 'success' ? <CheckCircle size={15} /> : <XCircle size={15} />}
-      {msg}
-      <button onClick={onClose} style={{ marginLeft: 6, background: 'none', border: 'none', cursor: 'pointer', color: col, opacity: 0.6, fontSize: 16, lineHeight: 1 }}>×</button>
-    </div>
-  );
-}
 
 /* ── Device Picker ────────────────────────────────────────────────────────────── */
 function DevicePicker({ onSelect, onClose, usedDisks = new Set<string>() }: {
@@ -707,13 +689,13 @@ function SettingsPopout({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { notify } = useNotifications();
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving,  setSaving]  = useState(false);
   const [props,   setProps]   = useState<Record<string, string>>({});
   const [edits,   setEdits]   = useState<Record<string, string>>({});
   const [error,   setError]   = useState<string | null>(null);
-  const [toast,   setToast]   = useState<{ msg: string; ok: boolean } | null>(null);
 
   useEffect(() => { requestAnimationFrame(() => setVisible(true)); }, []);
 
@@ -751,8 +733,7 @@ function SettingsPopout({
       onSaved();
       close();
     } catch (err: any) {
-      setToast({ msg: err.message || 'Save failed', ok: false });
-      setTimeout(() => setToast(null), 4000);
+      notify({ type: 'error', title: 'Save Failed', message: err.message || 'Save failed' });
     } finally {
       setSaving(false);
     }
@@ -825,18 +806,6 @@ function SettingsPopout({
 
         {/* Scrollable body */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px' }} className="no-scrollbar">
-          {toast && (
-            <div style={{
-              margin: '12px 0', padding: '8px 14px', borderRadius: 'var(--radius)',
-              background: toast.ok ? 'var(--success-dim)' : 'var(--danger-dim)',
-              border: `1px solid ${toast.ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
-              fontSize: 12, color: toast.ok ? 'var(--success)' : 'var(--danger)',
-              fontFamily: 'var(--font-ui)',
-            }}>
-              {toast.msg}
-            </div>
-          )}
-
           {loading ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 20 }}>
               {[48, 48, 48, 48, 48, 48, 48].map((h, i) => (
@@ -975,6 +944,7 @@ function raidColor(raidType: string): string {
 
 /* ── Main Component ───────────────────────────────────────────────────────────── */
 export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePoolsProps) {
+  const { notify } = useNotifications();
   const [scrubState,    setScrubState]    = useState<Record<string, ScrubState>>({});
   const [scrubProgress, setScrubProgress] = useState<Record<string, ScrubProgress>>({});
   const [expandedPool,  setExpandedPool]  = useState<string | null>(null);
@@ -986,15 +956,13 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
   const [replaceTarget, setReplaceTarget] = useState<{ pool: string; preselectedDisk?: string } | null>(null);
   const [smartTarget,   setSmartTarget]   = useState<string | null>(null);
   const [poolVdevs,     setPoolVdevs]     = useState<Record<string, any[]>>({});
-  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null);
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
 
   const showToast = (msg: string, type: 'success' | 'error') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 4500);
+    notify({ type, title: type === 'success' ? 'Success' : 'Error', message: msg });
   };
 
   useEffect(() => {
@@ -1124,7 +1092,6 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
     <div style={{ paddingBottom: 48 }}>
 
       {/* Modals */}
-      {toast && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
       {showCreate && (
         <CreatePoolModal
           onClose={() => setShowCreate(false)}

@@ -828,6 +828,17 @@ export default function Dashboard({
                       </div>
                     );
                   })()}
+                  {/* Disk full forecast below chart */}
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Forecast:</span>
+                    {fillPrediction && fillPrediction.text !== '–' && fillPrediction.timeText ? (
+                      <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: fillPrediction.color, fontWeight: 600 }}>
+                        Full on {fillPrediction.text.replace('Full on ', '')} ({fillPrediction.timeText})
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>No growth detected</span>
+                    )}
+                  </div>
                 </>
               ) : (
                 <div style={{ height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -871,18 +882,6 @@ export default function Dashboard({
                 ))}
               </div>
               
-              {/* Total Read / Write & Fill Prediction */}
-              <div style={{ display: 'flex', borderTop: '1px solid var(--border)', background: 'var(--bg-elevated)', padding: '12px 18px', gap: 24, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-                <div style={{ display: 'flex', gap: 16, color: 'var(--text-secondary)' }}>
-                  <span><span style={{ color: '#38bdf8' }}>↑ Gesamt gelesen:</span> {liveMetrics?.total_read_mb ? formatBytes(liveMetrics.total_read_mb * 1024 * 1024, 2) : '0 B'}</span>
-                  <span><span style={{ color: '#818cf8' }}>↓ Gesamt geschrieben:</span> {liveMetrics?.total_write_mb ? formatBytes(liveMetrics.total_write_mb * 1024 * 1024, 2) : '0 B'}</span>
-                </div>
-                {fillPrediction && fillPrediction.timeText && (
-                  <div style={{ marginLeft: 'auto', color: fillPrediction.color, fontWeight: 500 }}>
-                    Prognose: {fillPrediction.text} ({fillPrediction.timeText})
-                  </div>
-                )}
-              </div>
             </Panel>
 
 

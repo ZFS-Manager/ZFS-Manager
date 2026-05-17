@@ -14,6 +14,7 @@ import Notifications from './pages/Notifications';
 import { ZFSPool, ZFSDataset, ZFSLog } from './types';
 import { api, formatBytes, setApiKey } from './api';
 import { Bell, AlertTriangle } from 'lucide-react';
+import { NotificationProvider, NotificationCenter, useNotifications } from './context/NotificationContext';
 
 const PAGE_TITLES: Record<string, string> = {
   '/dashboard': 'Dashboard',
@@ -89,8 +90,11 @@ function TopBar({
   const location = useLocation();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const title = PAGE_TITLES[location.pathname] || 'ZFS Manager';
-  const unreadCount = sysNotifications.filter(n => !n.is_read).length;
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const { unreadCount, notifications } = useNotifications();
+
+  const sysUnread = sysNotifications.filter(n => !n.is_read).length;
+  const totalUnread = unreadCount + sysUnread;
 
   useEffect(() => {
     if (!dropdownOpen) return;
@@ -104,9 +108,12 @@ function TopBar({
   }, [dropdownOpen]);
 
   const getBellColor = () => {
-    if (unreadCount === 0) return 'var(--text-muted)';
-    if (sysNotifications.some(n => !n.is_read && n.level === 'error')) return 'var(--danger)';
-    if (sysNotifications.some(n => !n.is_read && n.level === 'warning')) return 'var(--warning)';
+    if (totalUnread === 0) return 'var(--text-muted)';
+    const hasCritical = notifications.some(n => !n.isRead && (n.type === 'error' || n.type === 'warning'))
+      || sysNotifications.some(n => !n.is_read && n.level === 'error');
+    const hasWarning = sysNotifications.some(n => !n.is_read && n.level === 'warning');
+    if (hasCritical) return 'var(--danger)';
+    if (hasWarning) return 'var(--warning)';
     return 'var(--accent)';
   };
 
@@ -142,69 +149,47 @@ function TopBar({
         {title}
       </span>
 
-      {!onMenuOpen && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <div style={{ position: 'relative' }} ref={dropdownRef}>
-            <button
-              onClick={() => setDropdownOpen(!dropdownOpen)}
-              style={{
-                background: 'transparent', border: 'none', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                width: 32, height: 32, borderRadius: '50%', color: 'var(--text-muted)'
-              }}
-            >
-              <Bell 
-                size={18} 
-                style={{ 
-                  color: getBellColor(), 
-                  transition: 'color 0.25s ease' 
-                }} 
-              />
-              {unreadCount > 0 && (
-                <span style={{
-                  position: 'absolute', top: 2, right: 2, background: 'var(--danger)',
-                  color: '#fff', fontSize: 9, fontWeight: 700, borderRadius: '50%',
-                  width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center'
-                }}>{unreadCount}</span>
-              )}
-            </button>
-            {dropdownOpen && (
-              <div style={{
-                position: 'absolute', top: 40, right: 0, width: 300, background: 'var(--bg-elevated)',
-                border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 12, zIndex: 50,
-                boxShadow: '0 10px 25px rgba(0,0,0,0.5)'
-              }}>
-                <div style={{ fontSize: 13, fontWeight: 600, borderBottom: '1px solid var(--border)', paddingBottom: 8, marginBottom: 8 }}>
-                  Notifications
-                </div>
-                <div style={{ maxHeight: 300, overflowY: 'auto' }}>
-                  {sysNotifications.length === 0 ? (
-                    <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>No notifications</div>
-                  ) : (
-                    sysNotifications.slice(0, 5).map(n => (
-                      <div key={n.id} style={{ fontSize: 12, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)', opacity: n.is_read ? 0.6 : 1 }} onClick={() => { if(!n.is_read) onMarkRead(n.id); }}>
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          <div style={{ width: 6, height: 6, borderRadius: '50%', background: n.is_read ? 'transparent' : 'var(--danger)', marginTop: 4 }} />
-                          <div>{n.message}</div>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-                <div style={{ textAlign: 'center', paddingTop: 8, borderTop: '1px solid var(--border)', marginTop: 8 }}>
-                  <a href="/notifications" style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'underline' }}>View All</a>
-                </div>
-              </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: onMenuOpen ? 4 : 16 }}>
+        <div style={{ position: 'relative' }} ref={dropdownRef}>
+          <button
+            onClick={() => setDropdownOpen(!dropdownOpen)}
+            style={{
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 32, height: 32, borderRadius: '50%', color: 'var(--text-muted)',
+              position: 'relative',
+            }}
+          >
+            <Bell
+              size={18}
+              style={{ color: getBellColor(), transition: 'color 0.25s ease' }}
+            />
+            {totalUnread > 0 && (
+              <span style={{
+                position: 'absolute', top: 2, right: 2, background: 'var(--danger)',
+                color: '#fff', fontSize: 9, fontWeight: 700, borderRadius: '50%',
+                width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontFamily: 'var(--font-mono)',
+              }}>{totalUnread > 99 ? '99+' : totalUnread}</span>
             )}
-          </div>
+          </button>
+          {dropdownOpen && (
+            <NotificationCenter
+              onClose={() => setDropdownOpen(false)}
+              systemNotifications={sysNotifications}
+              onMarkSystemRead={(id) => { onMarkRead(id); }}
+            />
+          )}
+        </div>
+        {!onMenuOpen && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span className={loading ? 'dot dot-warning' : 'dot dot-success'} />
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
               {loading ? 'Syncing' : 'Live'}
             </span>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </header>
   );
 }
@@ -440,6 +425,7 @@ export default function App() {
   };
 
   return (
+    <NotificationProvider>
     <BrowserRouter>
       <div style={{
         display: 'flex', height: '100vh',
@@ -567,5 +553,6 @@ export default function App() {
         </div>
       )}
     </BrowserRouter>
+    </NotificationProvider>
   );
 }

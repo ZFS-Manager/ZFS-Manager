@@ -325,7 +325,20 @@ async fn main() {
 
     let mut init_read: u64 = 0;
     let mut init_write: u64 = 0;
-    if let Some(ref pg) = pg_client {
+    let db_backend = std::env::var("DB_BACKEND").unwrap_or_else(|_| "postgres".to_string());
+    if db_backend == "redis" {
+        if let Some(ref redis) = redis_conn {
+            use redis::AsyncCommands;
+            let mut conn = redis.clone();
+            if let Ok(Some(v)) = conn.get::<_, Option<String>>("zfs:totals:read_bytes").await {
+                init_read = v.parse().unwrap_or(0);
+            }
+            if let Ok(Some(v)) = conn.get::<_, Option<String>>("zfs:totals:write_bytes").await {
+                init_write = v.parse().unwrap_or(0);
+            }
+            info!("Loaded totals from Redis: read={init_read} write={init_write}");
+        }
+    } else if let Some(ref pg) = pg_client {
         // Create the row if it doesn't exist
         let _ = pg.execute(
             "INSERT INTO global_stats(id, total_read_bytes, total_write_bytes) VALUES(1, 0, 0) ON CONFLICT DO NOTHING",
@@ -335,6 +348,7 @@ async fn main() {
             init_read = row.get::<_, i64>(0) as u64;
             init_write = row.get::<_, i64>(1) as u64;
         }
+        info!("Loaded totals from PostgreSQL: read={init_read} write={init_write}");
     }
 
     let app_state = AppState {

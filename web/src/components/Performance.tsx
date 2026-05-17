@@ -179,13 +179,13 @@ function fmtGrowthRate(diffGb: number, timeSec: number): string {
 
 function getIntervalLabel(iv: Interval): string {
   switch (iv) {
-    case '1h': return 'letzte 1h';
-    case '6h': return 'letzte 6h';
-    case '1d': return 'letzte 24h';
-    case '7d': return 'letzte 7d';
-    case '1m': return 'letzter 1M';
-    case '1y': return 'letztes 1Y';
-    default: return 'letzte 24h';
+    case '1h': return 'last 1h';
+    case '6h': return 'last 6h';
+    case '1d': return 'last 24h';
+    case '7d': return 'last 7d';
+    case '1m': return 'last 1M';
+    case '1y': return 'last 1Y';
+    default: return 'last 24h';
   }
 }
 
@@ -281,6 +281,9 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const [dragOver, setDragOver]         = useState<string | null>(null);
 
   const [interval, setIntervalMode]     = useState<Interval>('1d');
+  const [capacityInterval, setCapacityInterval] = useState<Interval>('1d');
+  const [capacityData, setCapacityData] = useState<any[]>([]);
+  const [loadingCapacity, setLoadingCapacity] = useState(false);
   const [liveMode, setLiveMode]         = useState(false);
   const [historyData, setHistoryData]   = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -344,6 +347,21 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     const id = setInterval(fetch, 10_000);
     return () => clearInterval(id);
   }, [interval, liveMode]);
+
+  // Fetch capacity history for Pool Capacity widget (independent interval)
+  useEffect(() => {
+    setCapacityData([]);
+    setLoadingCapacity(true);
+    const apiInt = INTERVALS.find(i => i.key === capacityInterval)?.api ?? capacityInterval;
+    const fetch = () =>
+      api.getMetricsHistory(apiInt)
+        .then(res => setCapacityData(transformHistory(res.metrics, capacityInterval)))
+        .catch(() => setCapacityData([]))
+        .finally(() => setLoadingCapacity(false));
+    fetch();
+    const id = setInterval(fetch, 15_000);
+    return () => clearInterval(id);
+  }, [capacityInterval]);
 
   // Fetch fill predictions — on mount use auto (longest window), on interval change use that window
   const fetchFillPredictions = useCallback(async (windowParam: string) => {
@@ -634,31 +652,74 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         );
 
       case 'storage-history': {
-        const firstAlloc = chartData.length > 0 ? (chartData[0].alloc || 0) : 0;
-        const lastAlloc = chartData.length > 0 ? (chartData[chartData.length - 1].alloc || 0) : 0;
+        const capSecPerPt = SECONDS_PER_POINT[capacityInterval];
+        const firstAlloc = capacityData.length > 0 ? (capacityData[0].alloc || 0) : 0;
+        const lastAlloc = capacityData.length > 0 ? (capacityData[capacityData.length - 1].alloc || 0) : 0;
         const diffGb = lastAlloc - firstAlloc;
-        const timeSec = chartData.length * secPerPt;
+        const timeSec = capacityData.length * capSecPerPt;
         const rateStr = fmtGrowthRate(diffGb, timeSec);
-        const rateLabel = getIntervalLabel(interval);
+        const rateLabel = getIntervalLabel(capacityInterval);
+        const capStorageMaxGB = capacityData.reduce((m, d) => Math.max(m, d.alloc || 0, d.free || 0), 0.01);
+        const capGbScale = getGbScale(capStorageMaxGB);
+        const capHistXAxisProps = { dataKey: 'timestamp' as const, axisLine: false, tickLine: false, tick: AXIS_TICK, minTickGap: 40 };
+
+        const CAPACITY_INTERVALS: { key: Interval; label: string }[] = [
+          { key: '1h', label: '1H' },
+          { key: '6h', label: '6H' },
+          { key: '1d', label: '24H' },
+          { key: '7d', label: '7D' },
+          { key: '1m', label: '1M' },
+          { key: '1y', label: '1Y' },
+        ];
 
         return (
           <Panel
             title="Pool Capacity"
-            sub={`Allocation trends · Ø ${rateStr} (${rateLabel})`}
+            sub="Allocation trends"
             right={
-              <div style={{ display: 'flex', gap: 6 }}>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <div style={{
+                  display: 'flex', background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius)', overflow: 'hidden',
+                }}>
+                  {CAPACITY_INTERVALS.map(({ key, label }) => (
+                    <button
+                      key={key}
+                      onClick={() => setCapacityInterval(key)}
+                      style={{
+                        height: 28, padding: '0 10px',
+                        fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600,
+                        letterSpacing: '0.06em', textTransform: 'uppercase',
+                        borderRight: '1px solid var(--border)', cursor: 'pointer',
+                        transition: 'all 0.12s', border: 'none',
+                        background: capacityInterval === key ? 'var(--accent-dim)' : 'transparent',
+                        color: capacityInterval === key ? 'var(--accent)' : 'var(--text-muted)',
+                        borderBottom: `2px solid ${capacityInterval === key ? 'var(--accent)' : 'transparent'}`,
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <Toggle color={C.alloc} label="Used" active={vis('alloc')} onClick={() => toggle('alloc')} />
                 <Toggle color={C.free}  label="Free" active={vis('free')}  onClick={() => toggle('free')}  />
               </div>
             }
           >
+            {/* Growth rate indicator */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Growth rate:</span>
+              <span style={{ fontSize: 13, fontFamily: 'var(--font-mono)', fontWeight: 700, color: diffGb > 0 ? 'var(--warning)' : diffGb < 0 ? 'var(--success)' : 'var(--text-muted)' }}>
+                Ø {rateStr} ({rateLabel})
+              </span>
+            </div>
             <div style={{ height: 240 }}>
-              {loadingHistory ? <Skeleton height={240} /> : (
+              {loadingCapacity ? <Skeleton height={240} /> : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData} margin={CHART_MARGIN}>
+                  <AreaChart data={capacityData} margin={CHART_MARGIN}>
                     <CartesianGrid {...GRID_PROPS} />
-                    <XAxis {...histXAxisProps} />
-                    <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} tickFormatter={gbScale.fmt} width={85} />
+                    <XAxis {...capHistXAxisProps} />
+                    <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} tickFormatter={capGbScale.fmt} width={85} />
                     <Tooltip {...TOOLTIP_STYLE} formatter={(v: number) => [fmtGB(v), '']} />
                     {vis('alloc') && <Area type="stepAfter" dataKey="alloc" stroke={C.alloc} fill={C.alloc + '10'} strokeWidth={2} />}
                     {vis('free')  && <Area type="stepAfter" dataKey="free"  stroke={C.free}  fill={C.free  + '10'} strokeWidth={2} />}

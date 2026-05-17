@@ -2,12 +2,13 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { ZFSDataset, ZFSPool } from '../types';
 import {
   HardDrive, Plus, Lock, Search, Trash2, X,
-  Loader2, CheckCircle, XCircle, AlertTriangle, Layers,
+  Loader2, XCircle, AlertTriangle, Layers,
   ArrowUpDown, ArrowUp, ArrowDown, Pencil, Save, RotateCcw,
-  ChevronRight, ChevronDown, Folder, FolderOpen, Database
+  ChevronRight, ChevronDown, Folder, FolderOpen, Database, Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { api, formatBytes } from '../api';
+import { useNotifications } from '../context/NotificationContext';
 
 interface DatasetListProps {
   datasets: ZFSDataset[];
@@ -57,27 +58,6 @@ function Modal({ title, onClose, children, maxWidth = 440 }: {
   );
 }
 
-/* ── Toast ── */
-function Toast({ msg, type }: { msg: string; type: 'success' | 'error' }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-      style={{
-        position: 'fixed', top: 20, right: 20, zIndex: 300,
-        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 18px',
-        borderRadius: 8,
-        border: `1px solid ${type === 'success' ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
-        background: type === 'success' ? 'rgba(34,197,94,0.10)' : 'rgba(239,68,68,0.10)',
-        color: type === 'success' ? 'var(--success)' : 'var(--danger)',
-        boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-        fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 600,
-      }}
-    >
-      {type === 'success' ? <CheckCircle size={15} /> : <XCircle size={15} />}
-      {msg}
-    </motion.div>
-  );
-}
 
 type QuotaUnit = 'M' | 'G' | 'T';
 
@@ -333,7 +313,233 @@ const ACT_BTN: React.CSSProperties = {
   cursor: 'pointer', color: 'var(--text-muted)', transition: 'all 0.12s',
 };
 
+/* ── Dataset Settings Popout ─────────────────────────────────────────────────── */
+type PropDef = {
+  name: string;
+  label: string;
+  type: 'toggle' | 'select' | 'text';
+  options?: string[];
+};
+
+const DATASET_PROP_DEFS: PropDef[] = [
+  { name: 'compression',  label: 'Compression',    type: 'select', options: ['off', 'lz4', 'zstd', 'gzip', 'zle'] },
+  { name: 'atime',        label: 'Access Time',    type: 'toggle' },
+  { name: 'relatime',     label: 'Relative Atime', type: 'toggle' },
+  { name: 'dedup',        label: 'Deduplication',  type: 'toggle' },
+  { name: 'readonly',     label: 'Read-Only',      type: 'toggle' },
+  { name: 'recordsize',   label: 'Record Size',    type: 'select', options: ['512', '1K', '2K', '4K', '8K', '16K', '32K', '64K', '128K', '1M'] },
+  { name: 'xattr',        label: 'Extended Attrs', type: 'select', options: ['on', 'off', 'sa'] },
+  { name: 'quota',        label: 'Quota',          type: 'text' },
+  { name: 'reservation',  label: 'Reservation',    type: 'text' },
+  { name: 'snapdir',      label: 'Snapshot Dir',   type: 'select', options: ['hidden', 'visible'] },
+  { name: 'sync',         label: 'Sync Mode',      type: 'select', options: ['standard', 'always', 'disabled'] },
+];
+
+function PopoutPropRow({ def, value, currentValue, onChange }: {
+  def: PropDef; value: string; currentValue: string; onChange: (v: string) => void;
+}) {
+  const changed = value !== currentValue;
+  const inputStyle: React.CSSProperties = {
+    flex: 1, height: 30, padding: '0 8px',
+    background: 'var(--bg-elevated)',
+    border: `1px solid ${changed ? 'var(--accent)' : 'var(--border)'}`,
+    borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)',
+    fontFamily: 'var(--font-mono)', fontSize: 11, outline: 'none',
+  };
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+      <div style={{ width: 130, flexShrink: 0 }}>
+        <div style={{ fontSize: 11, fontWeight: 500, color: changed ? 'var(--accent)' : 'var(--text-secondary)', fontFamily: 'var(--font-ui)' }}>
+          {def.label}
+        </div>
+        <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{def.name}</div>
+      </div>
+      {def.type === 'toggle' ? (
+        <button
+          onClick={() => onChange(value === 'on' ? 'off' : 'on')}
+          style={{
+            width: 44, height: 22, borderRadius: 11, flexShrink: 0,
+            background: value === 'on' ? 'var(--success)' : 'var(--bg-elevated)',
+            border: `1px solid ${value === 'on' ? 'var(--success)' : changed ? 'var(--accent)' : 'var(--border)'}`,
+            position: 'relative', cursor: 'pointer', transition: 'all 0.2s',
+          }}
+        >
+          <div style={{
+            position: 'absolute', top: 2, left: value === 'on' ? 22 : 2,
+            width: 16, height: 16, borderRadius: 8,
+            background: '#fff', transition: 'left 0.2s',
+          }} />
+        </button>
+      ) : def.type === 'select' ? (
+        <select value={value} onChange={e => onChange(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+          {(def.options || []).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+        </select>
+      ) : (
+        <input type="text" value={value} onChange={e => onChange(e.target.value)} placeholder="value" style={inputStyle} />
+      )}
+    </div>
+  );
+}
+
+function DatasetSettingsPopout({
+  datasetName,
+  onClose,
+  onSaved,
+}: {
+  datasetName: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { notify } = useNotifications();
+  const [visible, setVisible] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving,  setSaving]  = useState(false);
+  const [props,   setProps]   = useState<Record<string, string>>({});
+  const [edits,   setEdits]   = useState<Record<string, string>>({});
+  const [error,   setError]   = useState<string | null>(null);
+
+  useEffect(() => { requestAnimationFrame(() => setVisible(true)); }, []);
+
+  const close = () => {
+    setVisible(false);
+    setTimeout(onClose, 310);
+  };
+
+  const load = () => {
+    setLoading(true);
+    setError(null);
+    api.getDatasetProperties(datasetName)
+      .then(res => {
+        const map: Record<string, string> = {};
+        for (const p of (res.properties || [])) map[p.name] = p.value;
+        setProps(map);
+        setEdits({ ...map });
+      })
+      .catch(err => setError(err.message || 'Failed to load properties'))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, [datasetName]);
+
+  const pendingCount = Object.entries(edits).filter(([k, v]) => v !== (props[k] ?? '')).length;
+
+  const handleSave = async () => {
+    const changed = Object.entries(edits).filter(([k, v]) => v !== (props[k] ?? ''));
+    if (changed.length === 0) { close(); return; }
+    setSaving(true);
+    try {
+      for (const [k, v] of changed) {
+        await api.setDatasetProperty(datasetName, k, v);
+      }
+      onSaved();
+      close();
+    } catch (err: any) {
+      notify({ type: 'error', title: 'Save Failed', message: err.message || 'Save failed' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
+  return (
+    <>
+      <div
+        onClick={close}
+        style={{
+          position: 'fixed', inset: 0, zIndex: 400,
+          background: 'rgba(0,0,0,0.4)',
+          opacity: visible ? 1 : 0,
+          transition: 'opacity 300ms ease',
+        }}
+      />
+      <div style={{
+        position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 401,
+        width: 400, maxWidth: '100vw',
+        background: 'var(--bg-surface)',
+        borderLeft: '1px solid var(--border)',
+        display: 'flex', flexDirection: 'column',
+        transform: visible ? 'translateX(0)' : 'translateX(100%)',
+        transition: 'transform 300ms ease',
+        boxShadow: '-8px 0 40px rgba(0,0,0,0.5)',
+      }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '16px 20px', borderBottom: '1px solid var(--border)', flexShrink: 0,
+        }}>
+          <div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 300 }}>
+              {datasetName.split('/').pop()}
+            </div>
+            <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+              Dataset Settings · {datasetName}
+            </div>
+          </div>
+          <button onClick={close} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'flex', alignItems: 'center' }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px' }} className="no-scrollbar">
+          {loading ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 20 }}>
+              {[48, 48, 48, 48, 48, 48].map((h, i) => (
+                <div key={i} className="skeleton" style={{ height: h, borderRadius: 'var(--radius)' }} />
+              ))}
+            </div>
+          ) : error ? (
+            <div style={{ paddingTop: 32, textAlign: 'center' }}>
+              <div style={{ fontSize: 13, color: 'var(--danger)', fontFamily: 'var(--font-ui)', marginBottom: 16 }}>{error}</div>
+              <button className="btn btn-secondary" onClick={load}>Retry</button>
+            </div>
+          ) : (
+            <div style={{ paddingTop: 16, paddingBottom: 20 }}>
+              {DATASET_PROP_DEFS.map(def => (
+                <PopoutPropRow
+                  key={def.name}
+                  def={def}
+                  value={edits[def.name] ?? ''}
+                  currentValue={props[def.name] ?? ''}
+                  onChange={v => setEdits(e => ({ ...e, [def.name]: v }))}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={{
+          borderTop: '1px solid var(--border)', padding: '14px 20px', flexShrink: 0,
+          background: 'var(--bg-elevated)',
+        }}>
+          {pendingCount > 0 && (
+            <div style={{ fontSize: 11, color: 'var(--accent)', fontFamily: 'var(--font-ui)', marginBottom: 10 }}>
+              {pendingCount} pending change{pendingCount !== 1 ? 's' : ''}
+            </div>
+          )}
+          <button
+            className="btn btn-primary"
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: 8 }}
+            onClick={handleSave}
+            disabled={saving || loading}
+          >
+            {saving && <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />}
+            {saving ? 'Saving…' : pendingCount > 0 ? `Save ${pendingCount} Change${pendingCount !== 1 ? 's' : ''}` : 'Save Changes'}
+          </button>
+          <button className="btn btn-secondary" style={{ width: '100%' }} onClick={close}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function DatasetList({ datasets, volumes = [], pools, onRefresh }: DatasetListProps) {
+  const { notify } = useNotifications();
   const [search,        setSearch]        = useState('');
   const [sortField,     setSortField]     = useState<SortField>('name');
   const [sortDir,       setSortDir]       = useState<SortDir>('asc');
@@ -347,9 +553,9 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
   const [deleting,      setDeleting]      = useState(false);
   const [editTarget,    setEditTarget]    = useState<ZFSDataset | null>(null);
   const [rewriteTarget, setRewriteTarget] = useState<string | null>(null);
-  const [toast,         setToast]         = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [rewriteState,  setRewriteState]  = useState<Record<string, boolean>>({});
+  const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null);
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
   useEffect(() => {
@@ -370,8 +576,7 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
   }, [datasets]);
 
   const showToast = (msg: string, type: 'success' | 'error') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
+    notify({ type, title: type === 'success' ? 'Success' : 'Error', message: msg });
   };
 
   const toggleExpand = (name: string) => {
@@ -484,10 +689,6 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
 
   return (
     <div style={{ paddingBottom: 40 }}>
-      <AnimatePresence>
-        {toast && <Toast msg={toast.msg} type={toast.type} />}
-      </AnimatePresence>
-
       {/* Create Modal */}
       <AnimatePresence>
         {showCreate && (
@@ -591,6 +792,15 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
           />
         )}
       </AnimatePresence>
+
+      {/* Dataset Settings Popout */}
+      {settingsOpenFor && (
+        <DatasetSettingsPopout
+          datasetName={settingsOpenFor}
+          onClose={() => setSettingsOpenFor(null)}
+          onSaved={() => { showToast(`Settings saved for ${settingsOpenFor}`, 'success'); onRefresh(); }}
+        />
+      )}
 
       {/* Page header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
@@ -766,6 +976,15 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
                                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; }}
                                 >
                                   <Pencil size={12} />
+                                </button>
+                                <button
+                                  title="Pool Settings"
+                                  onClick={() => setSettingsOpenFor(ds.name)}
+                                  style={ACT_BTN}
+                                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'; (e.currentTarget as HTMLElement).style.borderColor = 'rgba(255,255,255,0.15)'; }}
+                                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; }}
+                                >
+                                  <Settings size={12} />
                                 </button>
                                 <button
                                   title="Destroy"
