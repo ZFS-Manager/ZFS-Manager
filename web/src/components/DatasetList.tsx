@@ -371,7 +371,6 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
   const [deleteError,   setDeleteError]   = useState('');
   const [canForce,      setCanForce]      = useState(false);
   const [deleting,      setDeleting]      = useState(false);
-  const [rewriteTarget, setRewriteTarget] = useState<string | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [rewriteState,  setRewriteState]  = useState<Record<string, boolean>>({});
   const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null);

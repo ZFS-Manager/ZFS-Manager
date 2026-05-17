@@ -58,6 +58,7 @@ async fn create_volume(Json(body): Json<CreateVolumeBody>) -> Result<Json<Value>
     if body.size.is_empty() {
         return Err(ApiError::BadRequest("'size' is required (e.g. '10G')".into()));
     }
+    executor::validate_zfs_name(&body.name, "volume")?;
     let mut args = vec!["create".to_string(), "-V".to_string(), body.size.clone()];
     if let Some(bs) = body.volblocksize {
         args.push("-b".to_string());
@@ -84,6 +85,7 @@ async fn get_volume(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
 }
 
 async fn destroy_volume(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
+    executor::validate_zfs_name(&name, "volume")?;
     executor::zfs(&["destroy", &name]).await?;
     Ok(Json(json!({ "message": format!("Volume '{name}' destroyed") })))
 }
