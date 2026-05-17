@@ -101,10 +101,16 @@ async fn login(
         if let Some(ref pg) = state.pg {
             let pg_clone = pg.clone();
             let ip_clone = ip.clone();
+            let state_clone = state.clone();
             tokio::spawn(async move {
                 let _ = pg_clone.execute(
                     "INSERT INTO login_attempts(ip_address, success) VALUES($1, false)",
                     &[&ip_clone],
+                ).await;
+                crate::routes::notifications::trigger_rules_for_event(
+                    &state_clone,
+                    "login_failed",
+                    &format!("Failed login attempt from IP: {}", ip_clone),
                 ).await;
             });
         }

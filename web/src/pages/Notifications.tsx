@@ -43,22 +43,48 @@ export default function Notifications() {
   const [newChannel, setNewChannel] = useState(initialChannelState);
   const [newRule, setNewRule] = useState<{name: string, trigger_type: string, threshold_value: string, channel_ids: number[], is_active: boolean}>({
     name: '',
-    trigger_type: 'pool_unhealthy',
+    trigger_type: 'login_failed',
     threshold_value: '',
     channel_ids: [],
     is_active: true,
   });
+  const [datasets, setDatasets] = useState<any[]>([]);
+  const [selectedDataset, setSelectedDataset] = useState<string>('');
+
+  const displayTriggerType = (trigger: string) => {
+    if (trigger.startsWith('quota_reached:')) {
+      return `Dataset Quota > Threshold (${trigger.split(':')[1]})`;
+    }
+    switch(trigger) {
+      case 'login_failed': return 'Failed Login Attempt (Interface)';
+      case 'pool_unhealthy': return 'Pool Unhealthy (DEGRADED/FAULTED)';
+      case 'hdd_temp': return 'HDD Temperature';
+      case 'capacity': return 'Pool Capacity';
+      case 'quota_reached': return 'Dataset Quota';
+      case 'scrub_failed': return 'ZFS Scrub Failure';
+      case 'scrub_started': return 'ZFS Scrub Started';
+      case 'scrub_finished': return 'ZFS Scrub Finished';
+      case 'smart_failure': return 'SMART Health Failure';
+      case 'snapshots_high': return 'Snapshot Count High';
+      case 'iops_high': return 'Live Combined IOPS High';
+      case 'read_iops_high': return 'Live Read IOPS High';
+      case 'write_iops_high': return 'Live Write IOPS High';
+      default: return trigger;
+    }
+  };
 
   const fetchData = async () => {
     try {
-      const [nRes, cRes, rRes] = await Promise.all([
+      const [nRes, cRes, rRes, dRes] = await Promise.all([
         fetch('/api/v1/notifications', { headers: { 'Authorization': `Bearer ${localStorage.getItem('zfs_access_token')}` } }).then(r => r.json()),
         fetch('/api/v1/notifications/channels', { headers: { 'Authorization': `Bearer ${localStorage.getItem('zfs_access_token')}` } }).then(r => r.json()),
         fetch('/api/v1/notifications/rules', { headers: { 'Authorization': `Bearer ${localStorage.getItem('zfs_access_token')}` } }).then(r => r.json()),
+        fetch('/api/v1/datasets', { headers: { 'Authorization': `Bearer ${localStorage.getItem('zfs_access_token')}` } }).then(r => r.json()).catch(() => ({ datasets: [] })),
       ]);
       setNotifications(nRes || []);
       setChannels(cRes || []);
       setRules(rRes || []);
+      setDatasets(dRes?.datasets || []);
     } catch (e) {
       console.error("Failed to fetch notifications data", e);
     }
@@ -157,13 +183,18 @@ export default function Notifications() {
   const createRule = async () => {
     try {
       const threshold = newRule.threshold_value ? parseFloat(newRule.threshold_value) : null;
+      let finalTriggerType = newRule.trigger_type;
+      if (newRule.trigger_type === 'quota_reached' && selectedDataset) {
+        finalTriggerType = `quota_reached:${selectedDataset}`;
+      }
       await fetch('/api/v1/notifications/rules', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('zfs_access_token')}` },
-        body: JSON.stringify({ ...newRule, threshold_value: threshold })
+        body: JSON.stringify({ ...newRule, trigger_type: finalTriggerType, threshold_value: threshold })
       });
       setShowRuleModal(false);
-      setNewRule({ name: '', trigger_type: 'pool_unhealthy', threshold_value: '', channel_ids: [], is_active: true });
+      setNewRule({ name: '', trigger_type: 'login_failed', threshold_value: '', channel_ids: [], is_active: true });
+      setSelectedDataset('');
       fetchData();
     } catch (e) {
       alert("Failed to create rule.");
@@ -224,7 +255,7 @@ export default function Notifications() {
                   <div>
                     <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>{r.name}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                      Trigger: <strong style={{ color: 'var(--accent)' }}>{r.trigger_type}</strong> {r.threshold_value !== null ? `(${r.threshold_value})` : ''}
+                      Trigger: <strong style={{ color: 'var(--accent)' }}>{displayTriggerType(r.trigger_type)}</strong> {r.threshold_value !== null ? `(${r.threshold_value})` : ''}
                     </div>
                   </div>
                   <button className="btn btn-secondary" style={{ padding: '6px 10px' }} onClick={() => deleteRule(r.id)}>
@@ -472,7 +503,14 @@ export default function Notifications() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                 <div>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 500, marginBottom: 6 }}>Trigger Type</label>
-                  <select className="input" value={newRule.trigger_type} onChange={e => setNewRule({...newRule, trigger_type: e.target.value})} style={{ width: '100%' }}>
+                  <select className="input" value={newRule.trigger_type} onChange={e => {
+                    const val = e.target.value;
+                    setNewRule({...newRule, trigger_type: val});
+                    if (val !== 'quota_reached') {
+                      setSelectedDataset('');
+                    }
+                  }} style={{ width: '100%' }}>
+                    <option value="login_failed">Failed Login Attempt (Interface)</option>
                     <option value="pool_unhealthy">Pool Unhealthy (DEGRADED/FAULTED)</option>
                     <option value="hdd_temp">HDD Temperature {'>'} Threshold (°C)</option>
                     <option value="capacity">Pool Capacity {'>'} Threshold (%)</option>
@@ -483,6 +521,8 @@ export default function Notifications() {
                     <option value="smart_failure">SMART Health Diagnostic Failure</option>
                     <option value="snapshots_high">Snapshot Count {'>'} Threshold (Count)</option>
                     <option value="iops_high">Live Combined IOPS {'>'} Threshold</option>
+                    <option value="read_iops_high">Live Read IOPS {'>'} Threshold</option>
+                    <option value="write_iops_high">Live Write IOPS {'>'} Threshold</option>
                   </select>
                 </div>
                 
@@ -492,18 +532,68 @@ export default function Notifications() {
                 </div>
               </div>
 
+              {newRule.trigger_type === 'quota_reached' && (
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 500, marginBottom: 6 }}>Target Specific Dataset</label>
+                  <select className="input" value={selectedDataset} onChange={e => setSelectedDataset(e.target.value)} style={{ width: '100%' }}>
+                    <option value="">-- Apply to All Datasets --</option>
+                    {datasets.map(ds => (
+                      <option key={ds.name} value={ds.name}>{ds.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 500, marginBottom: 6 }}>Target Delivery Channels</label>
-                <select multiple className="input" style={{ width: '100%', height: 100 }} value={newRule.channel_ids.map(String)} onChange={e => {
-                  const selected = Array.from(e.target.selectedOptions).map(o => parseInt((o as HTMLOptionElement).value));
-                  setNewRule({...newRule, channel_ids: selected});
-                }}>
-                  {channels.map(c => (
-                    <option key={c.id} value={c.id}>{c.name} ({c.ctype})</option>
-                  ))}
-                </select>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
-                  Hold <kbd style={{ padding: '2px 4px', background: 'rgba(255,255,255,0.07)', borderRadius: 3 }}>Ctrl</kbd> or <kbd style={{ padding: '2px 4px', background: 'rgba(255,255,255,0.07)', borderRadius: 3 }}>Cmd</kbd> to assign multiple channels to this rule.
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 180, overflowY: 'auto', padding: '12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.015)' }}>
+                  {channels.length === 0 ? (
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '12px 0' }}>
+                      No channels registered. Please create a channel first.
+                    </div>
+                  ) : (
+                    channels.map(c => {
+                      const isSelected = newRule.channel_ids.includes(c.id);
+                      return (
+                        <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div style={{ width: 26, height: 26, borderRadius: '50%', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              {getChannelIcon(c.ctype)}
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{c.name}</div>
+                              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'capitalize' }}>{c.ctype}</div>
+                            </div>
+                          </div>
+                          <label style={{ position: 'relative', display: 'inline-block', width: 36, height: 18, cursor: 'pointer' }}>
+                            <input 
+                              type="checkbox" 
+                              checked={isSelected}
+                              onChange={() => {
+                                const nextChannelIds = isSelected 
+                                  ? newRule.channel_ids.filter(id => id !== c.id)
+                                  : [...newRule.channel_ids, c.id];
+                                setNewRule({...newRule, channel_ids: nextChannelIds});
+                              }}
+                              style={{ opacity: 0, width: 0, height: 0 }} 
+                            />
+                            <span style={{
+                              position: 'absolute', inset: 0,
+                              backgroundColor: isSelected ? 'var(--accent)' : 'rgba(255,255,255,0.1)',
+                              transition: '0.2s', borderRadius: 20,
+                              border: isSelected ? 'none' : '1px solid var(--border)'
+                            }}>
+                              <span style={{
+                                position: 'absolute', height: 12, width: 12,
+                                left: isSelected ? 20 : 3, bottom: 2,
+                                backgroundColor: '#fff', transition: '0.2s', borderRadius: '50%'
+                              }} />
+                            </span>
+                          </label>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             </div>

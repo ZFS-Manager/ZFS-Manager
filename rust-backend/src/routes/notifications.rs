@@ -169,7 +169,7 @@ async fn test_channel(
     }
 }
 
-async fn dispatch_notification(ctype: &str, config: &serde_json::Value, message: &str) -> Result<(), String> {
+pub async fn dispatch_notification(ctype: &str, config: &serde_json::Value, message: &str) -> Result<(), String> {
     let client = reqwest::Client::new();
     match ctype {
         "webhook" => {
@@ -269,6 +269,57 @@ async fn dispatch_notification(ctype: &str, config: &serde_json::Value, message:
             Ok(())
         }
         _ => Err(format!("Unsupported channel type: {}", ctype)),
+    }
+}
+
+pub async fn trigger_rules_for_event(state: &AppState, trigger_type: &str, message: &str) {
+    let pg = match &state.pg {
+        Some(pg) => pg,
+        None => return,
+    };
+
+    let level = if trigger_type == "login_failed" || trigger_type == "pool_unhealthy" {
+        "error"
+    } else {
+        "warning"
+    };
+
+    let _ = pg.execute(
+        "INSERT INTO notifications (type, message, level) VALUES ($1, $2, $3)",
+        &[&trigger_type, &message, &level],
+    ).await;
+
+    // Fetch all active rules matching this trigger type or (for quota reached) where trigger type starts with "quota_reached:"
+    let rows = if trigger_type.starts_with("quota_reached:") {
+        pg.query(
+            "SELECT id, name, channel_ids FROM notification_rules WHERE is_active = true AND (trigger_type = 'quota_reached' OR trigger_type = $1)",
+            &[&trigger_type],
+        ).await
+    } else {
+        pg.query(
+            "SELECT id, name, channel_ids FROM notification_rules WHERE is_active = true AND trigger_type = $1",
+            &[&trigger_type],
+        ).await
+    };
+
+    let matched_rows = match rows {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+
+    for row in matched_rows {
+        let rule_name: String = row.get(1);
+        let channel_ids: Vec<i32> = row.get(2);
+
+        for channel_id in channel_ids {
+            if let Ok(ch_row) = pg.query_one("SELECT type, config FROM notification_channels WHERE id = $1", &[&channel_id]).await {
+                let ctype: String = ch_row.get(0);
+                let config: serde_json::Value = ch_row.get(1);
+
+                let full_msg = format!("[Rule: {}] {}", rule_name, message);
+                let _ = dispatch_notification(&ctype, &config, &full_msg).await;
+            }
+        }
     }
 }
 
