@@ -69,7 +69,7 @@ async fn list_notifications(State(state): State<AppState>) -> impl IntoResponse 
             }).collect();
             (StatusCode::OK, Json(n)).into_response()
         }
-        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(vec![])).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(Vec::<Notification>::new())).into_response(),
     }
 }
 
@@ -109,7 +109,7 @@ async fn list_channels(State(state): State<AppState>) -> impl IntoResponse {
             }).collect();
             (StatusCode::OK, Json(n)).into_response()
         }
-        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(vec![])).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(Vec::<NotificationChannel>::new())).into_response(),
     }
 }
 
@@ -165,7 +165,7 @@ async fn list_rules(State(state): State<AppState>) -> impl IntoResponse {
             }).collect();
             (StatusCode::OK, Json(n)).into_response()
         }
-        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(vec![])).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(Vec::<NotificationRule>::new())).into_response(),
     }
 }
 
