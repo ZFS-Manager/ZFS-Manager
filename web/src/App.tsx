@@ -17,18 +17,18 @@ import { Bell, AlertTriangle } from 'lucide-react';
 
 const PAGE_TITLES: Record<string, string> = {
   '/dashboard': 'Dashboard',
-  '/stats': 'Performance',
-  '/pools': 'Storage Pools',
-  '/datasets': 'Datasets',
+  '/stats':     'Performance',
+  '/pools':     'Storage Pools',
+  '/datasets':  'Datasets',
   '/snapshots': 'Snapshots',
-  '/logs': 'System Logs',
+  '/logs':      'System Logs',
+  '/settings':  'Settings',
   '/notifications': 'Notifications',
-  '/settings': 'Settings',
 };
 
 function getBreakpoint(): Breakpoint {
   const w = window.innerWidth;
-  if (w < 768) return 'mobile';
+  if (w < 768)  return 'mobile';
   if (w < 1200) return 'tablet';
   return 'desktop';
 }
@@ -153,12 +153,12 @@ function TopBar({
                 width: 32, height: 32, borderRadius: '50%', color: 'var(--text-muted)'
               }}
             >
-              <Bell
-                size={18}
-                style={{
-                  color: getBellColor(),
-                  transition: 'color 0.25s ease'
-                }}
+              <Bell 
+                size={18} 
+                style={{ 
+                  color: getBellColor(), 
+                  transition: 'color 0.25s ease' 
+                }} 
               />
               {unreadCount > 0 && (
                 <span style={{
@@ -182,7 +182,7 @@ function TopBar({
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>No notifications</div>
                   ) : (
                     sysNotifications.slice(0, 5).map(n => (
-                      <div key={n.id} style={{ fontSize: 12, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)', opacity: n.is_read ? 0.6 : 1 }} onClick={() => { if (!n.is_read) onMarkRead(n.id); }}>
+                      <div key={n.id} style={{ fontSize: 12, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)', opacity: n.is_read ? 0.6 : 1 }} onClick={() => { if(!n.is_read) onMarkRead(n.id); }}>
                         <div style={{ display: 'flex', gap: 8 }}>
                           <div style={{ width: 6, height: 6, borderRadius: '50%', background: n.is_read ? 'transparent' : 'var(--danger)', marginTop: 4 }} />
                           <div>{n.message}</div>
@@ -217,22 +217,22 @@ function TopBar({
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('zfs_access_token'));
   const [isDefaultPassword, setIsDefaultPassword] = useState(false);
-  const [pools, setPools] = useState<ZFSPool[]>([]);
-  const [datasets, setDatasets] = useState<ZFSDataset[]>([]);
-  const [volumes, setVolumes] = useState<any[]>([]);
-  const [snapshots, setSnapshots] = useState<any[]>([]);
-  const [totalCapacity, setTotalCapacity] = useState(0);
+  const [pools, setPools]           = useState<ZFSPool[]>([]);
+  const [datasets, setDatasets]     = useState<ZFSDataset[]>([]);
+  const [volumes, setVolumes]       = useState<any[]>([]);
+  const [snapshots, setSnapshots]   = useState<any[]>([]);
+  const [totalCapacity, setTotalCapacity]       = useState(0);
   const [totalUsedStorage, setTotalUsedStorage] = useState(0);
   const [totalRawCapacity, setTotalRawCapacity] = useState(0);
-  const [totalRawUsed, setTotalRawUsed] = useState(0);
-  const [stats, setStats] = useState<any[]>([]);
+  const [totalRawUsed, setTotalRawUsed]         = useState(0);
+  const [stats, setStats]           = useState<any[]>([]);
   const [liveMetrics, setLiveMetrics] = useState<any>(null);
   const [serverTimeOffsetMs, setServerTimeOffsetMs] = useState(0);
   const [systemStats, setSystemStats] = useState<any>(null);
-  const [logs, setLogs] = useState<ZFSLog[]>([]);
+  const [logs, setLogs]             = useState<ZFSLog[]>([]);
   const [sysNotifications, setSysNotifications] = useState<any[]>([]);
   const [showNotifPopup, setShowNotifPopup] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading]       = useState(true);
   const [globalError, setGlobalError] = useState<string | null>(null);
 
   const breakpoint = useBreakpoint();
@@ -264,8 +264,8 @@ export default function App() {
 
   const sidebarWidth =
     breakpoint === 'mobile' ? 0 :
-      breakpoint === 'tablet' ? 56 :
-        sidebarCollapsed ? 56 : 220;
+    breakpoint === 'tablet' ? 56 :
+    sidebarCollapsed ? 56 : 220;
 
   // ── Login: call api.login(), store token, check isDefaultPassword ──────────
   const handleLogin = async (password: string) => {
@@ -280,7 +280,7 @@ export default function App() {
     if (!isAuthenticated) return;
     api.getServerTime().then(({ now }) => {
       setServerTimeOffsetMs(new Date(now).getTime() - Date.now());
-    }).catch(() => { });
+    }).catch(() => {});
   }, [isAuthenticated]);
 
   // ── 1s live metrics loop (IO throughput cards) ────────────────────────────
@@ -297,7 +297,7 @@ export default function App() {
     if (!isAuthenticated) return;
     api.getMe().then(res => {
       setIsDefaultPassword(res.is_default_password);
-    }).catch(() => { });
+    }).catch(() => {});
   }, [isAuthenticated]);
 
   const fetchData = useCallback(async () => {
@@ -319,7 +319,7 @@ export default function App() {
           if (n.some((x: any) => !x.is_read && x.level === 'error')) {
             setShowNotifPopup(true);
           }
-        }).catch(() => { });
+        }).catch(() => {});
 
       if (statsRes) setSystemStats(statsRes);
 
@@ -339,10 +339,10 @@ export default function App() {
         _raw: p,
       }));
 
-      const logicalCap = mappedPools.reduce((a, p) => a + p.used_bytes + p.available_bytes, 0);
+      const logicalCap  = mappedPools.reduce((a, p) => a + p.used_bytes + p.available_bytes, 0);
       const logicalUsed = mappedPools.reduce((a, p) => a + p.used_bytes, 0);
-      const rawCap = (poolsRes.pools || []).reduce((a: number, p: any) => a + (Number(p.size) || 0), 0);
-      const rawUsed = (poolsRes.pools || []).reduce((a: number, p: any) => a + (Number(p.alloc) || 0), 0);
+      const rawCap      = (poolsRes.pools || []).reduce((a: number, p: any) => a + (Number(p.size)  || 0), 0);
+      const rawUsed     = (poolsRes.pools || []).reduce((a: number, p: any) => a + (Number(p.alloc) || 0), 0);
 
       setPools(mappedPools);
       setTotalCapacity(logicalCap);
@@ -375,19 +375,19 @@ export default function App() {
           const iostatRes = await api.getPoolIoStat(mappedPools[0].name);
           if (iostatRes.iostat?.length > 0) {
             const row = iostatRes.iostat[0];
-            const readBw = parseFloat(row[5] ?? '0') / 1024 / 1024;
-            const writeBw = parseFloat(row[6] ?? '0') / 1024 / 1024;
-            const readIops = parseFloat(row[3] ?? '0');
+            const readBw    = parseFloat(row[5] ?? '0') / 1024 / 1024;
+            const writeBw   = parseFloat(row[6] ?? '0') / 1024 / 1024;
+            const readIops  = parseFloat(row[3] ?? '0');
             const writeIops = parseFloat(row[4] ?? '0');
-            const iops = readIops + writeIops;
+            const iops      = readIops + writeIops;
             const time = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
             setStats(prev => [...prev.slice(-59), {
               name: time, timestamp: time,
               read: readBw, write: writeBw, iops, readIops, writeIops,
-              cpu: statsRes?.cpu_percent ?? statsRes?.cpu_load?.[0] ?? 0,
+              cpu:    statsRes?.cpu_percent ?? statsRes?.cpu_load?.[0] ?? 0,
               arcHit: statsRes?.arc_hit_ratio ?? 0,
-              alloc: Number(row[1] ?? 0) / 1e9,
-              free: Number(row[2] ?? 0) / 1e9,
+              alloc:  Number(row[1] ?? 0) / 1e9,
+              free:   Number(row[2] ?? 0) / 1e9,
             }]);
           }
         } catch { /* no iostat */ }
@@ -437,8 +437,8 @@ export default function App() {
   // Merge live metrics into currentStats for real-time gauge display
   const currentStats = {
     ...(stats[stats.length - 1] || { read: 0, write: 0, iops: 0, readIops: 0, writeIops: 0, cpu: 0, arcHit: 0 }),
-    cpu: liveMetrics?.cpu_percent ?? stats[stats.length - 1]?.cpu ?? 0,
-    arcHit: liveMetrics?.arc_hit_ratio ?? stats[stats.length - 1]?.arcHit ?? 0,
+    cpu:    liveMetrics?.cpu_percent    ?? stats[stats.length - 1]?.cpu    ?? 0,
+    arcHit: liveMetrics?.arc_hit_ratio  ?? stats[stats.length - 1]?.arcHit ?? 0,
   };
 
   return (
