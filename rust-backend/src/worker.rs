@@ -354,13 +354,22 @@ async fn run_slow_loop(state: crate::state::AppState) {
             }
         }
 
-        // Persist global cumulative read/write to database
-        if let Some(ref pg_client) = state.pg {
-            let tr = state.total_read_bytes.load(Ordering::Relaxed) as i64;
-            let tw = state.total_write_bytes.load(Ordering::Relaxed) as i64;
+        // Persist global cumulative read/write to configured backend
+        let db_backend = std::env::var("DB_BACKEND").unwrap_or_else(|_| "postgres".to_string());
+        let tr = state.total_read_bytes.load(Ordering::Relaxed);
+        let tw = state.total_write_bytes.load(Ordering::Relaxed);
+        if db_backend == "redis" {
+            if let Some(ref redis_conn) = state.redis {
+                let mut conn = redis_conn.clone();
+                let _: redis::RedisResult<()> = conn.set("zfs:totals:read_bytes",  tr.to_string()).await;
+                let _: redis::RedisResult<()> = conn.set("zfs:totals:write_bytes", tw.to_string()).await;
+            }
+        } else if let Some(ref pg_client) = state.pg {
+            let tr_i = tr as i64;
+            let tw_i = tw as i64;
             let _ = pg_client.execute(
                 "UPDATE global_stats SET total_read_bytes = $1, total_write_bytes = $2 WHERE id = 1",
-                &[&tr, &tw]
+                &[&tr_i, &tw_i]
             ).await;
         }
     }
