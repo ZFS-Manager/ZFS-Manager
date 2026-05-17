@@ -166,6 +166,29 @@ function Skeleton({ height = 200 }: { height?: number }) {
   return <div className="skeleton" style={{ height, borderRadius: 'var(--radius-lg)' }} />;
 }
 
+function fmtGrowthRate(diffGb: number, timeSec: number): string {
+  if (timeSec <= 0 || diffGb === 0) return '0 B/s';
+  const bytesPerSec = (diffGb * 1024 * 1024 * 1024) / timeSec;
+  const sign = bytesPerSec > 0 ? '+' : '';
+  const abs = Math.abs(bytesPerSec);
+  if (abs >= 1024 * 1024 * 1024) return `${sign}${(abs / (1024 * 1024 * 1024)).toFixed(1)} GB/s`;
+  if (abs >= 1024 * 1024) return `${sign}${(abs / (1024 * 1024)).toFixed(1)} MB/s`;
+  if (abs >= 1024) return `${sign}${(abs / 1024).toFixed(0)} KB/s`;
+  return `${sign}${abs.toFixed(0)} B/s`;
+}
+
+function getIntervalLabel(iv: Interval): string {
+  switch (iv) {
+    case '1h': return 'letzte 1h';
+    case '6h': return 'letzte 6h';
+    case '1d': return 'letzte 24h';
+    case '7d': return 'letzte 7d';
+    case '1m': return 'letzter 1M';
+    case '1y': return 'letztes 1Y';
+    default: return 'letzte 24h';
+  }
+}
+
 function Panel({ title, sub, right, children }: {
   title: string; sub?: string; right?: React.ReactNode; children: React.ReactNode;
 }) {
@@ -610,11 +633,18 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
           </div>
         );
 
-      case 'storage-history':
+      case 'storage-history': {
+        const firstAlloc = chartData.length > 0 ? (chartData[0].alloc || 0) : 0;
+        const lastAlloc = chartData.length > 0 ? (chartData[chartData.length - 1].alloc || 0) : 0;
+        const diffGb = lastAlloc - firstAlloc;
+        const timeSec = chartData.length * secPerPt;
+        const rateStr = fmtGrowthRate(diffGb, timeSec);
+        const rateLabel = getIntervalLabel(interval);
+
         return (
           <Panel
             title="Pool Capacity"
-            sub="Allocation trends"
+            sub={`Allocation trends · Ø ${rateStr} (${rateLabel})`}
             right={
               <div style={{ display: 'flex', gap: 6 }}>
                 <Toggle color={C.alloc} label="Used" active={vis('alloc')} onClick={() => toggle('alloc')} />
@@ -685,6 +715,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
             )}
           </Panel>
         );
+      }
 
       case 'smart-health':
         return (

@@ -206,6 +206,36 @@ async fn init_schema(client: &tokio_postgres::Client) {
             attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             success BOOLEAN NOT NULL DEFAULT FALSE
         );
+        CREATE TABLE IF NOT EXISTS global_stats (
+            id INTEGER PRIMARY KEY DEFAULT 1,
+            total_read_bytes BIGINT NOT NULL DEFAULT 0,
+            total_write_bytes BIGINT NOT NULL DEFAULT 0,
+            CHECK (id = 1)
+        );
+        CREATE TABLE IF NOT EXISTS notification_channels (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,
+            config JSONB NOT NULL DEFAULT '{}',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS notification_rules (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            trigger_type TEXT NOT NULL,
+            threshold_value DOUBLE PRECISION,
+            channel_ids INTEGER[] NOT NULL DEFAULT '{}',
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS notifications (
+            id SERIAL PRIMARY KEY,
+            type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            level TEXT NOT NULL,
+            is_read BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
     ";
 
     match client.batch_execute(sql).await {
@@ -293,12 +323,26 @@ async fn main() {
 
     let rate_limit: state::RateLimitMap = Arc::new(Mutex::new(HashMap::new()));
 
+    let mut init_read: u64 = 0;
+    let mut init_write: u64 = 0;
+    if let Some(ref pg) = pg_client {
+        // Create the row if it doesn't exist
+        let _ = pg.execute(
+            "INSERT INTO global_stats(id, total_read_bytes, total_write_bytes) VALUES(1, 0, 0) ON CONFLICT DO NOTHING",
+            &[],
+        ).await;
+        if let Ok(row) = pg.query_one("SELECT total_read_bytes, total_write_bytes FROM global_stats WHERE id = 1", &[]).await {
+            init_read = row.get::<_, i64>(0) as u64;
+            init_write = row.get::<_, i64>(1) as u64;
+        }
+    }
+
     let app_state = AppState {
         redis: redis_conn,
         pg: pg_client,
         rate_limit,
-        total_read_bytes: Arc::new(AtomicU64::new(0)),
-        total_write_bytes: Arc::new(AtomicU64::new(0)),
+        total_read_bytes: Arc::new(AtomicU64::new(init_read)),
+        total_write_bytes: Arc::new(AtomicU64::new(init_write)),
     };
 
     tokio::spawn(worker::run_metrics_worker(app_state.clone()));
@@ -321,6 +365,7 @@ async fn main() {
         .merge(routes::properties::router())
         .merge(routes::metrics::router(app_state.clone()))
         .merge(routes::layout::router(app_state.clone()))
+        .merge(routes::notifications::router(app_state.clone()))
         .layer(middleware::from_fn_with_state(app_state.clone(), auth_middleware))
         .layer(middleware::from_fn(security_headers))
         .layer(cors)

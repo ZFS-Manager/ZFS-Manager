@@ -25,8 +25,9 @@ const NAV_GROUPS = [
   {
     label: 'System',
     items: [
-      { id: 'logs',     label: 'System Logs', icon: FileText, path: '/logs'     },
-      { id: 'settings', label: 'Settings',    icon: Settings, path: '/settings' },
+      { id: 'logs',          label: 'System Logs',   icon: FileText, path: '/logs'          },
+      { id: 'settings',      label: 'Settings',      icon: Settings, path: '/settings'      },
+      { id: 'notifications', label: 'Notifications', icon: Activity, path: '/notifications' },
     ],
   },
 ];

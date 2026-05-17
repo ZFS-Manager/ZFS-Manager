@@ -10,8 +10,10 @@ import SnapshotManager from './components/SnapshotManager';
 import SystemLogs from './components/SystemLogs';
 import Login from './components/Login';
 import Settings from './components/Settings';
+import Notifications from './pages/Notifications';
 import { ZFSPool, ZFSDataset, ZFSLog } from './types';
 import { api, formatBytes, setApiKey } from './api';
+import { Bell, AlertTriangle } from 'lucide-react';
 
 const PAGE_TITLES: Record<string, string> = {
   '/dashboard': 'Dashboard',
@@ -21,6 +23,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/snapshots': 'Snapshots',
   '/logs':      'System Logs',
   '/settings':  'Settings',
+  '/notifications': 'Notifications',
 };
 
 function getBreakpoint(): Breakpoint {
@@ -74,13 +77,19 @@ function TopBar({
   loading,
   systemStats,
   onMenuOpen,
+  sysNotifications,
+  onMarkRead,
 }: {
   loading: boolean;
   systemStats: any;
   onMenuOpen?: () => void;
+  sysNotifications: any[];
+  onMarkRead: (id: number) => void;
 }) {
   const location = useLocation();
-  const title    = PAGE_TITLES[location.pathname] || 'ZFS Manager';
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const title = PAGE_TITLES[location.pathname] || 'ZFS Manager';
+  const unreadCount = sysNotifications.filter(n => !n.is_read).length;
 
   return (
     <header style={{
@@ -115,16 +124,65 @@ function TopBar({
       </span>
 
       {!onMenuOpen && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span className={loading ? 'dot dot-warning' : 'dot dot-success'} />
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
-            {loading ? 'Syncing' : 'Live'}
-          </span>
-          {systemStats?.zfs_version && (
-            <span className="badge">
-              {systemStats.zfs_version.replace('zfs-', '')}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => setDropdownOpen(!dropdownOpen)}
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 32, height: 32, borderRadius: '50%', color: 'var(--text-muted)'
+              }}
+            >
+              <Bell size={18} />
+              {unreadCount > 0 && (
+                <span style={{
+                  position: 'absolute', top: 2, right: 2, background: 'var(--danger)',
+                  color: '#fff', fontSize: 9, fontWeight: 700, borderRadius: '50%',
+                  width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}>{unreadCount}</span>
+              )}
+            </button>
+            {dropdownOpen && (
+              <div style={{
+                position: 'absolute', top: 40, right: 0, width: 300, background: 'var(--bg-elevated)',
+                border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 12, zIndex: 50,
+                boxShadow: '0 10px 25px rgba(0,0,0,0.5)'
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 600, borderBottom: '1px solid var(--border)', paddingBottom: 8, marginBottom: 8 }}>
+                  Notifications
+                </div>
+                <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+                  {sysNotifications.length === 0 ? (
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>No notifications</div>
+                  ) : (
+                    sysNotifications.slice(0, 5).map(n => (
+                      <div key={n.id} style={{ fontSize: 12, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)', opacity: n.is_read ? 0.6 : 1 }} onClick={() => { if(!n.is_read) onMarkRead(n.id); }}>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <div style={{ width: 6, height: 6, borderRadius: '50%', background: n.is_read ? 'transparent' : 'var(--danger)', marginTop: 4 }} />
+                          <div>{n.message}</div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div style={{ textAlign: 'center', paddingTop: 8, borderTop: '1px solid var(--border)', marginTop: 8 }}>
+                  <a href="/notifications" style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'underline' }}>View All</a>
+                </div>
+              </div>
+            )}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span className={loading ? 'dot dot-warning' : 'dot dot-success'} />
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+              {loading ? 'Syncing' : 'Live'}
             </span>
-          )}
+            {systemStats?.zfs_version && (
+              <span className="badge">
+                {systemStats.zfs_version.replace('zfs-', '')}
+              </span>
+            )}
+          </div>
         </div>
       )}
     </header>
@@ -147,6 +205,8 @@ export default function App() {
   const [serverTimeOffsetMs, setServerTimeOffsetMs] = useState(0);
   const [systemStats, setSystemStats] = useState<any>(null);
   const [logs, setLogs]             = useState<ZFSLog[]>([]);
+  const [sysNotifications, setSysNotifications] = useState<any[]>([]);
+  const [showNotifPopup, setShowNotifPopup] = useState(false);
   const [loading, setLoading]       = useState(true);
   const [globalError, setGlobalError] = useState<string | null>(null);
 
@@ -225,6 +285,16 @@ export default function App() {
         api.getDatasets(),
         api.getVolumes(),
       ]);
+
+      // fetch notifications without throwing
+      fetch('/api/v1/notifications', { headers: { 'Authorization': `Bearer ${localStorage.getItem('zfs_access_token')}` } })
+        .then(r => r.json())
+        .then(n => {
+          setSysNotifications(n);
+          if (n.some((x: any) => !x.is_read && x.level === 'error')) {
+            setShowNotifPopup(true);
+          }
+        }).catch(() => {});
 
       if (statsRes) setSystemStats(statsRes);
 
@@ -386,6 +456,11 @@ export default function App() {
           <TopBar
             loading={loading}
             systemStats={systemStats}
+            sysNotifications={sysNotifications}
+            onMarkRead={(id) => {
+              fetch(`/api/v1/notifications/${id}/read`, { method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('zfs_access_token')}` } });
+              setSysNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+            }}
             onMenuOpen={breakpoint === 'mobile' ? () => setMobileSidebarOpen(true) : undefined}
           />
 
@@ -426,7 +501,7 @@ export default function App() {
                   pools={pools} datasets={datasets} snapshots={snapshots}
                   totalCapacity={totalCapacity} totalUsedStorage={totalUsedStorage}
                   totalRawCapacity={totalRawCapacity} totalRawUsed={totalRawUsed}
-                  currentStats={currentStats}
+                  currentStats={currentStats} liveMetrics={liveMetrics}
                   systemStats={systemStats} logs={logs} loading={loading} historicalStats={stats}
                 />
               } />
@@ -444,11 +519,29 @@ export default function App() {
               <Route path="/settings" element={
                 <Settings onPasswordChanged={() => setIsDefaultPassword(false)} />
               } />
+              <Route path="/notifications" element={<Notifications />} />
               <Route path="/login" element={<Navigate to="/dashboard" replace />} />
             </Routes>
           </main>
         </div>
       </div>
+
+      {showNotifPopup && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--bg-surface)', padding: 24, borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)', maxWidth: 400, width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, color: 'var(--danger)' }}>
+              <AlertTriangle size={24} />
+              <h3 style={{ margin: 0, fontSize: 16 }}>Important System Alerts</h3>
+            </div>
+            <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 20 }}>
+              You have unread critical system notifications (e.g. Pool degraded, HDD temperatures high). Please check them in the Notifications center.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+              <button className="btn btn-primary" onClick={() => setShowNotifPopup(false)}>Acknowledge</button>
+            </div>
+          </div>
+        </div>
+      )}
     </BrowserRouter>
   );
 }

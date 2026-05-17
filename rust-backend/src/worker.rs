@@ -1,7 +1,20 @@
 use std::sync::atomic::Ordering;
 use redis::AsyncCommands;
 use tokio::time::{interval, Duration};
-use tracing::{info, warn};
+use tracing::{info, warn, error};
+
+async fn check_and_trigger_notifications(state: &crate::state::AppState) {
+    let pg = match &state.pg {
+        Some(pg) => pg,
+        None => return,
+    };
+
+    // Very basic placeholder logic for periodic checks.
+    // In a full implementation, you would:
+    // 1. Check zpool status for unhealthy pools.
+    // 2. Fetch active notification rules from pg.
+    // 3. If a rule condition is met, insert a notification log and trigger webhook/discord channels.
+}
 
 fn read_cpu_jiffies() -> (u64, u64) {
     let content = std::fs::read_to_string("/proc/stat").unwrap_or_default();
@@ -340,16 +353,37 @@ async fn run_slow_loop(state: crate::state::AppState) {
                 }
             }
         }
+
+        // Persist global cumulative read/write to database
+        if let Some(ref pg_client) = state.pg {
+            let tr = state.total_read_bytes.load(Ordering::Relaxed) as i64;
+            let tw = state.total_write_bytes.load(Ordering::Relaxed) as i64;
+            let _ = pg_client.execute(
+                "UPDATE global_stats SET total_read_bytes = $1, total_write_bytes = $2 WHERE id = 1",
+                &[&tr, &tw]
+            ).await;
+        }
     }
 }
 
-/// Spawn both the 500ms live loop and the 5s metrics loop.
+/// Periodically evaluates notification rules and triggers actions.
+async fn run_notifications_loop(state: crate::state::AppState) {
+    let mut ticker = interval(Duration::from_secs(60));
+    loop {
+        ticker.tick().await;
+        check_and_trigger_notifications(&state).await;
+    }
+}
+
+/// Spawn all workers
 pub async fn run_metrics_worker(state: crate::state::AppState) {
     let state_live = state.clone();
-    let state_slow = state;
+    let state_slow = state.clone();
+    let state_notify = state;
 
     tokio::join!(
         run_live_loop(state_live),
         run_slow_loop(state_slow),
+        run_notifications_loop(state_notify),
     );
 }
