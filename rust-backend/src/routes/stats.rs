@@ -146,19 +146,29 @@ async fn get_system_stats(State(state): State<AppState>) -> Result<Json<Value>, 
         else              { format!("{mins}m") }
     };
 
-    // ZFS version
-    let zfs_version = tokio::process::Command::new("zfs")
-        .arg("--version")
-        .output()
-        .await
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .next()
-                .map(|l| l.trim().to_string())
-                .unwrap_or_else(|| "unknown".to_string())
+    // ZFS version (prefer kernel module version over container userland version)
+    let mut zfs_version = std::fs::read_to_string("/sys/module/zfs/version")
+        .map(|s| {
+            let v = s.trim();
+            if v.starts_with("zfs-") { v.to_string() } else { format!("zfs-{}", v) }
         })
-        .unwrap_or_else(|_| "unavailable".to_string());
+        .unwrap_or_default();
+
+    if zfs_version.is_empty() {
+        zfs_version = tokio::process::Command::new("zfs")
+            .arg("--version")
+            .output()
+            .await
+            .map(|o| {
+                let out = String::from_utf8_lossy(&o.stdout);
+                out.lines()
+                    .find(|l| l.contains("zfs-kmod-"))
+                    .or_else(|| out.lines().next())
+                    .map(|l| l.trim().strip_prefix("zfs-kmod-").map(|s| format!("zfs-{}", s)).unwrap_or_else(|| l.trim().to_string()))
+                    .unwrap_or_else(|| "unknown".to_string())
+            })
+            .unwrap_or_else(|_| "unavailable".to_string());
+    }
 
     let result = json!({
         "uptime":         uptime_formatted,
