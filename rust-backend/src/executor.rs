@@ -5,7 +5,7 @@ use tracing::debug;
 const ALLOWED_ZFS: &[&str] = &[
     "list", "create", "destroy", "get", "set", "snapshot", "rollback", "clone",
     "rename", "mount", "unmount", "send", "recv", "diff", "upgrade", "allow",
-    "unallow", "hold", "release", "inherit", "promote",
+    "unallow", "hold", "release", "inherit", "promote", "rewrite",
 ];
 
 const ALLOWED_ZPOOL: &[&str] = &[

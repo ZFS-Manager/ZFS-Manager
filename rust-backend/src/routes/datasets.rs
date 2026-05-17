@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::{error::ApiError, executor};
+use tracing::{error, info};
 
 fn active_rewrites() -> &'static TokioMutex<HashSet<String>> {
     static REWRITES: OnceLock<TokioMutex<HashSet<String>>> = OnceLock::new();
@@ -238,6 +239,26 @@ async fn rewrite_dataset(Json(body): Json<NameBody>) -> Result<Json<Value>, ApiE
         return Err(ApiError::BadRequest("'name' is required".into()));
     }
     
+    executor::validate_zfs_name(&body.name, "dataset")?;
+
+    // Get the mountpoint of the dataset
+    let raw = match executor::zfs(&[
+        "list", "-H", "-p",
+        "-o", "mountpoint",
+        &body.name,
+    ]).await {
+        Ok(out) => out,
+        Err(e) => return Err(e),
+    };
+
+    let mountpoint = raw.trim().to_string();
+    if mountpoint.is_empty() || mountpoint == "none" || mountpoint == "legacy" {
+        return Err(ApiError::BadRequest(format!(
+            "Dataset '{}' does not have a valid active mountpoint (mountpoint='{}')",
+            body.name, mountpoint
+        )));
+    }
+
     let mut lock = active_rewrites().lock().await;
     if lock.contains(&body.name) {
         return Ok(Json(json!({ "message": format!("Rewrite already running for '{}'", body.name) })));
@@ -246,15 +267,29 @@ async fn rewrite_dataset(Json(body): Json<NameBody>) -> Result<Json<Value>, ApiE
     drop(lock);
 
     let ds_name = body.name.clone();
+    let mount_path = mountpoint.clone();
     
-    // Spawn background task
+    // Spawn background task running on the mountpoint path!
     tokio::spawn(async move {
-        let _ = executor::zfs(&["rewrite", "-r", &ds_name]).await;
+        // Try running via nsenter first (to access host mount namespace)
+        let res = executor::command("nsenter", &["-t", "1", "-m", "--", "zfs", "rewrite", "-r", &mount_path]).await;
+        if let Err(e) = res {
+            error!("Failed to run zfs rewrite via nsenter: {:?}. Falling back to direct execution.", e);
+            // Fallback: run directly inside the container (if mountpoints are mapped)
+            let fallback_res = executor::command("zfs", &["rewrite", "-r", &mount_path]).await;
+            if let Err(fe) = fallback_res {
+                error!("Failed to run zfs rewrite directly: {:?}", fe);
+            } else {
+                info!("Direct zfs rewrite completed successfully for '{}'", ds_name);
+            }
+        } else {
+            info!("Nsenter zfs rewrite completed successfully for '{}'", ds_name);
+        }
         let mut lock = active_rewrites().lock().await;
         lock.remove(&ds_name);
     });
 
-    Ok(Json(json!({ "message": format!("Rewrite started in background for '{}'", body.name) })))
+    Ok(Json(json!({ "message": format!("Rewrite started in background for '{}' at '{}'", body.name, mountpoint) })))
 }
 
 #[derive(Deserialize)]
