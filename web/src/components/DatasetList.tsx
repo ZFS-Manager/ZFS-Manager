@@ -2,12 +2,13 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { ZFSDataset, ZFSPool } from '../types';
 import {
   HardDrive, Plus, Lock, Search, Trash2, X,
-  Loader2, CheckCircle, XCircle, AlertTriangle, Layers,
+  Loader2, XCircle, AlertTriangle, Layers,
   ArrowUpDown, ArrowUp, ArrowDown, Pencil, Save, RotateCcw,
   ChevronRight, ChevronDown, Folder, FolderOpen, Database
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { api, formatBytes } from '../api';
+import { useNotifications } from '../context/NotificationContext';
 
 interface DatasetListProps {
   datasets: ZFSDataset[];
@@ -57,27 +58,6 @@ function Modal({ title, onClose, children, maxWidth = 440 }: {
   );
 }
 
-/* ── Toast ── */
-function Toast({ msg, type }: { msg: string; type: 'success' | 'error' }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-      style={{
-        position: 'fixed', top: 20, right: 20, zIndex: 300,
-        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 18px',
-        borderRadius: 8,
-        border: `1px solid ${type === 'success' ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
-        background: type === 'success' ? 'rgba(34,197,94,0.10)' : 'rgba(239,68,68,0.10)',
-        color: type === 'success' ? 'var(--success)' : 'var(--danger)',
-        boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-        fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 600,
-      }}
-    >
-      {type === 'success' ? <CheckCircle size={15} /> : <XCircle size={15} />}
-      {msg}
-    </motion.div>
-  );
-}
 
 type QuotaUnit = 'M' | 'G' | 'T';
 
@@ -334,6 +314,7 @@ const ACT_BTN: React.CSSProperties = {
 };
 
 export default function DatasetList({ datasets, volumes = [], pools, onRefresh }: DatasetListProps) {
+  const { notify } = useNotifications();
   const [search,        setSearch]        = useState('');
   const [sortField,     setSortField]     = useState<SortField>('name');
   const [sortDir,       setSortDir]       = useState<SortDir>('asc');
@@ -347,7 +328,6 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
   const [deleting,      setDeleting]      = useState(false);
   const [editTarget,    setEditTarget]    = useState<ZFSDataset | null>(null);
   const [rewriteTarget, setRewriteTarget] = useState<string | null>(null);
-  const [toast,         setToast]         = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [rewriteState,  setRewriteState]  = useState<Record<string, boolean>>({});
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
@@ -370,8 +350,7 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
   }, [datasets]);
 
   const showToast = (msg: string, type: 'success' | 'error') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
+    notify({ type, title: type === 'success' ? 'Success' : 'Error', message: msg });
   };
 
   const toggleExpand = (name: string) => {
@@ -484,10 +463,6 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
 
   return (
     <div style={{ paddingBottom: 40 }}>
-      <AnimatePresence>
-        {toast && <Toast msg={toast.msg} type={toast.type} />}
-      </AnimatePresence>
-
       {/* Create Modal */}
       <AnimatePresence>
         {showCreate && (
