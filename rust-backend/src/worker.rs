@@ -218,7 +218,7 @@ async fn sync_redis_to_postgres(
     );
 
     // Build dynamic param list (tokio-postgres requires &dyn ToSql)
-    let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync>> = Vec::with_capacity(rows.len() * 8);
+    let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> = Vec::with_capacity(rows.len() * 8);
     for r in &rows {
         params.push(Box::new(r.pool_name.clone()));
         params.push(Box::new(r.read_bw_mb));
@@ -231,7 +231,7 @@ async fn sync_redis_to_postgres(
     }
 
     let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
-        params.iter().map(|b| b.as_ref()).collect();
+        params.iter().map(|b| b.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync)).collect();
 
     match pg.execute(sql.as_str(), param_refs.as_slice()).await {
         Ok(n) => {
@@ -448,7 +448,7 @@ async fn run_slow_loop(state: crate::state::AppState) {
                      VALUES {}",
                     placeholders.join(", ")
                 );
-                let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync>> =
+                let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> =
                     Vec::with_capacity(rows.len() * 8);
                 for r in &rows {
                     params.push(Box::new(r.pool_name.clone()));
@@ -460,7 +460,7 @@ async fn run_slow_loop(state: crate::state::AppState) {
                     params.push(Box::new(r.cpu_v));
                     params.push(Box::new(r.arc_v));
                 }
-                let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+                let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync + Send)> =
                     params.iter().map(|b| b.as_ref()).collect();
                 match pg_client.execute(sql.as_str(), param_refs.as_slice()).await {
                     Ok(n) => {
