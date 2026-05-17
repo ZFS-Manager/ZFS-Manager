@@ -38,13 +38,13 @@ pub struct NotificationRule {
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route("/notifications", get(list_notifications))
-        .route("/notifications/read", post(mark_all_read))
-        .route("/notifications/:id/read", post(mark_read))
-        .route("/notifications/channels", get(list_channels).post(create_channel))
-        .route("/notifications/channels/:id", delete(delete_channel))
-        .route("/notifications/rules", get(list_rules).post(create_rule))
-        .route("/notifications/rules/:id", delete(delete_rule))
+        .route("/api/v1/notifications", get(list_notifications))
+        .route("/api/v1/notifications/read", post(mark_all_read))
+        .route("/api/v1/notifications/:id/read", post(mark_read))
+        .route("/api/v1/notifications/channels", get(list_channels).post(create_channel))
+        .route("/api/v1/notifications/channels/:id", delete(delete_channel))
+        .route("/api/v1/notifications/rules", get(list_rules).post(create_rule))
+        .route("/api/v1/notifications/rules/:id", delete(delete_rule))
         .with_state(state)
 }
 
