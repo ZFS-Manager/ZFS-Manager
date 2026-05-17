@@ -460,8 +460,8 @@ async fn run_slow_loop(state: crate::state::AppState) {
                     params.push(Box::new(r.cpu_v));
                     params.push(Box::new(r.arc_v));
                 }
-                let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync + Send)> =
-                    params.iter().map(|b| b.as_ref()).collect();
+                let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+                    params.iter().map(|b| b.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync)).collect();
                 match pg_client.execute(sql.as_str(), param_refs.as_slice()).await {
                     Ok(n) => {
                         write_counter += n as u64;
