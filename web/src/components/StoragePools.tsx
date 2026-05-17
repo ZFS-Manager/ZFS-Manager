@@ -27,11 +27,11 @@ interface ScrubProgress {
 }
 
 const VDEV_INFO: Record<VdevType, { min: number; label: string; desc: string; color: string }> = {
-  stripe: { min: 1, label: 'Stripe', desc: 'Max performance, no redundancy', color: 'var(--danger)' },
-  mirror: { min: 2, label: 'Mirror', desc: 'Full redundancy, survives 1 disk loss', color: 'var(--success)' },
-  raidz1: { min: 3, label: 'RAIDZ-1', desc: 'Single parity, min 3 devices', color: 'var(--info)' },
-  raidz2: { min: 4, label: 'RAIDZ-2', desc: 'Double parity, min 4 devices', color: 'var(--accent)' },
-  raidz3: { min: 5, label: 'RAIDZ-3', desc: 'Triple parity, min 5 devices', color: 'var(--warning)' },
+  stripe: { min: 1, label: 'Stripe',  desc: 'Max performance, no redundancy',       color: 'var(--danger)'  },
+  mirror: { min: 2, label: 'Mirror',  desc: 'Full redundancy, survives 1 disk loss', color: 'var(--success)' },
+  raidz1: { min: 3, label: 'RAIDZ-1', desc: 'Single parity, min 3 devices',          color: 'var(--info)'    },
+  raidz2: { min: 4, label: 'RAIDZ-2', desc: 'Double parity, min 4 devices',          color: 'var(--accent)'  },
+  raidz3: { min: 5, label: 'RAIDZ-3', desc: 'Triple parity, min 5 devices',          color: 'var(--warning)' },
 };
 
 /* ── Small helpers ───────────────────────────────────────────────────────────── */
@@ -47,9 +47,9 @@ const S = {
       borderRadius: 'var(--radius-lg)', padding: 28, width: '100%',
       maxWidth: 480, boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
     },
-    title: { fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)', margin: 0 },
-    label: { fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase' as const, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', display: 'block', marginBottom: 8 },
-    input: { width: '100%', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 14px', fontSize: 13, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', outline: 'none', boxSizing: 'border-box' as const },
+    title:  { fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)', margin: 0 },
+    label:  { fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase' as const, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', display: 'block', marginBottom: 8 },
+    input:  { width: '100%', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 14px', fontSize: 13, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', outline: 'none', boxSizing: 'border-box' as const },
     select: { width: '100%', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 14px', fontSize: 13, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)', outline: 'none', cursor: 'pointer' },
   },
 };
@@ -172,9 +172,9 @@ function SmartModal({ device, onClose }: { device: string; onClose: () => void }
   }, [device]);
 
   const passed = data?.smart_status?.passed;
-  const temp = data?.temperature?.current;
-  const hours = data?.power_on_time?.hours;
-  const attrs = data?.ata_smart_attributes?.table || [];
+  const temp   = data?.temperature?.current;
+  const hours  = data?.power_on_time?.hours;
+  const attrs  = data?.ata_smart_attributes?.table || [];
 
   return (
     <div style={S.modal.overlay} onClick={onClose}>
@@ -199,7 +199,7 @@ function SmartModal({ device, onClose }: { device: string; onClose: () => void }
               {[
                 { label: 'Status', value: passed === true ? 'PASSED' : 'FAILED', color: passed === true ? 'var(--success)' : 'var(--danger)' },
                 ...(temp !== undefined ? [{ label: 'Temp', value: `${temp}°C`, color: temp > 55 ? 'var(--danger)' : temp > 45 ? 'var(--warning)' : 'var(--text-primary)' }] : []),
-                ...(hours !== undefined ? [{ label: 'Power-On', value: hours >= 8760 ? `${(hours / 8760).toFixed(1)}y` : `${(hours / 24).toFixed(0)}d`, color: 'var(--text-primary)' }] : []),
+                ...(hours !== undefined ? [{ label: 'Power-On', value: hours >= 8760 ? `${(hours/8760).toFixed(1)}y` : `${(hours/24).toFixed(0)}d`, color: 'var(--text-primary)' }] : []),
               ].map(({ label, value, color }) => (
                 <div key={label} style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 14px', textAlign: 'center' }}>
                   <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>{label}</div>
@@ -234,12 +234,12 @@ function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuc
   usedDisks?: Set<string>;
 }) {
   const [selectedOld, setSelectedOld] = useState(preselectedDisk || '');
-  const [newDisk, setNewDisk] = useState('');
-  const [force, setForce] = useState(false);
-  const [replacing, setReplacing] = useState(false);
-  const [error, setError] = useState('');
-  const [showPicker, setShowPicker] = useState(false);
-  const [step, setStep] = useState<1 | 2>(preselectedDisk ? 2 : 1);
+  const [newDisk, setNewDisk]         = useState('');
+  const [force, setForce]             = useState(false);
+  const [replacing, setReplacing]     = useState(false);
+  const [error, setError]             = useState('');
+  const [showPicker, setShowPicker]   = useState(false);
+  const [step, setStep]               = useState<1 | 2>(preselectedDisk ? 2 : 1);
 
   const handleReplace = async () => {
     if (!selectedOld) { setError('Select the disk to replace'); return; }
@@ -341,11 +341,11 @@ function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuc
 /* ── Import Pool Modal ────────────────────────────────────────────────────────── */
 function ImportPoolModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
   const [importable, setImportable] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [poolName, setPoolName] = useState('');
-  const [dir, setDir] = useState('');
-  const [importing, setImporting] = useState(false);
-  const [error, setError] = useState('');
+  const [loading, setLoading]       = useState(true);
+  const [poolName, setPoolName]     = useState('');
+  const [dir, setDir]               = useState('');
+  const [importing, setImporting]   = useState(false);
+  const [error, setError]           = useState('');
 
   useEffect(() => {
     api.getImportablePools()
@@ -483,21 +483,21 @@ function ExpandPoolModal({ poolName, poolDisks, onClose, onSuccess, usedDisks = 
 function CreatePoolModal({ onClose, onSuccess, usedDisks = new Set<string>() }: { onClose: () => void; onSuccess: (name: string) => void; usedDisks?: Set<string> }) {
   const [poolName, setPoolName] = useState('');
   const [vdevType, setVdevType] = useState<VdevType>('mirror');
-  const [devices, setDevices] = useState<string[]>(['', '']);
-  const [ashift, setAshift] = useState('12');
-  const [force, setForce] = useState(false);
+  const [devices, setDevices]   = useState<string[]>(['', '']);
+  const [ashift, setAshift]     = useState('12');
+  const [force, setForce]       = useState(false);
   const [creating, setCreating] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError]       = useState('');
   const [showPicker, setShowPicker] = useState(false);
   const [pickerTarget, setPickerTarget] = useState<number | null>(null);
 
-  const info = VDEV_INFO[vdevType];
-  const validDev = devices.filter(d => d.trim());
-  const minMet = validDev.length >= info.min;
+  const info        = VDEV_INFO[vdevType];
+  const validDev    = devices.filter(d => d.trim());
+  const minMet      = validDev.length >= info.min;
 
-  const addDevice = () => setDevices(d => [...d, '']);
+  const addDevice    = () => setDevices(d => [...d, '']);
   const removeDevice = (i: number) => setDevices(d => d.filter((_, j) => j !== i));
-  const setDevice = (i: number, val: string) => setDevices(d => d.map((v, j) => j === i ? val : v));
+  const setDevice    = (i: number, val: string) => setDevices(d => d.map((v, j) => j === i ? val : v));
 
   const openPickerFor = (idx: number) => { setPickerTarget(idx); setShowPicker(true); };
   const handlePickerSelect = (path: string) => {
@@ -505,7 +505,7 @@ function CreatePoolModal({ onClose, onSuccess, usedDisks = new Set<string>() }: 
     else setDevices(d => [...d, path]);
   };
 
-  const buildVdevs = (): string[] => vdevType === 'stripe' ? validDev : [vdevType, ...validDev];
+  const buildVdevs   = (): string[] => vdevType === 'stripe' ? validDev : [vdevType, ...validDev];
   const buildOptions = (): string[] => {
     const opts: string[] = [];
     if (ashift && ashift !== '0') opts.push('-o', `ashift=${ashift}`);
@@ -680,21 +680,21 @@ type PropDef = {
 };
 
 const POOL_PROP_DEFS: PropDef[] = [
-  { name: 'autoreplace', label: 'Auto Replace', scope: 'pool', type: 'toggle' },
-  { name: 'autotrim', label: 'Auto Trim', scope: 'pool', type: 'toggle' },
-  { name: 'autoexpand', label: 'Auto Expand', scope: 'pool', type: 'toggle' },
-  { name: 'failmode', label: 'Fail Mode', scope: 'pool', type: 'select', options: ['wait', 'continue', 'panic'] },
-  { name: 'comment', label: 'Comment', scope: 'pool', type: 'text' },
-  { name: 'compression', label: 'Compression', scope: 'dataset', type: 'select', options: ['off', 'lz4', 'zstd', 'gzip', 'zle'] },
-  { name: 'atime', label: 'Access Time', scope: 'dataset', type: 'toggle' },
-  { name: 'relatime', label: 'Relative Atime', scope: 'dataset', type: 'toggle' },
-  { name: 'dedup', label: 'Deduplication', scope: 'dataset', type: 'toggle' },
-  { name: 'recordsize', label: 'Record Size', scope: 'dataset', type: 'select', options: ['512', '1K', '2K', '4K', '8K', '16K', '32K', '64K', '128K', '1M'] },
-  { name: 'xattr', label: 'Extended Attrs', scope: 'dataset', type: 'select', options: ['on', 'off', 'sa'] },
-  { name: 'quota', label: 'Quota', scope: 'dataset', type: 'text' },
-  { name: 'reservation', label: 'Reservation', scope: 'dataset', type: 'text' },
-  { name: 'snapdir', label: 'Snapshot Dir', scope: 'dataset', type: 'select', options: ['hidden', 'visible'] },
-  { name: 'sync', label: 'Sync Mode', scope: 'dataset', type: 'select', options: ['standard', 'always', 'disabled'] },
+  { name: 'autoreplace',   label: 'Auto Replace',       scope: 'pool',    type: 'toggle' },
+  { name: 'autotrim',      label: 'Auto Trim',          scope: 'pool',    type: 'toggle' },
+  { name: 'autoexpand',    label: 'Auto Expand',        scope: 'pool',    type: 'toggle' },
+  { name: 'failmode',      label: 'Fail Mode',          scope: 'pool',    type: 'select', options: ['wait', 'continue', 'panic'] },
+  { name: 'comment',       label: 'Comment',            scope: 'pool',    type: 'text' },
+  { name: 'compression',   label: 'Compression',        scope: 'dataset', type: 'select', options: ['off', 'lz4', 'zstd', 'gzip', 'zle'] },
+  { name: 'atime',         label: 'Access Time',        scope: 'dataset', type: 'toggle' },
+  { name: 'relatime',      label: 'Relative Atime',     scope: 'dataset', type: 'toggle' },
+  { name: 'dedup',         label: 'Deduplication',      scope: 'dataset', type: 'toggle' },
+  { name: 'recordsize',    label: 'Record Size',        scope: 'dataset', type: 'select', options: ['512', '1K', '2K', '4K', '8K', '16K', '32K', '64K', '128K', '1M'] },
+  { name: 'xattr',         label: 'Extended Attrs',     scope: 'dataset', type: 'select', options: ['on', 'off', 'sa'] },
+  { name: 'quota',         label: 'Quota',              scope: 'dataset', type: 'text' },
+  { name: 'reservation',   label: 'Reservation',        scope: 'dataset', type: 'text' },
+  { name: 'snapdir',       label: 'Snapshot Dir',       scope: 'dataset', type: 'select', options: ['hidden', 'visible'] },
+  { name: 'sync',          label: 'Sync Mode',          scope: 'dataset', type: 'select', options: ['standard', 'always', 'disabled'] },
 ];
 
 /* ── Settings Popout (slide-in from right) ──────────────────────────────────── */
@@ -709,11 +709,11 @@ function SettingsPopout({
 }) {
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [props, setProps] = useState<Record<string, string>>({});
-  const [edits, setEdits] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [saving,  setSaving]  = useState(false);
+  const [props,   setProps]   = useState<Record<string, string>>({});
+  const [edits,   setEdits]   = useState<Record<string, string>>({});
+  const [error,   setError]   = useState<string | null>(null);
+  const [toast,   setToast]   = useState<{ msg: string; ok: boolean } | null>(null);
 
   useEffect(() => { requestAnimationFrame(() => setVisible(true)); }, []);
 
@@ -764,7 +764,7 @@ function SettingsPopout({
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  const poolPropDefs = POOL_PROP_DEFS.filter(d => d.scope === 'pool');
+  const poolPropDefs    = POOL_PROP_DEFS.filter(d => d.scope === 'pool');
   const datasetPropDefs = POOL_PROP_DEFS.filter(d => d.scope === 'dataset');
 
   const sectionLabel = (text: string) => (
@@ -965,27 +965,27 @@ function PopoutPropRow({
 
 /* ── Raid type helpers ─────────────────────────────────────────────────────────── */
 function raidColor(raidType: string): string {
-  if (raidType.startsWith('Mirror')) return 'var(--success)';
+  if (raidType.startsWith('Mirror'))  return 'var(--success)';
   if (raidType.startsWith('RAIDZ-1')) return 'var(--info)';
   if (raidType.startsWith('RAIDZ-2')) return 'var(--accent)';
   if (raidType.startsWith('RAIDZ-3')) return 'var(--warning)';
-  if (raidType === 'Stripe') return 'var(--danger)';
+  if (raidType === 'Stripe')          return 'var(--danger)';
   return 'var(--text-muted)';
 }
 
 /* ── Main Component ───────────────────────────────────────────────────────────── */
 export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePoolsProps) {
-  const [scrubState, setScrubState] = useState<Record<string, ScrubState>>({});
+  const [scrubState,    setScrubState]    = useState<Record<string, ScrubState>>({});
   const [scrubProgress, setScrubProgress] = useState<Record<string, ScrubProgress>>({});
-  const [expandedPool, setExpandedPool] = useState<string | null>(null);
-  const [poolStatus, setPoolStatus] = useState<Record<string, string>>({});
+  const [expandedPool,  setExpandedPool]  = useState<string | null>(null);
+  const [poolStatus,    setPoolStatus]    = useState<Record<string, string>>({});
   const [statusLoading, setStatusLoading] = useState<string | null>(null);
-  const [showCreate, setShowCreate] = useState(false);
-  const [showImport, setShowImport] = useState(false);
-  const [expandTarget, setExpandTarget] = useState<string | null>(null);
+  const [showCreate,    setShowCreate]    = useState(false);
+  const [showImport,    setShowImport]    = useState(false);
+  const [expandTarget,  setExpandTarget]  = useState<string | null>(null);
   const [replaceTarget, setReplaceTarget] = useState<{ pool: string; preselectedDisk?: string } | null>(null);
-  const [smartTarget, setSmartTarget] = useState<string | null>(null);
-  const [poolVdevs, setPoolVdevs] = useState<Record<string, any[]>>({});
+  const [smartTarget,   setSmartTarget]   = useState<string | null>(null);
+  const [poolVdevs,     setPoolVdevs]     = useState<Record<string, any[]>>({});
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null);
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
@@ -1002,20 +1002,18 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
       if (!poolVdevs[pool.name]) {
         api.getPoolVdevs(pool.name)
           .then(res => setPoolVdevs(prev => ({ ...prev, [pool.name]: res.vdevs || [] })))
-          .catch(() => { });
+          .catch(() => {});
       }
       api.getScrubStatus(pool.name).then(res => {
         if (res.in_progress) {
           setScrubState(s => ({ ...s, [pool.name]: 'running' }));
-          setScrubProgress(p => ({
-            ...p, [pool.name]: {
-              inProgress: true, done: false,
-              progress: res.progress || 0, timeRemaining: res.time_remaining || '', scan: res.scan || '',
-            }
-          }));
+          setScrubProgress(p => ({ ...p, [pool.name]: {
+            inProgress: true, done: false,
+            progress: res.progress || 0, timeRemaining: res.time_remaining || '', scan: res.scan || '',
+          }}));
           startScrubPolling(pool.name);
         }
-      }).catch(() => { });
+      }).catch(() => {});
     });
   }, [pools]);
 
@@ -1050,12 +1048,10 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
     pollTimers.current[poolName] = setInterval(async () => {
       try {
         const res = await api.getScrubStatus(poolName);
-        setScrubProgress(p => ({
-          ...p, [poolName]: {
-            inProgress: res.in_progress, done: res.done,
-            progress: res.progress, timeRemaining: res.time_remaining, scan: res.scan,
-          }
-        }));
+        setScrubProgress(p => ({ ...p, [poolName]: {
+          inProgress: res.in_progress, done: res.done,
+          progress: res.progress, timeRemaining: res.time_remaining, scan: res.scan,
+        }}));
         if (!res.in_progress) {
           clearInterval(pollTimers.current[poolName]);
           delete pollTimers.current[poolName];
@@ -1196,14 +1192,14 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
       {/* Pool cards */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {pools.map(pool => {
-          const state = scrubState[pool.name] || 'idle';
-          const progress = scrubProgress[pool.name];
+          const state      = scrubState[pool.name] || 'idle';
+          const progress   = scrubProgress[pool.name];
           const isExpanded = expandedPool === pool.name;
-          const raidType = getPoolRaidType(pool.name);
-          const disks = getPoolDisks(pool.name);
-          const rc = raidColor(raidType);
-          const capColor = pool.cap > 90 ? 'var(--danger)' : pool.cap > 80 ? 'var(--warning)' : 'var(--accent)';
-          const isOnline = pool.health === 'ONLINE';
+          const raidType   = getPoolRaidType(pool.name);
+          const disks      = getPoolDisks(pool.name);
+          const rc         = raidColor(raidType);
+          const capColor   = pool.cap > 90 ? 'var(--danger)' : pool.cap > 80 ? 'var(--warning)' : 'var(--accent)';
+          const isOnline   = pool.health === 'ONLINE';
 
           return (
             <div key={pool.name} style={{ background: 'var(--bg-surface)', border: `1px solid ${isOnline ? 'var(--border)' : 'rgba(239,68,68,0.3)'}`, borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
@@ -1246,8 +1242,8 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                     >
                       {state === 'running' && <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />}
                       {state === 'success' && <CheckCircle size={13} />}
-                      {state === 'error' && <XCircle size={13} />}
-                      {state === 'idle' && <Activity size={13} />}
+                      {state === 'error'   && <XCircle size={13} />}
+                      {state === 'idle'    && <Activity size={13} />}
                       {state === 'running' ? 'Scrubbing…' : state === 'success' ? 'Done' : state === 'error' ? 'Failed' : 'Scrub'}
                     </button>
                     <button className="btn btn-secondary" onClick={() => setReplaceTarget({ pool: pool.name })} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1288,9 +1284,9 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 0, padding: '0', borderBottom: '1px solid var(--border)' }}>
                 {[
                   { label: 'Fragmentation', value: `${(pool as any).frag ?? 0}%`, color: (pool as any).frag > 20 ? 'var(--warning)' : 'var(--text-primary)' },
-                  { label: 'Dedup Ratio', value: (pool as any).dedup || '1.00x', color: 'var(--text-primary)' },
-                  { label: 'Disks', value: disks.length > 0 ? String(disks.length) : '—', color: 'var(--text-primary)' },
-                  { label: 'RAID Type', value: raidType, color: rc },
+                  { label: 'Dedup Ratio',   value: (pool as any).dedup || '1.00x', color: 'var(--text-primary)' },
+                  { label: 'Disks',         value: disks.length > 0 ? String(disks.length) : '—', color: 'var(--text-primary)' },
+                  { label: 'RAID Type',     value: raidType,                       color: rc },
                 ].map(({ label, value, color }) => (
                   <div key={label} style={{ padding: '14px 20px', borderRight: '1px solid var(--border)', minWidth: 120 }}>
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', fontFamily: 'var(--font-ui)', marginBottom: 4 }}>{label}</div>
@@ -1338,7 +1334,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                   <Expand size={12} /> Expand Pool
                 </button>
                 <button className="btn btn-ghost" onClick={() => handleResilver(pool.name)} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11 }}>
-                  <RotateCcw size={12} /> Resilver (Scrub)
+                  <RotateCcw size={12} /> Resilver
                 </button>
               </div>
 
