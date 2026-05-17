@@ -473,7 +473,7 @@ export default function Notifications() {
               <div>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 500, marginBottom: 6 }}>Target Delivery Channels</label>
                 <select multiple className="input" style={{ width: '100%', height: 100 }} value={newRule.channel_ids.map(String)} onChange={e => {
-                  const selected = Array.from(e.target.selectedOptions, o => parseInt(o.value));
+                  const selected = Array.from(e.target.selectedOptions).map(o => parseInt((o as HTMLOptionElement).value));
                   setNewRule({...newRule, channel_ids: selected});
                 }}>
                   {channels.map(c => (
