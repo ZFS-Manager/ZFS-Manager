@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, Query},
+    extract::{Path, Query, State},
     routing::{get, post},
     Json, Router,
 };
@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::sync::OnceLock;
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::{error::ApiError, executor};
+use crate::{error::ApiError, executor, state::AppState};
 use tracing::{error, info};
 
 fn active_rewrites() -> &'static TokioMutex<HashSet<String>> {
@@ -18,7 +18,7 @@ fn active_rewrites() -> &'static TokioMutex<HashSet<String>> {
     REWRITES.get_or_init(|| TokioMutex::new(HashSet::new()))
 }
 
-pub fn router() -> Router {
+pub fn router(state: AppState) -> Router {
     Router::new()
         // Collection
         .route("/api/v1/datasets", get(list_datasets).post(create_dataset))
@@ -31,6 +31,7 @@ pub fn router() -> Router {
         .route("/api/v1/datasets/space",  get(dataset_space))
         .route("/api/v1/datasets/rewrite", post(rewrite_dataset))
         .route("/api/v1/datasets/rewrite/status", get(rewrite_status))
+        .with_state(state)
 }
 
 // ── Bodies ────────────────────────────────────────────────────────────────────
@@ -234,7 +235,10 @@ async fn dataset_space(Query(q): Query<SpaceQuery>) -> Result<Json<Value>, ApiEr
     })))
 }
 
-async fn rewrite_dataset(Json(body): Json<NameBody>) -> Result<Json<Value>, ApiError> {
+async fn rewrite_dataset(
+    State(state): State<AppState>,
+    Json(body): Json<NameBody>,
+) -> Result<Json<Value>, ApiError> {
     if body.name.is_empty() {
         return Err(ApiError::BadRequest("'name' is required".into()));
     }
@@ -268,23 +272,38 @@ async fn rewrite_dataset(Json(body): Json<NameBody>) -> Result<Json<Value>, ApiE
 
     let ds_name = body.name.clone();
     let mount_path = mountpoint.clone();
+    let state_clone = state.clone();
     
     // Spawn background task running on the mountpoint path!
     tokio::spawn(async move {
         // Try running via nsenter first (to access host mount namespace)
         let res = executor::command("nsenter", &["-t", "1", "-m", "--", "zfs", "rewrite", "-r", &mount_path]).await;
-        if let Err(e) = res {
+        let mut final_res = res;
+        if let Err(ref e) = final_res {
             error!("Failed to run zfs rewrite via nsenter: {:?}. Falling back to direct execution.", e);
             // Fallback: run directly inside the container (if mountpoints are mapped)
-            let fallback_res = executor::command("zfs", &["rewrite", "-r", &mount_path]).await;
-            if let Err(fe) = fallback_res {
-                error!("Failed to run zfs rewrite directly: {:?}", fe);
-            } else {
-                info!("Direct zfs rewrite completed successfully for '{}'", ds_name);
-            }
-        } else {
-            info!("Nsenter zfs rewrite completed successfully for '{}'", ds_name);
+            final_res = executor::command("zfs", &["rewrite", "-r", &mount_path]).await;
         }
+
+        match final_res {
+            Ok(_) => {
+                info!("ZFS rewrite completed successfully for '{}'", ds_name);
+                crate::routes::notifications::trigger_rules_for_event(
+                    &state_clone,
+                    "dataset_rewrite_success",
+                    &format!("Dataset rewrite completed successfully for '{}'", ds_name)
+                ).await;
+            }
+            Err(e) => {
+                error!("ZFS rewrite failed for '{}': {:?}", ds_name, e);
+                crate::routes::notifications::trigger_rules_for_event(
+                    &state_clone,
+                    "dataset_rewrite_failed",
+                    &format!("Dataset rewrite failed for '{}': {:?}", ds_name, e)
+                ).await;
+            }
+        }
+
         let mut lock = active_rewrites().lock().await;
         lock.remove(&ds_name);
     });

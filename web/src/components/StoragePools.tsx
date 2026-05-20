@@ -852,6 +852,23 @@ function SettingsPopout({
           borderTop: '1px solid var(--border)', padding: '14px 20px', flexShrink: 0,
           background: 'var(--bg-elevated)',
         }}>
+          {edits['compression'] && props['compression'] && edits['compression'] !== props['compression'] && (
+            <div style={{
+              background: 'rgba(234,179,8,0.06)',
+              border: '1px solid rgba(234,179,8,0.25)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '10px 12px',
+              marginBottom: 12,
+              display: 'flex',
+              gap: 8,
+              alignItems: 'flex-start'
+            }}>
+              <AlertTriangle size={15} style={{ color: 'var(--warning)', flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 11, color: 'var(--warning)', fontFamily: 'var(--font-ui)', lineHeight: '1.4' }}>
+                <strong>Notice:</strong> Changing compression only affects newly written data. To compress existing files, you should run a <strong>Pool Rewrite (scrub)</strong> after saving.
+              </span>
+            </div>
+          )}
           {pendingCount > 0 && (
             <div style={{ fontSize: 11, color: 'var(--accent)', fontFamily: 'var(--font-ui)', marginBottom: 10 }}>
               {pendingCount} pending change{pendingCount !== 1 ? 's' : ''}
