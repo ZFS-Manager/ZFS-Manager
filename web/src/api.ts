@@ -224,6 +224,8 @@ export const api = {
         write_bw_mb: number;
         read_iops: number;
         write_iops: number;
+        total_read_gb: number;
+        total_write_gb: number;
       }>;
     }>(`/pools/${encodeURIComponent(poolName)}/disks`),
 };

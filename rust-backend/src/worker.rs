@@ -170,10 +170,12 @@ async fn get_pool_iostat_with_disks(pool: &str) -> Option<IostatResult> {
 
         disks.push(DiskMetric {
             name,
-            read_bw_mb:  d_read_bw  / 1_048_576.0,
-            write_bw_mb: d_write_bw / 1_048_576.0,
-            read_iops:   d_read_ops,
-            write_iops:  d_write_ops,
+            read_bw_mb:    d_read_bw  / 1_048_576.0,
+            write_bw_mb:   d_write_bw / 1_048_576.0,
+            read_iops:     d_read_ops,
+            write_iops:    d_write_ops,
+            total_read_gb:  0.0, // filled in after cumulative query
+            total_write_gb: 0.0,
         });
     }
 
@@ -189,6 +191,34 @@ async fn get_pool_iostat_with_disks(pool: &str) -> Option<IostatResult> {
         write_iops:    write_ops,
         disks,
     })
+}
+
+/// Runs `zpool iostat -v -H -p <pool>` (no interval) to get cumulative nread/nwritten per disk.
+/// Returns a map of disk_name → (total_read_gb, total_write_gb).
+async fn get_disk_cumulative_totals(pool: &str) -> std::collections::HashMap<String, (f64, f64)> {
+    let output = tokio::process::Command::new("zpool")
+        .args(["iostat", "-v", "-H", "-p", pool])
+        .output()
+        .await;
+
+    let out = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return std::collections::HashMap::new(),
+    };
+
+    let mut map = std::collections::HashMap::new();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for line in stdout.lines() {
+        let trimmed = line.trim_start();
+        let cols: Vec<&str> = trimmed.splitn(8, '\t').collect();
+        if cols.len() < 7 { continue; }
+        let name = cols[0].trim().to_string();
+        if name.is_empty() || name == pool || is_vdev_group(&name) { continue; }
+        let nread:  f64 = cols[5].parse().unwrap_or(0.0);
+        let nwrite: f64 = cols[6].parse().unwrap_or(0.0);
+        map.insert(name, (nread / 1_073_741_824.0, nwrite / 1_073_741_824.0));
+    }
+    map
 }
 
 async fn push_to_redis(
@@ -332,13 +362,12 @@ async fn enforce_retention(pg: &tokio_postgres::Client) {
     }
 }
 
-/// Fast 100ms loop — no iostat syscall.
+/// Fast 1s loop — no iostat syscall.
 ///
 /// Reads CPU% and ARC from /proc, reads cached IO snapshot from AppState,
 /// then writes a combined payload to `zfs:live:snapshot` in Redis.
-/// This lets the frontend poll at 100ms without hammering ZFS.
 async fn run_live_loop(state: crate::state::AppState) {
-    let mut ticker = interval(Duration::from_millis(100));
+    let mut ticker = interval(Duration::from_secs(1));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut t1 = read_cpu_jiffies();
 
@@ -483,18 +512,31 @@ async fn run_slow_loop(state: crate::state::AppState) {
 
                 // Per-disk data for Redis + API
                 if !res.disks.is_empty() {
-                    new_pool_disks.insert(pool.clone(), res.disks.clone());
+                    // Fetch cumulative totals (fast call, no sleep interval)
+                    let cumulative = get_disk_cumulative_totals(pool).await;
+
+                    let disks_with_totals: Vec<DiskMetric> = res.disks.into_iter().map(|mut d| {
+                        if let Some(&(r, w)) = cumulative.get(&d.name) {
+                            d.total_read_gb  = r;
+                            d.total_write_gb = w;
+                        }
+                        d
+                    }).collect();
+
+                    new_pool_disks.insert(pool.clone(), disks_with_totals.clone());
 
                     // Write per-disk snapshot to Redis (TTL 10 s)
                     if let Some(ref redis_conn) = state.redis {
                         let mut conn = redis_conn.clone();
-                        let disk_json: Vec<serde_json::Value> = res.disks.iter().map(|d| {
+                        let disk_json: Vec<serde_json::Value> = disks_with_totals.iter().map(|d| {
                             serde_json::json!({
-                                "name":         d.name,
-                                "read_bw_mb":   d.read_bw_mb,
-                                "write_bw_mb":  d.write_bw_mb,
-                                "read_iops":    d.read_iops,
-                                "write_iops":   d.write_iops,
+                                "name":           d.name,
+                                "read_bw_mb":     d.read_bw_mb,
+                                "write_bw_mb":    d.write_bw_mb,
+                                "read_iops":      d.read_iops,
+                                "write_iops":     d.write_iops,
+                                "total_read_gb":  d.total_read_gb,
+                                "total_write_gb": d.total_write_gb,
                             })
                         }).collect();
                         let redis_key = format!("zfs:disks:{}:latest", pool);

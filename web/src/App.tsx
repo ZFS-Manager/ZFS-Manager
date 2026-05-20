@@ -264,12 +264,12 @@ export default function App() {
     }).catch(() => {});
   }, [isAuthenticated]);
 
-  // ── 100ms live metrics loop (IO throughput cards) ─────────────────────────
+  // ── 1s live metrics loop (IO throughput cards) ───────────────────────────
   useEffect(() => {
     if (!isAuthenticated) return;
     const iv = setInterval(async () => {
       try { setLiveMetrics(await api.getLiveMetrics()); } catch { /* ignore */ }
-    }, 100);
+    }, 1000);
     return () => clearInterval(iv);
   }, [isAuthenticated]);
 

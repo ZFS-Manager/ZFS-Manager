@@ -16,10 +16,13 @@ pub struct DiskMetric {
     pub write_bw_mb: f64,
     pub read_iops: f64,
     pub write_iops: f64,
+    /// Cumulative bytes read/written since pool import (from `zpool iostat -v -H -p <pool>`).
+    pub total_read_gb: f64,
+    pub total_write_gb: f64,
 }
 
 /// In-memory cache of the most recent iostat measurement.
-/// Written by the 1s slow loop; read lock-free by the 100ms fast loop.
+/// Written by the 1s slow loop; read by the 1s fast loop (no syscall).
 #[derive(Clone, Debug, Default)]
 pub struct CachedIoSnapshot {
     /// Pool-aggregated bandwidth / IOPS (summed across all active pools)
