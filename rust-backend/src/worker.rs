@@ -98,6 +98,8 @@ struct IostatResult {
 
 /// Runs `zpool iostat -v -H -p <pool> 1 2` (takes ~1 s).
 /// Parses both pool-level summary and individual leaf-disk metrics.
+/// The FIRST block contains cumulative nread/nwritten since pool import — used for total_read_gb/total_write_gb.
+/// The SECOND block contains the 1s delta — used for live bandwidth/IOPS rates.
 async fn get_pool_iostat_with_disks(pool: &str) -> Option<IostatResult> {
     let output = tokio::process::Command::new("zpool")
         .args(["iostat", "-v", "-H", "-p", pool, "1", "2"])
@@ -123,22 +125,34 @@ async fn get_pool_iostat_with_disks(pool: &str) -> Option<IostatResult> {
 
     if all_lines.is_empty() { return None; }
 
-    // Find where the second block begins — look for the second occurrence of a line
-    // whose first tab-field exactly matches the pool name (works with or without indentation).
+    // Locate the two pool-level lines (first tab-field == pool name).
     let pool_line_pos = |start: usize| -> Option<usize> {
         all_lines[start..].iter().position(|l| {
             l.split('\t').next().map(|s| s.trim()) == Some(pool)
         }).map(|rel| start + rel)
     };
-    let second_block_start = {
-        let first = pool_line_pos(0)?;
-        pool_line_pos(first + 1).unwrap_or(first) // fall back to first block if only one
-    };
+    let first_block_start  = pool_line_pos(0)?;
+    let second_block_start = pool_line_pos(first_block_start + 1).unwrap_or(first_block_start);
 
+    // ── First block: cumulative nread/nwritten per disk since pool import ──────
+    let first_block = &all_lines[first_block_start..second_block_start];
+    let mut cumulative: std::collections::HashMap<String, (f64, f64)> =
+        std::collections::HashMap::new();
+    for line in first_block.iter().skip(1) {
+        let trimmed = line.trim_start();
+        let cols: Vec<&str> = trimmed.splitn(8, '\t').collect();
+        if cols.len() < 7 { continue; }
+        let name = cols[0].trim().to_string();
+        if name.is_empty() || name == pool || is_vdev_group(&name) { continue; }
+        let nread:  f64 = cols[5].parse().unwrap_or(0.0);
+        let nwrite: f64 = cols[6].parse().unwrap_or(0.0);
+        cumulative.insert(name, (nread / 1_073_741_824.0, nwrite / 1_073_741_824.0));
+    }
+
+    // ── Second block: 1s delta — pool summary + per-disk rates ────────────────
     let second_block = &all_lines[second_block_start..];
     if second_block.is_empty() { return None; }
 
-    // Parse pool-level summary (first line of second block, no indentation)
     let pool_line = second_block[0];
     let cols: Vec<&str> = pool_line.split('\t').collect();
     if cols.len() < 7 { return None; }
@@ -150,10 +164,8 @@ async fn get_pool_iostat_with_disks(pool: &str) -> Option<IostatResult> {
     let read_bw_bytes: f64  = cols[5].parse().unwrap_or(0.0);
     let write_bw_bytes: f64 = cols[6].parse().unwrap_or(0.0);
 
-    // Parse leaf-disk lines. With -H -p flags there is no indentation, so we
-    // distinguish leaf disks by excluding the pool name itself and vdev group prefixes.
     let mut disks: Vec<DiskMetric> = Vec::new();
-    for line in &second_block[1..] {
+    for line in second_block.iter().skip(1) {
         let trimmed = line.trim_start();
         let dcols: Vec<&str> = trimmed.splitn(8, '\t').collect();
         if dcols.len() < 7 { continue; }
@@ -161,21 +173,23 @@ async fn get_pool_iostat_with_disks(pool: &str) -> Option<IostatResult> {
         let name = dcols[0].trim().to_string();
         if name.is_empty() || name == pool || is_vdev_group(&name) { continue; }
 
-        // '-' values (e.g. for spare/cache) appear as '-'; treat as 0
         let parse = |s: &str| -> f64 { s.parse().unwrap_or(0.0) };
         let d_read_ops:  f64 = parse(dcols[3]);
         let d_write_ops: f64 = parse(dcols[4]);
         let d_read_bw:   f64 = parse(dcols[5]);
         let d_write_bw:  f64 = parse(dcols[6]);
 
+        // Cumulative totals come from the first block (nread/nwritten since import).
+        let (total_read_gb, total_write_gb) = cumulative.get(&name).copied().unwrap_or((0.0, 0.0));
+
         disks.push(DiskMetric {
             name,
-            read_bw_mb:    d_read_bw  / 1_048_576.0,
-            write_bw_mb:   d_write_bw / 1_048_576.0,
-            read_iops:     d_read_ops,
-            write_iops:    d_write_ops,
-            total_read_gb:  0.0, // filled in after cumulative query
-            total_write_gb: 0.0,
+            read_bw_mb:  d_read_bw  / 1_048_576.0,
+            write_bw_mb: d_write_bw / 1_048_576.0,
+            read_iops:   d_read_ops,
+            write_iops:  d_write_ops,
+            total_read_gb,
+            total_write_gb,
         });
     }
 
@@ -193,32 +207,28 @@ async fn get_pool_iostat_with_disks(pool: &str) -> Option<IostatResult> {
     })
 }
 
-/// Runs `zpool iostat -v -H -p <pool>` (no interval) to get cumulative nread/nwritten per disk.
-/// Returns a map of disk_name → (total_read_gb, total_write_gb).
-async fn get_disk_cumulative_totals(pool: &str) -> std::collections::HashMap<String, (f64, f64)> {
+/// Queries RAID-aware pool capacity via `zpool list`.
+/// Returns (alloc_gb, free_gb) that account for RAID parity overhead.
+async fn get_pool_capacity(pool: &str) -> Option<(f64, f64)> {
     let output = tokio::process::Command::new("zpool")
-        .args(["iostat", "-v", "-H", "-p", pool])
+        .args(["list", "-H", "-p", "-o", "name,size,alloc,free", pool])
         .output()
         .await;
 
     let out = match output {
         Ok(o) if o.status.success() => o,
-        _ => return std::collections::HashMap::new(),
+        _ => return None,
     };
 
-    let mut map = std::collections::HashMap::new();
     let stdout = String::from_utf8_lossy(&out.stdout);
     for line in stdout.lines() {
-        let trimmed = line.trim_start();
-        let cols: Vec<&str> = trimmed.splitn(8, '\t').collect();
-        if cols.len() < 7 { continue; }
-        let name = cols[0].trim().to_string();
-        if name.is_empty() || name == pool || is_vdev_group(&name) { continue; }
-        let nread:  f64 = cols[5].parse().unwrap_or(0.0);
-        let nwrite: f64 = cols[6].parse().unwrap_or(0.0);
-        map.insert(name, (nread / 1_073_741_824.0, nwrite / 1_073_741_824.0));
+        let cols: Vec<&str> = line.split('\t').collect();
+        if cols.len() < 4 { continue; }
+        let alloc: f64 = cols[2].parse().unwrap_or(0.0);
+        let free:  f64 = cols[3].parse().unwrap_or(0.0);
+        return Some((alloc / 1_073_741_824.0, free / 1_073_741_824.0));
     }
-    map
+    None
 }
 
 async fn push_to_redis(
@@ -499,36 +509,28 @@ async fn run_slow_loop(state: crate::state::AppState) {
                 agg_read_iops   += res.read_iops;
                 agg_write_iops  += res.write_iops;
 
+                // Use RAID-aware alloc/free from zpool list for accurate capacity.
+                let (cap_alloc_gb, cap_free_gb) = get_pool_capacity(pool).await
+                    .unwrap_or((res.alloc_gb, res.free_gb));
+
                 pool_entries.push(serde_json::json!({
-                    "pool_name":    pool,
-                    "read_bw_mb":   res.read_bw_mb,
-                    "write_bw_mb":  res.write_bw_mb,
-                    "iops":         res.iops,
-                    "alloc_gb":     res.alloc_gb,
-                    "free_gb":      res.free_gb,
-                    "cpu_percent":  cpu_for_db,
-                    "arc_hit_ratio":arc_now,
+                    "pool_name":     pool,
+                    "read_bw_mb":    res.read_bw_mb,
+                    "write_bw_mb":   res.write_bw_mb,
+                    "iops":          res.iops,
+                    "alloc_gb":      cap_alloc_gb,
+                    "free_gb":       cap_free_gb,
+                    "cpu_percent":   cpu_for_db,
+                    "arc_hit_ratio": arc_now,
                 }));
 
-                // Per-disk data for Redis + API
+                // Per-disk data for Redis + API (totals already populated from first iostat block)
                 if !res.disks.is_empty() {
-                    // Fetch cumulative totals (fast call, no sleep interval)
-                    let cumulative = get_disk_cumulative_totals(pool).await;
+                    new_pool_disks.insert(pool.clone(), res.disks.clone());
 
-                    let disks_with_totals: Vec<DiskMetric> = res.disks.into_iter().map(|mut d| {
-                        if let Some(&(r, w)) = cumulative.get(&d.name) {
-                            d.total_read_gb  = r;
-                            d.total_write_gb = w;
-                        }
-                        d
-                    }).collect();
-
-                    new_pool_disks.insert(pool.clone(), disks_with_totals.clone());
-
-                    // Write per-disk snapshot to Redis (TTL 10 s)
                     if let Some(ref redis_conn) = state.redis {
                         let mut conn = redis_conn.clone();
-                        let disk_json: Vec<serde_json::Value> = disks_with_totals.iter().map(|d| {
+                        let disk_json: Vec<serde_json::Value> = res.disks.iter().map(|d| {
                             serde_json::json!({
                                 "name":           d.name,
                                 "read_bw_mb":     d.read_bw_mb,
