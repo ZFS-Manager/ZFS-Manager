@@ -62,7 +62,9 @@ async fn get_properties(
         .collect();
 
     if properties.len() == 1 && q.prop.is_some() {
-        Ok(Json(json!({ "property": properties.into_iter().next().unwrap() })))
+        let prop = properties.into_iter().next()
+            .ok_or_else(|| ApiError::NotFound(format!("Property '{}' not found on '{dataset}'", q.prop.as_deref().unwrap_or(""))))?;
+        Ok(Json(json!({ "property": prop })))
     } else {
         Ok(Json(json!({ "dataset": dataset, "properties": properties })))
     }
@@ -75,6 +77,9 @@ async fn set_property(
 ) -> Result<Json<Value>, ApiError> {
     if body.prop.is_empty() || body.value.is_empty() {
         return Err(ApiError::BadRequest("'prop' and 'value' are required".into()));
+    }
+    if body.prop.contains(['=', ' ', '\t', '\n']) {
+        return Err(ApiError::BadRequest("Invalid characters in property name".into()));
     }
     let kv = format!("{}={}", body.prop, body.value);
     executor::zfs(&["set", &kv, &dataset]).await?;

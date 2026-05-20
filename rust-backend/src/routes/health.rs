@@ -32,7 +32,7 @@ async fn health() -> Json<Value> {
     
     // 4. Remote commit hash on their fork
     let mut remote_hash = None;
-    if let Some(ref url) = fork_url {
+    if let Some(ref _url) = fork_url {
         remote_hash = run_git_cmd(&["ls-remote", "origin", &format!("refs/heads/{}", branch)])
             .await
             .and_then(|output| {

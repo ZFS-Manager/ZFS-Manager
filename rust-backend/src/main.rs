@@ -6,9 +6,10 @@ use axum::{
     Router,
 };
 use tower_http::{
-    cors::{Any, CorsLayer},
+    cors::{AllowOrigin, CorsLayer},
     trace::TraceLayer,
 };
+use axum::http::HeaderValue as AxumHeaderValue;
 use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use std::sync::Arc;
@@ -310,7 +311,12 @@ async fn main() {
             init_schema(&client).await;
             let admin_password = {
                 let v = std::env::var("ADMIN_PASSWORD").unwrap_or_default();
-                if v.is_empty() { "admin123".to_string() } else { v }
+                if v.is_empty() {
+                    warn!("ADMIN_PASSWORD not set — using insecure default 'admin123'. Change this immediately via the UI or set ADMIN_PASSWORD.");
+                    "admin123".to_string()
+                } else {
+                    v
+                }
             };
             seed_admin_user(&client, &admin_password).await;
             Some(Arc::new(client))
@@ -361,10 +367,22 @@ async fn main() {
 
     tokio::spawn(worker::run_metrics_worker(app_state.clone()));
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    let cors = {
+        let origin = std::env::var("CORS_ORIGIN").unwrap_or_default();
+        let layer = CorsLayer::new()
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any);
+        if origin.is_empty() {
+            warn!("CORS_ORIGIN not set — allowing all origins. Set CORS_ORIGIN to restrict access.");
+            layer.allow_origin(tower_http::cors::Any)
+        } else {
+            let allowed: Vec<AxumHeaderValue> = origin
+                .split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
+            layer.allow_origin(AllowOrigin::list(allowed))
+        }
+    };
 
     let app = Router::new()
         .merge(routes::health::router())

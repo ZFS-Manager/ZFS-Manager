@@ -60,7 +60,7 @@ async fn login(
 
     // Rate limiting: 10 attempts per minute per IP
     {
-        let mut map = state.rate_limit.lock().unwrap();
+        let mut map = state.rate_limit.lock().unwrap_or_else(|e| e.into_inner());
         let now = std::time::Instant::now();
         let attempts = map.entry(ip.clone()).or_insert_with(Vec::new);
         // Remove attempts older than 60 seconds

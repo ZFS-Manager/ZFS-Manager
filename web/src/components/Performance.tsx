@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -36,19 +36,6 @@ const INTERVALS: { key: Interval; label: string; api: string }[] = [
   { key: '1y',  label: '1Y',  api: '1y'  },
 ];
 
-// Mapping from UI interval to API window for fill-prediction endpoint
-const INTERVAL_TO_WINDOW: Record<Interval, string> = {
-  '1h': '1h', '6h': '6h', '1d': '1d', '7d': '1w', '1m': '1m', '1y': '1y',
-};
-
-const INTERVAL_TO_HISTORY: Record<Interval, { api: string; hoursBack?: number }> = {
-  '1h': { api: '1h' },
-  '6h': { api: '1d', hoursBack: 6 },
-  '1d': { api: '1d' },
-  '7d': { api: '1w' },
-  '1m': { api: '1m' },
-  '1y': { api: '1y' },
-};
 
 const SECONDS_PER_POINT: Record<Interval, number> = {
   '1h': 60, '6h': 300, '1d': 300, '7d': 1800, '1m': 7200, '1y': 86400,
@@ -143,13 +130,6 @@ function transformHistory(metrics: any[], interval: Interval): any[] {
   }));
 }
 
-// Color variable names from the backend to CSS variables
-function colorVar(c: string): string {
-  if (c === 'danger')    return 'var(--danger)';
-  if (c === 'warning')   return 'var(--warning)';
-  if (c === 'secondary') return 'var(--text-secondary)';
-  return 'var(--text-muted)';
-}
 
 // Human-readable "in ~X" countdown from free space and daily write rate
 function fmtTimeRemaining(freeGb: number, rateGbDay: string): string {
@@ -281,7 +261,6 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const [dragOver, setDragOver]         = useState<string | null>(null);
 
   const [interval, setIntervalMode]     = useState<Interval>('1d');
-  const [capacityInterval, setCapacityInterval] = useState<Interval>('1d');
   const [capacityData, setCapacityData] = useState<any[]>([]);
   const [loadingCapacity, setLoadingCapacity] = useState(false);
   const [liveMode, setLiveMode]         = useState(false);
@@ -289,13 +268,6 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [hidden, setHidden]             = useState<Set<string>>(new Set());
   const [smartData, setSmartData]       = useState<any[]>([]);
-
-  // Fill predictions — loaded on mount (longest window) and on interval change
-  const [fillPredictions, setFillPredictions] = useState<any[]>([]);
-  const [fillWindowLabel, setFillWindowLabel] = useState('');
-  const [loadingFill, setLoadingFill]         = useState(false);
-  // Keep last computed predictions to show in live mode
-  const lastFillRef = useRef<{ predictions: any[]; windowLabel: string }>({ predictions: [], windowLabel: '' });
 
   const liveStats = stats;
   const livePoint = liveStats.length > 0 ? liveStats[liveStats.length - 1] : null;
@@ -348,56 +320,19 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     return () => clearInterval(id);
   }, [interval, liveMode]);
 
-  // Fetch capacity history for Pool Capacity widget (independent interval)
+  // Fetch capacity history for Pool Capacity widget — always 24h, poll every 15s
   useEffect(() => {
     setCapacityData([]);
     setLoadingCapacity(true);
-    const apiInt = INTERVALS.find(i => i.key === capacityInterval)?.api ?? capacityInterval;
-    const fetch = () =>
-      api.getMetricsHistory(apiInt)
-        .then(res => setCapacityData(transformHistory(res.metrics, capacityInterval)))
+    const fetchCap = () =>
+      api.getMetricsHistory('1d')
+        .then(res => setCapacityData(transformHistory(res.metrics, '1d')))
         .catch(() => setCapacityData([]))
         .finally(() => setLoadingCapacity(false));
-    fetch();
-    const id = setInterval(fetch, 15_000);
+    fetchCap();
+    const id = setInterval(fetchCap, 15_000);
     return () => clearInterval(id);
-  }, [capacityInterval]);
-
-  // Fetch fill predictions — on mount use auto (longest window), on interval change use that window
-  const fetchFillPredictions = useCallback(async (windowParam: string) => {
-    setLoadingFill(true);
-    try {
-      const res = await api.getFillPrediction(windowParam);
-      if (res.predictions.length > 0) {
-        setFillPredictions(res.predictions);
-        setFillWindowLabel(res.window_used ?? '');
-        lastFillRef.current = { predictions: res.predictions, windowLabel: res.window_used ?? '' };
-      } else if (lastFillRef.current.predictions.length > 0) {
-        // Keep previous data if no result
-        setFillPredictions(lastFillRef.current.predictions);
-        setFillWindowLabel(lastFillRef.current.windowLabel);
-      }
-    } catch {
-      if (lastFillRef.current.predictions.length > 0) {
-        setFillPredictions(lastFillRef.current.predictions);
-        setFillWindowLabel(lastFillRef.current.windowLabel);
-      }
-    } finally {
-      setLoadingFill(false);
-    }
   }, []);
-
-  // Load on mount with auto window
-  useEffect(() => {
-    fetchFillPredictions('auto');
-  }, []);
-
-  // Re-fetch when interval changes (unless in live mode)
-  useEffect(() => {
-    if (liveMode) return;
-    const w = INTERVAL_TO_WINDOW[interval];
-    fetchFillPredictions(w);
-  }, [interval, liveMode]);
 
   useEffect(() => {
     api.getDisks().then(async res => {
@@ -652,67 +587,44 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         );
 
       case 'storage-history': {
-        const capSecPerPt = SECONDS_PER_POINT[capacityInterval];
-        const firstAlloc = capacityData.length > 0 ? (capacityData[0].alloc || 0) : 0;
-        const lastAlloc = capacityData.length > 0 ? (capacityData[capacityData.length - 1].alloc || 0) : 0;
-        const diffGb = lastAlloc - firstAlloc;
-        const timeSec = capacityData.length * capSecPerPt;
-        const rateStr = fmtGrowthRate(diffGb, timeSec);
-        const rateLabel = getIntervalLabel(capacityInterval);
         const capStorageMaxGB = capacityData.reduce((m, d) => Math.max(m, d.alloc || 0, d.free || 0), 0.01);
         const capGbScale = getGbScale(capStorageMaxGB);
         const capHistXAxisProps = { dataKey: 'timestamp' as const, axisLine: false, tickLine: false, tick: AXIS_TICK, minTickGap: 40 };
 
-        const CAPACITY_INTERVALS: { key: Interval; label: string }[] = [
-          { key: '1h', label: '1H' },
-          { key: '6h', label: '6H' },
-          { key: '1d', label: '24H' },
-          { key: '7d', label: '7D' },
-          { key: '1m', label: '1M' },
-          { key: '1y', label: '1Y' },
-        ];
+        // Compute forecast from 24h capacity data:
+        // avgWriteMbPerSec → GB/day → daysUntilFull = freeGb / gbPerDay
+        const lastFreeGb = capacityData.length > 0 ? (capacityData[capacityData.length - 1].free || 0) : 0;
+        const avgWriteMbPerSec = capacityData.length > 0
+          ? capacityData.reduce((s, d) => s + (d.write || 0), 0) / capacityData.length
+          : 0;
+        const avgWriteGbPerDay = (avgWriteMbPerSec / 1024) * 86400;
+
+        let forecastDateStr: string | null = null;
+        let forecastTimeStr: string | null = null;
+        let forecastColor = 'var(--text-muted)';
+        if (avgWriteGbPerDay > 0.000001 && lastFreeGb > 0) {
+          const daysUntilFull = lastFreeGb / avgWriteGbPerDay;
+          const fillDate = new Date(Date.now() + daysUntilFull * 86400_000);
+          const d = fillDate.getDate().toString().padStart(2, '0');
+          const mo = (fillDate.getMonth() + 1).toString().padStart(2, '0');
+          forecastDateStr = `${d}.${mo}.${fillDate.getFullYear()}`;
+          forecastTimeStr = fmtTimeRemaining(lastFreeGb, avgWriteGbPerDay.toString());
+          if (daysUntilFull < 30)  forecastColor = 'var(--danger)';
+          else if (daysUntilFull < 180) forecastColor = 'var(--warning)';
+          else forecastColor = 'var(--success)';
+        }
 
         return (
           <Panel
             title="Pool Capacity"
-            sub="Allocation trends"
+            sub="Allocation trends · Last 24h"
             right={
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <div style={{
-                  display: 'flex', background: 'var(--bg-surface)', border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius)', overflow: 'hidden',
-                }}>
-                  {CAPACITY_INTERVALS.map(({ key, label }) => (
-                    <button
-                      key={key}
-                      onClick={() => setCapacityInterval(key)}
-                      style={{
-                        height: 28, padding: '0 10px',
-                        fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600,
-                        letterSpacing: '0.06em', textTransform: 'uppercase',
-                        borderRight: '1px solid var(--border)', cursor: 'pointer',
-                        transition: 'all 0.12s', border: 'none',
-                        background: capacityInterval === key ? 'var(--accent-dim)' : 'transparent',
-                        color: capacityInterval === key ? 'var(--accent)' : 'var(--text-muted)',
-                        borderBottom: `2px solid ${capacityInterval === key ? 'var(--accent)' : 'transparent'}`,
-                      }}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
                 <Toggle color={C.alloc} label="Used" active={vis('alloc')} onClick={() => toggle('alloc')} />
                 <Toggle color={C.free}  label="Free" active={vis('free')}  onClick={() => toggle('free')}  />
               </div>
             }
           >
-            {/* Growth rate indicator */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)' }}>
-              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Growth rate:</span>
-              <span style={{ fontSize: 13, fontFamily: 'var(--font-mono)', fontWeight: 700, color: diffGb > 0 ? 'var(--warning)' : diffGb < 0 ? 'var(--success)' : 'var(--text-muted)' }}>
-                Ø {rateStr} ({rateLabel})
-              </span>
-            </div>
             <div style={{ height: 240 }}>
               {loadingCapacity ? <Skeleton height={240} /> : (
                 <ResponsiveContainer width="100%" height="100%">
@@ -728,52 +640,17 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
               )}
             </div>
 
-            {/* Fill predictions integrated below chart */}
-            {fillPredictions.length > 0 && (
-              <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border-subtle)' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {fillPredictions.map((p, i) => {
-                    const totalGB = (p.alloc_gb ?? 0) + (p.free_gb ?? 0);
-                    const usedPct = totalGB > 0 ? Math.min(100, (p.alloc_gb / totalGB) * 100) : 0;
-                    const capColor = usedPct > 90 ? 'var(--danger)' : usedPct > 80 ? 'var(--warning)' : 'var(--accent)';
-                    const lineColor = colorVar(p.color);
-                    return (
-                      <div key={i} style={{ paddingBottom: i < fillPredictions.length - 1 ? 12 : 0, borderBottom: i < fillPredictions.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
-                        {/* Pool name */}
-                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
-                          {p.pool}
-                        </div>
-                        {/* Storage bar */}
-                        {totalGB > 0 && (
-                          <div style={{ marginBottom: 6 }}>
-                            <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden', marginBottom: 4 }}>
-                              <div style={{ height: '100%', width: `${usedPct}%`, background: capColor, borderRadius: 9999 }} />
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                              <span>{fmtGB(p.alloc_gb)} used</span>
-                              <span>{fmtGB(p.free_gb)} free of {fmtGB(totalGB)}</span>
-                            </div>
-                          </div>
-                        )}
-                        {/* Line 1: fill date */}
-                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600, color: lineColor }}>
-                          {p.fill_date === '–' ? '–' : `Full on ${p.fill_date}`}
-                        </div>
-                        {/* Line 2: time until full — same color, no fallback window note */}
-                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: lineColor, marginTop: 2 }}>
-                          {fmtTimeRemaining(p.free_gb, p.rate_gb_day)}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-            {!loadingFill && fillPredictions.length === 0 && (
-              <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border-subtle)', textAlign: 'center' }}>
-                <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>No data available</p>
-              </div>
-            )}
+            {/* Forecast line pinned to bottom of card */}
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Forecast:</span>
+              {forecastDateStr && forecastTimeStr ? (
+                <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: forecastColor, fontWeight: 600 }}>
+                  Full on {forecastDateStr} ({forecastTimeStr})
+                </span>
+              ) : (
+                <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>No growth detected</span>
+              )}
+            </div>
           </Panel>
         );
       }

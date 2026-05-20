@@ -3,7 +3,7 @@ import { ZFSDataset, ZFSPool } from '../types';
 import {
   HardDrive, Plus, Lock, Search, Trash2, X,
   Loader2, XCircle, AlertTriangle, Layers,
-  ArrowUpDown, ArrowUp, ArrowDown, Pencil, Save, RotateCcw,
+  ArrowUp, ArrowDown, RotateCcw,
   ChevronRight, ChevronDown, Folder, FolderOpen, Database, Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -59,29 +59,6 @@ function Modal({ title, onClose, children, maxWidth = 440 }: {
 }
 
 
-type QuotaUnit = 'M' | 'G' | 'T';
-
-function parseQuotaValue(quota: string): { num: string; unit: QuotaUnit } {
-  if (!quota || quota === 'none' || quota === '0') return { num: '', unit: 'G' };
-  const m = quota.match(/^(\d+(?:\.\d+)?)([MGT])/i);
-  if (m) return { num: m[1], unit: m[2].toUpperCase() as QuotaUnit };
-  return { num: quota, unit: 'G' };
-}
-
-function buildQuotaString(num: string, unit: QuotaUnit): string {
-  if (!num.trim() || parseFloat(num) === 0) return '';
-  return `${num}${unit}`;
-}
-
-interface PropValues {
-  compression: string;
-  quotaNum: string;
-  quotaUnit: QuotaUnit;
-  atime: string;
-  dedup: string;
-  readonly: string;
-}
-
 const fieldLabel: React.CSSProperties = {
   fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
   color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', display: 'block', marginBottom: 8,
@@ -103,163 +80,6 @@ const fieldSelect: React.CSSProperties = {
   backgroundPosition: 'right 12px center',
   paddingRight: 36,
 };
-
-function PropertiesModal({ dataset, onClose, onSaved }: {
-  dataset: ZFSDataset; onClose: () => void; onSaved: () => void;
-}) {
-  const [props, setProps] = useState<PropValues>({
-    compression: 'lz4', quotaNum: '', quotaUnit: 'G', atime: 'on', dedup: 'off', readonly: 'off',
-  });
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    api.getDatasetProperties(dataset.name, 'compression,quota,atime,dedup,readonly')
-      .then(res => {
-        const map: Record<string, string> = {};
-        for (const p of (res.properties || [])) map[p.name] = p.value;
-        const { num, unit } = parseQuotaValue(map['quota'] || '');
-        setProps({
-          compression: map['compression'] || 'lz4',
-          quotaNum: num,
-          quotaUnit: unit,
-          atime: map['atime'] || 'on',
-          dedup: map['dedup'] || 'off',
-          readonly: map['readonly'] || 'off',
-        });
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [dataset.name]);
-
-  const handleSave = async () => {
-    setSaving(true); setError('');
-    try {
-      const quotaStr = buildQuotaString(props.quotaNum, props.quotaUnit);
-      await Promise.all([
-        api.setDatasetProperty(dataset.name, 'compression', props.compression),
-        api.setDatasetProperty(dataset.name, 'atime', props.atime),
-        api.setDatasetProperty(dataset.name, 'dedup', props.dedup),
-        api.setDatasetProperty(dataset.name, 'readonly', props.readonly),
-        quotaStr
-          ? api.setDatasetProperty(dataset.name, 'quota', quotaStr)
-          : api.setDatasetProperty(dataset.name, 'quota', 'none'),
-      ]);
-      onSaved();
-      onClose();
-    } catch (err: any) {
-      setError(err.message || 'Failed to save properties');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const Toggle = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
-    <div
-      onClick={() => onChange(value === 'on' ? 'off' : 'on')}
-      style={{
-        width: 40, height: 20, borderRadius: 10, position: 'relative',
-        cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0,
-        background: value === 'on' ? 'var(--info)' : 'rgba(255,255,255,0.06)',
-        border: '1px solid rgba(255,255,255,0.1)',
-      }}
-    >
-      <div style={{
-        position: 'absolute', top: 2,
-        left: value === 'on' ? 21 : 2,
-        width: 14, height: 14, borderRadius: 7,
-        background: '#fff', transition: 'left 0.18s',
-      }} />
-    </div>
-  );
-
-  return (
-    <Modal title={`Properties — ${dataset.name.split('/').pop()}`} onClose={onClose} maxWidth={520}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-        <p style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', margin: '-12px 0 0' }}>
-          {dataset.name}
-        </p>
-        {loading ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '24px 0', justifyContent: 'center', color: 'var(--text-muted)' }}>
-            <Loader2 size={16} className="animate-spin" />
-            <span style={{ fontSize: 12, fontFamily: 'var(--font-ui)' }}>Loading properties...</span>
-          </div>
-        ) : (
-          <>
-            <div>
-              <label style={fieldLabel}>Compression</label>
-              <select value={props.compression} onChange={e => setProps(p => ({ ...p, compression: e.target.value }))} style={fieldSelect}>
-                {['off', 'lz4', 'gzip', 'gzip-1', 'gzip-6', 'gzip-9', 'zstd', 'zstd-fast'].map(c => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label style={fieldLabel}>
-                Quota <span style={{ color: 'var(--text-muted)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(empty = no quota)</span>
-              </label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  type="number" min="0" placeholder="e.g. 10"
-                  value={props.quotaNum}
-                  onChange={e => setProps(p => ({ ...p, quotaNum: e.target.value }))}
-                  style={{ ...fieldInput, flex: 1, fontFamily: 'var(--font-mono)' }}
-                />
-                <select value={props.quotaUnit} onChange={e => setProps(p => ({ ...p, quotaUnit: e.target.value as QuotaUnit }))} style={{ ...fieldSelect, width: 80 }}>
-                  <option value="M">MB</option>
-                  <option value="G">GB</option>
-                  <option value="T">TB</option>
-                </select>
-              </div>
-              {props.quotaNum && (
-                <p style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--accent)', marginTop: 4, opacity: 0.7 }}>
-                  → quota={buildQuotaString(props.quotaNum, props.quotaUnit)}
-                </p>
-              )}
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              {([
-                { key: 'atime',    label: 'Access Time',   desc: 'Track last access time' },
-                { key: 'dedup',    label: 'Deduplication', desc: 'Data dedup (CPU-intensive)' },
-                { key: 'readonly', label: 'Read-only',     desc: 'Prevent write access' },
-              ] as { key: keyof PropValues; label: string; desc: string }[]).map(({ key, label, desc }) => (
-                <div key={key} style={{
-                  padding: '12px 14px', borderRadius: 'var(--radius)',
-                  background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-                  gridColumn: key === 'atime' ? 'span 2' : undefined,
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)' }}>{label}</span>
-                    <Toggle value={props[key] as string} onChange={v => setProps(p => ({ ...p, [key]: v }))} />
-                  </div>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', margin: 0 }}>{desc}</p>
-                </div>
-              ))}
-            </div>
-
-            {error && (
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 14px', background: 'var(--danger-dim)', border: '1px solid rgba(239,68,68,0.22)', borderRadius: 'var(--radius)' }}>
-                <XCircle size={14} style={{ color: 'var(--danger)', flexShrink: 0, marginTop: 1 }} />
-                <p style={{ fontSize: 12, color: 'var(--danger)', margin: 0, fontFamily: 'var(--font-ui)' }}>{error}</p>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
-              <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleSave} disabled={saving}>
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                {saving ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </Modal>
-  );
-}
 
 type SortField = 'name' | 'used' | 'avail';
 type SortDir   = 'asc' | 'desc';
@@ -551,8 +371,6 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
   const [deleteError,   setDeleteError]   = useState('');
   const [canForce,      setCanForce]      = useState(false);
   const [deleting,      setDeleting]      = useState(false);
-  const [editTarget,    setEditTarget]    = useState<ZFSDataset | null>(null);
-  const [rewriteTarget, setRewriteTarget] = useState<string | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [rewriteState,  setRewriteState]  = useState<Record<string, boolean>>({});
   const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null);
@@ -782,17 +600,6 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
         )}
       </AnimatePresence>
 
-      {/* Properties Modal */}
-      <AnimatePresence>
-        {editTarget && (
-          <PropertiesModal
-            dataset={editTarget}
-            onClose={() => setEditTarget(null)}
-            onSaved={() => { showToast('Properties saved', 'success'); onRefresh(); }}
-          />
-        )}
-      </AnimatePresence>
-
       {/* Dataset Settings Popout */}
       {settingsOpenFor && (
         <DatasetSettingsPopout
@@ -969,16 +776,7 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
                                   {rewriteState[ds.name] ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
                                 </button>
                                 <button
-                                  title="Properties"
-                                  onClick={() => setEditTarget(ds)}
-                                  style={ACT_BTN}
-                                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--accent)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent-mid)'; }}
-                                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; }}
-                                >
-                                  <Pencil size={12} />
-                                </button>
-                                <button
-                                  title="Pool Settings"
+                                  title="Dataset Settings"
                                   onClick={() => setSettingsOpenFor(ds.name)}
                                   style={ACT_BTN}
                                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'; (e.currentTarget as HTMLElement).style.borderColor = 'rgba(255,255,255,0.15)'; }}
