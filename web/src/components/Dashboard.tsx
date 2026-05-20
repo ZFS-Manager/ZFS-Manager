@@ -50,6 +50,17 @@ function useCounter(target: number, duration = 600) {
   return val;
 }
 
+function fmtBw(v: number): string {
+  if (v >= 1000) return `${(v / 1000).toFixed(2)} GB/s`;
+  if (v >= 1)    return `${v.toFixed(2)} MB/s`;
+  return `${(v * 1024).toFixed(0)} KB/s`;
+}
+function fmtGB(v: number): string {
+  if (v >= 1000) return `${(v / 1000).toFixed(2)} TB`;
+  if (v >= 1)    return `${v.toFixed(2)} GB`;
+  return `${(v * 1024).toFixed(0)} MB`;
+}
+
 function fmtDays(d: number): string {
   if (d < 14)  return `~${Math.round(d)} days`;
   if (d < 90)  return `~${Math.round(d / 7)} weeks`;
@@ -583,6 +594,7 @@ function WidgetTray({ allWidgets, onAdd }: { allWidgets: Array<{ id: string; lab
 const WIDGET_LABELS: Record<string, string> = {
   'stats-row':        'Stats Row',
   'io-activity':      'I/O Activity',
+  'disk-io':          'Physical Disks',
   'pool-cards':       'Pool Cards',
   'system-resources': 'System Resources',
   'activity-log':     'Activity Log',
@@ -603,6 +615,8 @@ export default function Dashboard({
   const [histData1d, setHistData1d] = useState<any[]>([]);
   const [histData7d, setHistData7d] = useState<any[]>([]);
   const [scrubLive,  setScrubLive]  = useState<Record<string, {inProgress: boolean; progress: number; timeRemaining: string}>>({});
+  const [diskMetrics, setDiskMetrics] = useState<Record<string, any[]>>({});
+  const [diskPools,   setDiskPools]   = useState<string[]>([]);
   const [ioShowRead,  setIoShowRead]  = useState(true);
   const [ioShowWrite, setIoShowWrite] = useState(true);
 
@@ -677,6 +691,24 @@ export default function Dashboard({
     return () => clearInterval(id);
   }, [pools.length]);
 
+  // Per-disk metrics every 1s — uses pools prop so no duplicate getPools call
+  useEffect(() => {
+    const names = pools.map(p => p.name).filter(Boolean);
+    if (names.length === 0) { setDiskMetrics({}); setDiskPools([]); return; }
+    setDiskPools(names);
+    const fetchDisks = async () => {
+      try {
+        const results = await Promise.all(names.map(n => api.getPoolDiskMetrics(n)));
+        const map: Record<string, any[]> = {};
+        results.forEach((r, i) => { map[names[i]] = r.disks || []; });
+        setDiskMetrics(map);
+      } catch { /* ignore */ }
+    };
+    fetchDisks();
+    const id = setInterval(fetchDisks, 1_000);
+    return () => clearInterval(id);
+  }, [pools.map(p => p.name).join(',')]);
+
   const ioData      = histData1d.length > 2 ? histData1d : historicalStats;
   const bannerPools = [...pools].filter(p => p.cap >= 80).sort((a, b) => b.cap - a.cap);
 
@@ -743,6 +775,50 @@ export default function Dashboard({
             />
           </div>
         );
+
+      case 'disk-io': {
+        const allDisks = diskPools.flatMap(pool =>
+          (diskMetrics[pool] || []).map((d: any) => ({ ...d, pool }))
+        );
+        return (
+          <Panel title="Physical Disks" sub="Per-disk I/O · 1 s refresh">
+            {allDisks.length === 0 ? (
+              <div style={{ padding: '24px 20px', textAlign: 'center' }}>
+                <HardDrive size={24} style={{ color: 'var(--text-muted)', margin: '0 auto 8px' }} />
+                <p style={{ fontSize: 13, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>
+                  No disk metrics available
+                </p>
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                      {['Pool', 'Disk', 'Read MB/s', 'Write MB/s', 'Read IOPS', 'Write IOPS', 'Total Read', 'Total Written'].map(h => (
+                        <th key={h} style={{ padding: '6px 12px', textAlign: 'left', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allDisks.map((d: any, i: number) => (
+                      <tr key={`${d.pool}-${d.name}`} style={{ borderBottom: '1px solid var(--border-subtle)', background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)' }}>
+                        <td style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>{d.pool}</td>
+                        <td style={{ padding: '8px 12px', color: 'var(--text-primary)', fontWeight: 600 }}>{d.name}</td>
+                        <td style={{ padding: '8px 12px', color: '#38bdf8' }}>{fmtBw(d.read_bw_mb ?? 0)}</td>
+                        <td style={{ padding: '8px 12px', color: '#818cf8' }}>{fmtBw(d.write_bw_mb ?? 0)}</td>
+                        <td style={{ padding: '8px 12px', color: '#38bdf8' }}>{(d.read_iops ?? 0).toFixed(0)}</td>
+                        <td style={{ padding: '8px 12px', color: '#818cf8' }}>{(d.write_iops ?? 0).toFixed(0)}</td>
+                        <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{fmtGB(d.total_read_gb ?? 0)}</td>
+                        <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{fmtGB(d.total_write_gb ?? 0)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
+        );
+      }
 
       case 'io-activity':
         return (
@@ -864,7 +940,7 @@ export default function Dashboard({
       case 'system-resources':
         return (
           <div className="two-col">
-            <Panel title="Live I/O" sub="Current throughput · 5s refresh">
+            <Panel title="Live I/O" sub="Current throughput · 1s refresh">
               <div style={{ display: 'flex' }}>
                 {[
                   { label: '↑ Read',       value: `${currentStats.read.toFixed(1)} MB/s`,  color: '#38bdf8' },

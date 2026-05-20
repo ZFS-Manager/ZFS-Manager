@@ -264,11 +264,26 @@ export default function App() {
     }).catch(() => {});
   }, [isAuthenticated]);
 
-  // ── 1s live metrics loop (IO throughput cards) ───────────────────────────
+  // ── 1s live metrics loop — also feeds session history (replaces getPoolIoStat) ──
   useEffect(() => {
     if (!isAuthenticated) return;
     const iv = setInterval(async () => {
-      try { setLiveMetrics(await api.getLiveMetrics()); } catch { /* ignore */ }
+      try {
+        const m = await api.getLiveMetrics();
+        setLiveMetrics(m);
+        const time = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        setStats(prev => [...prev.slice(-299), {
+          name: time, timestamp: time,
+          read:      m.read_bw_mb,
+          write:     m.write_bw_mb,
+          iops:      (m.read_iops ?? 0) + (m.write_iops ?? 0),
+          readIops:  m.read_iops  ?? 0,
+          writeIops: m.write_iops ?? 0,
+          cpu:       m.cpu_percent    ?? 0,
+          arcHit:    m.arc_hit_ratio  ?? 0,
+          alloc: 0, free: 0,
+        }]);
+      } catch { /* ignore */ }
     }, 1000);
     return () => clearInterval(iv);
   }, [isAuthenticated]);
@@ -355,29 +370,6 @@ export default function App() {
 
       if (mappedPools.length > 0) {
         try {
-          const iostatRes = await api.getPoolIoStat(mappedPools[0].name);
-          if (iostatRes.iostat?.length > 0) {
-            const row = iostatRes.iostat[0];
-            const readBw    = parseFloat(row[5] ?? '0') / 1024 / 1024;
-            const writeBw   = parseFloat(row[6] ?? '0') / 1024 / 1024;
-            const readIops  = parseFloat(row[3] ?? '0');
-            const writeIops = parseFloat(row[4] ?? '0');
-            const iops      = readIops + writeIops;
-            const time = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            setStats(prev => [...prev.slice(-59), {
-              name: time, timestamp: time,
-              read: readBw, write: writeBw, iops, readIops, writeIops,
-              cpu:    statsRes?.cpu_percent ?? statsRes?.cpu_load?.[0] ?? 0,
-              arcHit: statsRes?.arc_hit_ratio ?? 0,
-              alloc:  Number(row[1] ?? 0) / 1e9,
-              free:   Number(row[2] ?? 0) / 1e9,
-            }]);
-          }
-        } catch { /* no iostat */ }
-      }
-
-      if (mappedPools.length > 0) {
-        try {
           const histRes = await api.getPoolHistory(mappedPools[0].name);
           const histLogs: ZFSLog[] = (histRes.history || [])
             .filter((line: string) => line.trim() && !line.startsWith('History'))
@@ -417,11 +409,15 @@ export default function App() {
 
   if (!isAuthenticated) return <Login onLogin={handleLogin} />;
 
-  // Merge live metrics into currentStats for real-time gauge display
+  // currentStats: live values from the 1s polling loop, falling back to last stat point
   const currentStats = {
-    ...(stats[stats.length - 1] || { read: 0, write: 0, iops: 0, readIops: 0, writeIops: 0, cpu: 0, arcHit: 0 }),
-    cpu:    liveMetrics?.cpu_percent    ?? stats[stats.length - 1]?.cpu    ?? 0,
-    arcHit: liveMetrics?.arc_hit_ratio  ?? stats[stats.length - 1]?.arcHit ?? 0,
+    read:      liveMetrics?.read_bw_mb    ?? stats[stats.length - 1]?.read      ?? 0,
+    write:     liveMetrics?.write_bw_mb   ?? stats[stats.length - 1]?.write     ?? 0,
+    iops:      ((liveMetrics?.read_iops ?? 0) + (liveMetrics?.write_iops ?? 0)) || stats[stats.length - 1]?.iops || 0,
+    readIops:  liveMetrics?.read_iops     ?? stats[stats.length - 1]?.readIops  ?? 0,
+    writeIops: liveMetrics?.write_iops    ?? stats[stats.length - 1]?.writeIops ?? 0,
+    cpu:       liveMetrics?.cpu_percent   ?? stats[stats.length - 1]?.cpu       ?? 0,
+    arcHit:    liveMetrics?.arc_hit_ratio ?? stats[stats.length - 1]?.arcHit    ?? 0,
   };
 
   return (
@@ -515,7 +511,7 @@ export default function App() {
                   systemStats={systemStats} logs={logs} loading={loading} historicalStats={stats}
                 />
               } />
-              <Route path="/stats" element={<Performance stats={stats} liveMetrics={liveMetrics} serverTimeOffsetMs={serverTimeOffsetMs} />} />
+              <Route path="/stats" element={<Performance stats={stats} liveMetrics={liveMetrics} serverTimeOffsetMs={serverTimeOffsetMs} pools={pools} />} />
               <Route path="/pools" element={
                 <StoragePools pools={pools} onRefresh={fetchData} zfsVersion={systemStats?.zfs_version} />
               } />

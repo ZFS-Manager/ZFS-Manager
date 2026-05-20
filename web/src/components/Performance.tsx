@@ -19,10 +19,9 @@ interface PerformanceProps {
     write_bw_mb: number;
     read_iops: number;
     write_iops: number;
-    total_read_gb_db?: number;
-    total_write_gb_db?: number;
   } | null;
   serverTimeOffsetMs?: number;
+  pools?: any[];
 }
 
 type Interval = '1h' | '6h' | '1d' | '7d' | '1m' | '1y';
@@ -263,7 +262,7 @@ const WIDGET_LABELS: Record<string, string> = {
   'smart-health':    'SMART / Disk Health',
 };
 
-export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0 }: PerformanceProps) {
+export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0, pools: poolsProp }: PerformanceProps) {
   const { widgets, loaded, setVisible, reorder, toast } = useLayout('performance');
   const [editMode, setEditMode]         = useState(false);
   const [dragFrom, setDragFrom]         = useState<string | null>(null);
@@ -288,12 +287,12 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const chartData = historyData;
   const secPerPt  = SECONDS_PER_POINT[interval];
 
-  // Live timestamps based on server time
+  // Live timestamps based on server time; stats are now updated every 1s
   const liveDataWithTimestamps = useMemo(() => {
     const now = Date.now() + serverTimeOffsetMs;
     const n   = liveStats.length;
     return liveStats.map((s: any, i: number) => {
-      const msAgo = (n - 1 - i) * 5000;
+      const msAgo = (n - 1 - i) * 1000;
       const t     = new Date(now - msAgo);
       return {
         tsMs:     t.getTime(),
@@ -317,36 +316,26 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     return smoothedLiveData;
   }, [liveMode, chartData, smoothedLiveData]);
 
-  // Fetch chart history when interval changes (and not in live mode); poll every 10s
-  useEffect(() => {
-    if (liveMode) return;
-    setHistoryData([]);
-    setLoadingHistory(true);
-    const apiInterval = INTERVALS.find(i => i.key === interval)?.api ?? interval;
-    const fetch = () =>
-      api.getMetricsHistory(apiInterval)
-        .then(res => setHistoryData(transformHistory(res.metrics, interval)))
-        .catch(() => setHistoryData([]))
-        .finally(() => setLoadingHistory(false));
-    fetch();
-    const id = setInterval(fetch, 10_000);
-    return () => clearInterval(id);
-  }, [interval, liveMode]);
-
-  // Fetch capacity history for Pool Capacity widget — follows the selected interval, poll every 15s
+  // Single history fetch shared by IO chart and capacity widget; poll every 10s.
+  // When liveMode=true the IO chart uses live stream data, but capacity still needs history.
   useEffect(() => {
     setCapacityData([]);
     setLoadingCapacity(true);
+    if (!liveMode) { setHistoryData([]); setLoadingHistory(true); }
     const apiInterval = INTERVALS.find(i => i.key === interval)?.api ?? interval;
-    const fetchCap = () =>
+    const fetchHistory = () =>
       api.getMetricsHistory(apiInterval)
-        .then(res => setCapacityData(transformHistory(res.metrics, interval)))
-        .catch(() => setCapacityData([]))
-        .finally(() => setLoadingCapacity(false));
-    fetchCap();
-    const id = setInterval(fetchCap, 15_000);
+        .then(res => {
+          const data = transformHistory(res.metrics, interval);
+          setCapacityData(data);
+          if (!liveMode) setHistoryData(data);
+        })
+        .catch(() => { setCapacityData([]); if (!liveMode) setHistoryData([]); })
+        .finally(() => { setLoadingCapacity(false); setLoadingHistory(false); });
+    fetchHistory();
+    const id = setInterval(fetchHistory, 10_000);
     return () => clearInterval(id);
-  }, [interval]);
+  }, [interval, liveMode]);
 
   useEffect(() => {
     api.getDisks().then(async res => {
@@ -364,13 +353,13 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     }).catch(() => {});
   }, []);
 
-  // Fetch pools then per-disk metrics every 1s
+  // Per-disk metrics every 1s; uses pool names from the prop to avoid a duplicate getPools call
   useEffect(() => {
+    const names = (poolsProp || []).map((p: any) => p.name).filter(Boolean);
+    if (names.length === 0) { setDiskMetrics({}); setDiskPools([]); return; }
+    setDiskPools(names);
     const fetchDisks = async () => {
       try {
-        const poolsRes = await api.getPools();
-        const names = (poolsRes.pools || []).map((p: any) => p.name).filter(Boolean);
-        setDiskPools(names);
         const results = await Promise.all(names.map((n: string) => api.getPoolDiskMetrics(n)));
         const map: Record<string, any[]> = {};
         results.forEach((r, i) => { map[names[i]] = r.disks || []; });
@@ -380,7 +369,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     fetchDisks();
     const id = setInterval(fetchDisks, 1_000);
     return () => clearInterval(id);
-  }, []);
+  }, [(poolsProp || []).map((p: any) => p.name).join(',')]);
 
   const toggle = useCallback((key: string) => {
     setHidden(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });

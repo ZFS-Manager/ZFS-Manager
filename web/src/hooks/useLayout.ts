@@ -10,9 +10,10 @@ const DEFAULTS: Record<string, WidgetConfig[]> = {
   dashboard: [
     { id: 'stats-row',        visible: true, order: 0 },
     { id: 'io-activity',      visible: true, order: 1 },
-    { id: 'pool-cards',       visible: true, order: 2 },
-    { id: 'system-resources', visible: true, order: 3 },
-    { id: 'activity-log',     visible: true, order: 4 },
+    { id: 'disk-io',          visible: true, order: 2 },
+    { id: 'pool-cards',       visible: true, order: 3 },
+    { id: 'system-resources', visible: true, order: 4 },
+    { id: 'activity-log',     visible: true, order: 5 },
   ],
   performance: [
     { id: 'live-gauges',     visible: true, order: 0 },
