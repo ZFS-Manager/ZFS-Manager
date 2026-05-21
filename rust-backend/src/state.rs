@@ -16,7 +16,7 @@ pub struct DiskMetric {
     pub write_bw_mb: f64,
     pub read_iops: f64,
     pub write_iops: f64,
-    /// Cumulative bytes read/written since pool import (from `zpool iostat -v -H -p <pool>`).
+    /// Cumulative bytes read/written accumulated from 1-second deltas since process start.
     pub total_read_gb: f64,
     pub total_write_gb: f64,
 }
@@ -34,6 +34,10 @@ pub struct CachedIoSnapshot {
     pub pool_disks: HashMap<String, Vec<DiskMetric>>,
 }
 
+/// Running per-disk byte totals: pool_name → disk_name → (read_bytes, write_bytes).
+/// Accumulated from 1-second I/O deltas by the slow loop.
+pub type DiskCumulative = Arc<tokio::sync::RwLock<HashMap<String, HashMap<String, (u64, u64)>>>>;
+
 #[derive(Clone)]
 pub struct AppState {
     pub redis: Option<ConnectionManager>,
@@ -41,6 +45,8 @@ pub struct AppState {
     pub rate_limit: RateLimitMap,
     pub total_read_bytes: Arc<AtomicU64>,
     pub total_write_bytes: Arc<AtomicU64>,
-    /// Shared iostat cache between the 100ms fast loop and the 1s slow loop.
+    /// Shared iostat cache between the fast loop and the 1s slow loop.
     pub io_cache: Arc<tokio::sync::RwLock<CachedIoSnapshot>>,
+    /// Per-disk running byte totals used for the "Total Read / Total Write" columns.
+    pub disk_cumulative: DiskCumulative,
 }

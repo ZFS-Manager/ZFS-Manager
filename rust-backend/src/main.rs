@@ -391,6 +391,7 @@ async fn main() {
         total_read_bytes: Arc::new(AtomicU64::new(init_read)),
         total_write_bytes: Arc::new(AtomicU64::new(init_write)),
         io_cache: Arc::new(tokio::sync::RwLock::new(state::CachedIoSnapshot::default())),
+        disk_cumulative: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     };
 
     tokio::spawn(worker::run_metrics_worker(app_state.clone()));

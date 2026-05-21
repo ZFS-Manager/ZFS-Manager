@@ -262,22 +262,9 @@ async fn get_pool_iostat_with_disks(pool: &str) -> Option<IostatResult> {
     let first_block_start  = pool_line_pos(0)?;
     let second_block_start = pool_line_pos(first_block_start + 1).unwrap_or(first_block_start);
 
-    // ── First block: cumulative nread/nwritten per disk since pool import ──────
-    let first_block = &all_lines[first_block_start..second_block_start];
-    let mut cumulative: std::collections::HashMap<String, (f64, f64)> =
-        std::collections::HashMap::new();
-    for line in first_block.iter().skip(1) {
-        let trimmed = line.trim_start();
-        let cols: Vec<&str> = trimmed.splitn(8, '\t').collect();
-        if cols.len() < 7 { continue; }
-        let name = cols[0].trim().to_string();
-        if name.is_empty() || name == pool || is_vdev_group(&name) { continue; }
-        let nread:  f64 = cols[5].parse().unwrap_or(0.0);
-        let nwrite: f64 = cols[6].parse().unwrap_or(0.0);
-        cumulative.insert(name, (nread / 1_073_741_824.0, nwrite / 1_073_741_824.0));
-    }
-
     // ── Second block: 1s delta — pool summary + per-disk rates ────────────────
+    // (The first block shows average bandwidth RATES since pool import, not
+    // cumulative byte totals — per-disk totals are accumulated in run_slow_loop.)
     let second_block = &all_lines[second_block_start..];
     if second_block.is_empty() { return None; }
 
@@ -307,17 +294,16 @@ async fn get_pool_iostat_with_disks(pool: &str) -> Option<IostatResult> {
         let d_read_bw:   f64 = parse(dcols[5]);
         let d_write_bw:  f64 = parse(dcols[6]);
 
-        // Cumulative totals come from the first block (nread/nwritten since import).
-        let (total_read_gb, total_write_gb) = cumulative.get(&name).copied().unwrap_or((0.0, 0.0));
-
+        // total_read_gb / total_write_gb are filled by run_slow_loop from the
+        // per-disk accumulator; leave at 0.0 here.
         disks.push(DiskMetric {
             name,
-            read_bw_mb:  d_read_bw  / 1_048_576.0,
-            write_bw_mb: d_write_bw / 1_048_576.0,
-            read_iops:   d_read_ops,
-            write_iops:  d_write_ops,
-            total_read_gb,
-            total_write_gb,
+            read_bw_mb:    d_read_bw  / 1_048_576.0,
+            write_bw_mb:   d_write_bw / 1_048_576.0,
+            read_iops:     d_read_ops,
+            write_iops:    d_write_ops,
+            total_read_gb:  0.0,
+            total_write_gb: 0.0,
         });
     }
 
@@ -652,13 +638,35 @@ async fn run_slow_loop(state: crate::state::AppState) {
                     "arc_hit_ratio": arc_now,
                 }));
 
-                // Per-disk data for Redis + API (totals already populated from first iostat block)
-                if !res.disks.is_empty() {
-                    new_pool_disks.insert(pool.clone(), res.disks.clone());
+                // Accumulate per-disk 1-second I/O deltas → running total for the UI.
+                let updated_disks: Vec<DiskMetric> = if res.disks.is_empty() {
+                    vec![]
+                } else {
+                    let mut acc = state.disk_cumulative.write().await;
+                    let pool_acc = acc.entry(pool.clone()).or_default();
+                    res.disks.iter().map(|d| {
+                        let entry = pool_acc.entry(d.name.clone()).or_insert((0u64, 0u64));
+                        entry.0 = entry.0.saturating_add((d.read_bw_mb  * 1_048_576.0) as u64);
+                        entry.1 = entry.1.saturating_add((d.write_bw_mb * 1_048_576.0) as u64);
+                        DiskMetric {
+                            name:           d.name.clone(),
+                            read_bw_mb:     d.read_bw_mb,
+                            write_bw_mb:    d.write_bw_mb,
+                            read_iops:      d.read_iops,
+                            write_iops:     d.write_iops,
+                            total_read_gb:  entry.0 as f64 / 1_073_741_824.0,
+                            total_write_gb: entry.1 as f64 / 1_073_741_824.0,
+                        }
+                    }).collect()
+                };
+
+                // Per-disk data for Redis + API
+                if !updated_disks.is_empty() {
+                    new_pool_disks.insert(pool.clone(), updated_disks.clone());
 
                     if let Some(ref redis_conn) = state.redis {
                         let mut conn = redis_conn.clone();
-                        let disk_json: Vec<serde_json::Value> = res.disks.iter().map(|d| {
+                        let disk_json: Vec<serde_json::Value> = updated_disks.iter().map(|d| {
                             serde_json::json!({
                                 "name":           d.name,
                                 "read_bw_mb":     d.read_bw_mb,

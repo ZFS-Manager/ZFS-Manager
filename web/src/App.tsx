@@ -321,21 +321,26 @@ export default function App() {
       if (statsRes) setSystemStats(statsRes);
       if (healthRes) setHealthData(healthRes);
 
-      const mappedPools: ZFSPool[] = (poolsRes.pools || []).map((p: any) => ({
-        name: p.name,
-        size: formatBytes(p.size, 2),
-        alloc: formatBytes(p.alloc, 2),
-        free: formatBytes(p.free, 2),
-        cap: parseInt(p.cap) || 0,
-        frag: parseInt(p.frag) || 0,
-        dedup: p.dedup || '1.00x',
-        health: p.health,
-        raidType: 'ZFS Pool',
-        vdevs: [],
-        available_bytes: Number(p.available_bytes) || 0,
-        used_bytes: Number(p.used_bytes) || 0,
-        _raw: p,
-      }));
+      const mappedPools: ZFSPool[] = (poolsRes.pools || []).map((p: any) => {
+        const avail = Number(p.available_bytes) || 0;
+        const used  = Number(p.used_bytes)      || 0;
+        return {
+          name: p.name,
+          // Use zfs-get available/used (RAID-aware) for displayed capacity.
+          size:  formatBytes(avail + used, 2),
+          alloc: formatBytes(used,         2),
+          free:  formatBytes(avail,        2),
+          cap:   parseInt(p.cap)  || 0,
+          frag:  parseInt(p.frag) || 0,
+          dedup: p.dedup || '1.00x',
+          health: p.health,
+          raidType: 'ZFS Pool',
+          vdevs: [],
+          available_bytes: avail,
+          used_bytes:      used,
+          _raw: p,
+        };
+      });
 
       const logicalCap  = mappedPools.reduce((a, p) => a + p.used_bytes + p.available_bytes, 0);
       const logicalUsed = mappedPools.reduce((a, p) => a + p.used_bytes, 0);
