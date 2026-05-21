@@ -217,8 +217,9 @@ async fn get_live_metrics(
 
 /// GET /api/v1/pools/:pool/disks
 ///
-/// Returns the most recent per-disk I/O metrics for every leaf vdev in the pool,
-/// read from the Redis key written by the 1s slow loop.
+/// Returns the most recent per-disk I/O metrics for every leaf vdev in the pool.
+/// Primary source: Redis key written every 1s by the slow loop.
+/// Fallback: in-memory cache (always available, never empty after first collection).
 async fn get_pool_disk_metrics(
     State(state): State<AppState>,
     Path(pool): Path<String>,
@@ -233,7 +234,24 @@ async fn get_pool_disk_metrics(
             }
         }
     }
-    Json(json!({ "pool": pool, "disks": [] }))
+
+    // Fallback to in-memory cache when Redis is unavailable or key expired
+    let disks: Vec<Value> = {
+        let cache = state.io_cache.read().await;
+        cache.pool_disks.get(&pool).map(|disks| {
+            disks.iter().map(|d| json!({
+                "name":           d.name,
+                "read_bw_mb":     d.read_bw_mb,
+                "write_bw_mb":    d.write_bw_mb,
+                "read_iops":      d.read_iops,
+                "write_iops":     d.write_iops,
+                "total_read_gb":  d.total_read_gb,
+                "total_write_gb": d.total_write_gb,
+            })).collect()
+        }).unwrap_or_default()
+    };
+
+    Json(json!({ "pool": pool, "disks": disks }))
 }
 
 // ── Fill prediction ───────────────────────────────────────────────────────────

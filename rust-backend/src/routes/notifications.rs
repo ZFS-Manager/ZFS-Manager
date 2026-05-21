@@ -307,17 +307,41 @@ pub async fn trigger_rules_for_event(state: &AppState, trigger_type: &str, messa
         Err(_) => return,
     };
 
+    if matched_rows.is_empty() { return; }
+
+    // Collect all channel IDs across all matched rules, then batch-fetch in one query
+    let all_channel_ids: Vec<i32> = {
+        let mut seen = std::collections::HashSet::new();
+        for row in &matched_rows {
+            let ids: Vec<i32> = row.get(2);
+            seen.extend(ids);
+        }
+        seen.into_iter().collect()
+    };
+
+    let ch_map: std::collections::HashMap<i32, (String, serde_json::Value)> =
+        if all_channel_ids.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            match pg.query(
+                "SELECT id, type, config FROM notification_channels WHERE id = ANY($1)",
+                &[&all_channel_ids],
+            ).await {
+                Ok(ch_rows) => ch_rows.iter().map(|r| {
+                    (r.get::<_, i32>(0), (r.get::<_, String>(1), r.get::<_, serde_json::Value>(2)))
+                }).collect(),
+                Err(_) => return,
+            }
+        };
+
     for row in matched_rows {
         let rule_name: String = row.get(1);
         let channel_ids: Vec<i32> = row.get(2);
+        let full_msg = format!("[Rule: {}] {}", rule_name, message);
 
         for channel_id in channel_ids {
-            if let Ok(ch_row) = pg.query_one("SELECT type, config FROM notification_channels WHERE id = $1", &[&channel_id]).await {
-                let ctype: String = ch_row.get(0);
-                let config: serde_json::Value = ch_row.get(1);
-
-                let full_msg = format!("[Rule: {}] {}", rule_name, message);
-                let _ = dispatch_notification(&ctype, &config, &full_msg).await;
+            if let Some((ctype, config)) = ch_map.get(&channel_id) {
+                let _ = dispatch_notification(ctype, config, &full_msg).await;
             }
         }
     }

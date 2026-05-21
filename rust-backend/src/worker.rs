@@ -6,10 +6,138 @@ use tracing::{info, warn};
 use crate::state::DiskMetric;
 
 async fn check_and_trigger_notifications(state: &crate::state::AppState) {
-    let _pg = match &state.pg {
+    let pg = match &state.pg {
         Some(pg) => pg,
         None => return,
     };
+
+    let (read_bw_mb, write_bw_mb, read_iops, write_iops) = {
+        let cache = state.io_cache.read().await;
+        (cache.read_bw_mb, cache.write_bw_mb, cache.read_iops, cache.write_iops)
+    };
+
+    let live_types: Vec<String> = ["iops_high", "read_iops_high", "write_iops_high",
+                                    "read_bw_high", "write_bw_high", "capacity"]
+        .iter().map(|s| s.to_string()).collect();
+
+    let rows = match pg.query(
+        "SELECT name, trigger_type, threshold_value, channel_ids \
+         FROM notification_rules WHERE is_active = true AND trigger_type = ANY($1)",
+        &[&live_types],
+    ).await {
+        Ok(r) => r,
+        Err(e) => { warn!("Notification rule query failed: {e}"); return; }
+    };
+
+    if rows.is_empty() { return; }
+
+    // Batch-fetch all referenced channels once (fixes N+1)
+    let all_channel_ids: Vec<i32> = {
+        let mut seen = std::collections::HashSet::new();
+        for row in &rows {
+            let ids: Vec<i32> = row.get(3);
+            seen.extend(ids);
+        }
+        seen.into_iter().collect()
+    };
+
+    let ch_map: std::collections::HashMap<i32, (String, serde_json::Value)> =
+        if all_channel_ids.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            match pg.query(
+                "SELECT id, type, config FROM notification_channels WHERE id = ANY($1)",
+                &[&all_channel_ids],
+            ).await {
+                Ok(ch_rows) => ch_rows.iter().map(|r| {
+                    (r.get::<_, i32>(0), (r.get::<_, String>(1), r.get::<_, serde_json::Value>(2)))
+                }).collect(),
+                Err(e) => { warn!("Channel batch query failed: {e}"); return; }
+            }
+        };
+
+    // Fetch pool capacity once if any capacity rules exist
+    let has_capacity = rows.iter().any(|r| { let tt: String = r.get(1); tt == "capacity" });
+    let pool_caps: Vec<(String, f64, f64)> = if has_capacity {
+        let mut caps = Vec::new();
+        for pool in get_pool_names().await {
+            if let Some((alloc, free)) = get_pool_capacity(&pool).await {
+                caps.push((pool, alloc, free));
+            }
+        }
+        caps
+    } else {
+        vec![]
+    };
+
+    for row in &rows {
+        let rule_name: String     = row.get(0);
+        let trigger_type: String  = row.get(1);
+        let threshold: Option<f64> = row.get(2);
+        let channel_ids: Vec<i32> = row.get(3);
+
+        let threshold = match threshold { Some(t) => t, None => continue };
+
+        // Build (trigger_type_str, message) pairs for each threshold breach
+        let alerts: Vec<(String, String)> = match trigger_type.as_str() {
+            "iops_high" => {
+                let v = read_iops + write_iops;
+                if v >= threshold {
+                    vec![(trigger_type.clone(), format!("Total IOPS {:.0} exceeds threshold {:.0}", v, threshold))]
+                } else { vec![] }
+            }
+            "read_iops_high" => {
+                if read_iops >= threshold {
+                    vec![(trigger_type.clone(), format!("Read IOPS {:.0} exceeds threshold {:.0}", read_iops, threshold))]
+                } else { vec![] }
+            }
+            "write_iops_high" => {
+                if write_iops >= threshold {
+                    vec![(trigger_type.clone(), format!("Write IOPS {:.0} exceeds threshold {:.0}", write_iops, threshold))]
+                } else { vec![] }
+            }
+            "read_bw_high" => {
+                if read_bw_mb >= threshold {
+                    vec![(trigger_type.clone(), format!("Read bandwidth {:.1} MB/s exceeds threshold {:.1} MB/s", read_bw_mb, threshold))]
+                } else { vec![] }
+            }
+            "write_bw_high" => {
+                if write_bw_mb >= threshold {
+                    vec![(trigger_type.clone(), format!("Write bandwidth {:.1} MB/s exceeds threshold {:.1} MB/s", write_bw_mb, threshold))]
+                } else { vec![] }
+            }
+            "capacity" => {
+                pool_caps.iter().filter_map(|(pool, alloc, free)| {
+                    let total = alloc + free;
+                    if total > 0.0 {
+                        let used_pct = (alloc / total) * 100.0;
+                        if used_pct >= threshold {
+                            Some((trigger_type.clone(),
+                                format!("Pool '{}' at {:.1}% capacity (threshold: {:.0}%)", pool, used_pct, threshold)))
+                        } else { None }
+                    } else { None }
+                }).collect()
+            }
+            _ => vec![],
+        };
+
+        for (ttype, msg) in alerts {
+            let full_msg = format!("[Rule: {}] {}", rule_name, msg);
+            let level = "warning";
+            let _ = pg.execute(
+                "INSERT INTO notifications (type, message, level) VALUES ($1, $2, $3)",
+                &[&ttype, &full_msg, &level],
+            ).await;
+
+            for ch_id in &channel_ids {
+                if let Some((ctype, config)) = ch_map.get(ch_id) {
+                    if let Err(e) = crate::routes::notifications::dispatch_notification(ctype, config, &full_msg).await {
+                        warn!("Notification dispatch failed for channel {ch_id}: {e}");
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn read_cpu_jiffies() -> (u64, u64) {
