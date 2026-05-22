@@ -223,7 +223,34 @@ fn is_vdev_group(name: &str) -> bool {
 ///   3. lsblk -no name {resolved_path} → first line.
 ///   4. Strip well-known ID prefixes (scsi-, ata-, wwn-, usb-) → take remainder up to first '-' … → last dash segment.
 ///   5. Final fallback: last path component of the name.
-async fn resolve_disk_short_name(name: &str) -> String {
+/// Strips trailing partition digits from disk names when the suffix is unambiguous.
+/// sdc1 → sdc  only when no sdc2 (or sdc3, …) is present in the same list.
+/// If both sdc1 and sdc2 exist the full names are kept.
+fn strip_partition_suffix(disks: &mut Vec<crate::state::DiskMetric>) {
+    // Collect candidate base names (names that end in digits)
+    let bases: Vec<String> = disks.iter().filter_map(|d| {
+        let b = d.name.trim_end_matches(|c: char| c.is_ascii_digit());
+        if b.len() < d.name.len() { Some(b.to_string()) } else { None }
+    }).collect();
+
+    // Count how many disks share each base
+    let mut base_count: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for b in &bases {
+        *base_count.entry(b.as_str()).or_insert(0) += 1;
+    }
+
+    for disk in disks.iter_mut() {
+        let base = disk.name.trim_end_matches(|c: char| c.is_ascii_digit());
+        if base.len() < disk.name.len() {
+            // Only strip when this base is unique (only one partition number present)
+            if base_count.get(base).copied().unwrap_or(0) == 1 {
+                disk.name = base.to_string();
+            }
+        }
+    }
+}
+
+pub async fn resolve_disk_short_name(name: &str) -> String {
     // Already a short name (no '/', no ID-style prefix)?
     if !name.contains('/')
         && !name.starts_with("scsi-")
@@ -385,6 +412,9 @@ async fn get_pool_iostat_with_disks(pool: &str) -> Option<IostatResult> {
             total_write_gb: 0.0,
         });
     }
+
+    // Strip partition suffixes when unambiguous: sdc1 → sdc only if no sdc2 exists.
+    strip_partition_suffix(&mut disks);
 
     Some(IostatResult {
         alloc_gb:      alloc_bytes  / 1_073_741_824.0,
@@ -633,12 +663,12 @@ async fn run_live_loop(state: crate::state::AppState) {
 ///   - Every tick (1 s): iostat syscall, update in-memory cache, accumulate byte totals,
 ///     push to Redis pending + per-disk key, update zfs:metrics:latest for charts.
 ///   - Every 6th tick (~6 s): batch-sync Redis pending → PostgreSQL.
-///   - Every 15 s: persist cumulative totals to global_stats.
+///   - Every 60 s: persist cumulative totals to global_stats.
 ///   - Every 3600 s: prune old rows, check table size.
 async fn run_slow_loop(state: crate::state::AppState) {
     const KEY_PENDING: &str = "zfs:metrics:pending";
     const KEY_LATEST:  &str = "zfs:metrics:latest";
-    const TOTALS_INTERVAL:    Duration = Duration::from_secs(15);
+    const TOTALS_INTERVAL:    Duration = Duration::from_secs(60);
     const RETENTION_INTERVAL: Duration = Duration::from_secs(3600);
     // Each iostat call measures 1 s of bandwidth; the loop runs every 1 s.
     const TICK_SECS: f64 = 1.0;
@@ -994,30 +1024,56 @@ pub async fn warm_redis_from_postgres(state: &crate::state::AppState) {
         info!("Startup: seeded zfs:metrics:latest from PostgreSQL");
     }
 
-    // 3. Seed per-disk Redis keys from the persisted cumulative totals so that
-    //    the Physical Disks table shows correct all-time values on first load.
+    // 3. Seed per-disk Redis keys AND in-memory io_cache.pool_disks from persisted
+    //    cumulative totals so the Physical Disks table shows correct all-time values
+    //    immediately — both the Redis path and the in-memory fallback path are populated.
     {
         let acc = state.disk_cumulative.read().await;
+        let mut cache_pool_disks: std::collections::HashMap<String, Vec<crate::state::DiskMetric>> =
+            std::collections::HashMap::new();
+
         for (pool, disks) in acc.iter() {
-            let disk_list: Vec<serde_json::Value> = disks.iter().map(|(name, (r, w))| {
-                serde_json::json!({
-                    "name":           name,
-                    "read_bw_mb":     0.0,
-                    "write_bw_mb":    0.0,
-                    "read_iops":      0.0,
-                    "write_iops":     0.0,
-                    "total_read_gb":  *r as f64 / 1_073_741_824.0,
-                    "total_write_gb": *w as f64 / 1_073_741_824.0,
-                })
+            let metrics: Vec<crate::state::DiskMetric> = disks.iter().map(|(name, (r, w))| {
+                crate::state::DiskMetric {
+                    name:           name.clone(),
+                    read_bw_mb:     0.0,
+                    write_bw_mb:    0.0,
+                    read_iops:      0.0,
+                    write_iops:     0.0,
+                    total_read_gb:  *r as f64 / 1_073_741_824.0,
+                    total_write_gb: *w as f64 / 1_073_741_824.0,
+                }
             }).collect();
+
+            // Redis seed
+            let disk_list: Vec<serde_json::Value> = metrics.iter().map(|m| serde_json::json!({
+                "name":           m.name,
+                "read_bw_mb":     0.0,
+                "write_bw_mb":    0.0,
+                "read_iops":      0.0,
+                "write_iops":     0.0,
+                "total_read_gb":  m.total_read_gb,
+                "total_write_gb": m.total_write_gb,
+            })).collect();
             if let Ok(json_str) = serde_json::to_string(&disk_list) {
                 let key = format!("zfs:disks:{}:latest", pool);
                 let _: redis::RedisResult<()> = conn.set_ex(&key, json_str, 30u64).await;
             }
+
+            cache_pool_disks.insert(pool.clone(), metrics);
         }
+
         let n: usize = acc.values().map(|m| m.len()).sum();
+        drop(acc);
+
+        // Seed the in-memory io_cache so the fallback API path also returns non-zero totals.
+        if !cache_pool_disks.is_empty() {
+            let mut cache = state.io_cache.write().await;
+            cache.pool_disks = cache_pool_disks;
+        }
+
         if n > 0 {
-            info!("Startup: seeded Redis per-disk keys ({n} disks across {} pools)", acc.len());
+            info!("Startup: seeded Redis + io_cache per-disk keys ({n} disks across several pools)");
         }
     }
 }

@@ -13,6 +13,7 @@ import { formatBytes, api } from '../api';
 import { useLayout } from '../hooks/useLayout';
 import WidgetShell from './WidgetShell';
 import PageTransition from './PageTransition';
+import PhysicalDisksTable from './PhysicalDisksTable';
 
 interface DashboardProps {
   pools: ZFSPool[];
@@ -777,49 +778,12 @@ export default function Dashboard({
           </div>
         );
 
-      case 'disk-io': {
-        const allDisks = diskPools.flatMap(pool =>
-          (diskMetrics[pool] || []).map((d: any) => ({ ...d, pool }))
-        );
+      case 'disk-io':
         return (
           <Panel title="Physical Disks" sub="Per-disk I/O · 1 s refresh">
-            {allDisks.length === 0 ? (
-              <div style={{ padding: '24px 20px', textAlign: 'center' }}>
-                <HardDrive size={24} style={{ color: 'var(--text-muted)', margin: '0 auto 8px' }} />
-                <p style={{ fontSize: 13, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>
-                  No disk metrics available
-                </p>
-              </div>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                      {['Pool', 'Disk', 'Read MB/s', 'Write MB/s', 'Read IOPS', 'Write IOPS', 'Total Read', 'Total Written'].map(h => (
-                        <th key={h} style={{ padding: '6px 12px', textAlign: 'left', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {allDisks.map((d: any, i: number) => (
-                      <tr key={`${d.pool}-${d.name}`} style={{ borderBottom: '1px solid var(--border-subtle)', background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)' }}>
-                        <td style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>{d.pool}</td>
-                        <td style={{ padding: '8px 12px', color: 'var(--text-primary)', fontWeight: 600 }}>{d.name}</td>
-                        <td style={{ padding: '8px 12px', color: '#38bdf8' }}>{fmtBw(d.read_bw_mb ?? 0)}</td>
-                        <td style={{ padding: '8px 12px', color: '#818cf8' }}>{fmtBw(d.write_bw_mb ?? 0)}</td>
-                        <td style={{ padding: '8px 12px', color: '#38bdf8' }}>{(d.read_iops ?? 0).toFixed(0)}</td>
-                        <td style={{ padding: '8px 12px', color: '#818cf8' }}>{(d.write_iops ?? 0).toFixed(0)}</td>
-                        <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{fmtGB(d.total_read_gb ?? 0)}</td>
-                        <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{fmtGB(d.total_write_gb ?? 0)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <PhysicalDisksTable diskPools={diskPools} diskMetrics={diskMetrics} />
           </Panel>
         );
-      }
 
       case 'io-activity':
         return (

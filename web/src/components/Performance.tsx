@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { motion } from 'framer-motion';
 import {
   AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -9,6 +8,7 @@ import { api } from '../api';
 import { useLayout } from '../hooks/useLayout';
 import WidgetShell from './WidgetShell';
 import PageTransition from './PageTransition';
+import PhysicalDisksTable from './PhysicalDisksTable';
 
 interface PerformanceProps {
   stats: any[];
@@ -90,7 +90,7 @@ const TOOLTIP_STYLE = {
   itemStyle: { fontWeight: 600 },
 };
 const AXIS_TICK  = { fill: '#52525b', fontSize: 10 };
-const GRID_PROPS = { strokeDasharray: '1 6' as const, stroke: 'rgba(255,255,255,0.04)', vertical: false };
+const GRID_PROPS = { strokeDasharray: '3 6' as const, stroke: 'rgba(255,255,255,0.15)', vertical: false };
 
 function getBwScale(maxMB: number): { unit: string; fmt: (v: number) => string } {
   if (maxMB >= 1000) return { unit: 'GB/s', fmt: v => `${(v / 1000).toFixed(1)}\u00A0GB/s` };
@@ -544,55 +544,12 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         );
       }
 
-      case 'disk-io': {
-        const allDisks = diskPools.flatMap(pool =>
-          (diskMetrics[pool] || []).map((d: any) => ({ ...d, pool }))
-        );
+      case 'disk-io':
         return (
           <Panel title="Physical Disks" sub="Per-disk I/O · 1 s refresh">
-            {allDisks.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '32px 0' }}>
-                <HardDrive size={24} style={{ color: 'var(--text-muted)', margin: '0 auto 8px' }} />
-                <p style={{ fontSize: 13, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>
-                  No disk metrics available
-                </p>
-              </div>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                      {['Pool', 'Disk', 'Read', 'Write', 'Read IOPS', 'Write IOPS', 'Total Read', 'Total Written'].map(h => (
-                        <th key={h} style={{ padding: '6px 12px', textAlign: 'left', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {allDisks.map((d: any, i: number) => (
-                      <motion.tr
-                        key={`${d.pool}-${d.name}`}
-                        initial={animEnabled ? { opacity: 0, y: -8 } : false}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.18, delay: Math.min(i, 20) * 30 / 1000 }}
-                        style={{ borderBottom: '1px solid var(--border-subtle)', background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)' }}
-                      >
-                        <td style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>{d.pool}</td>
-                        <td style={{ padding: '8px 12px', color: 'var(--text-primary)', fontWeight: 600 }}>{d.name}</td>
-                        <td style={{ padding: '8px 12px', color: C.read }}>{fmtBw(d.read_bw_mb ?? 0)}</td>
-                        <td style={{ padding: '8px 12px', color: C.write }}>{fmtBw(d.write_bw_mb ?? 0)}</td>
-                        <td style={{ padding: '8px 12px', color: C.read }}>{(d.read_iops ?? 0).toFixed(0)}</td>
-                        <td style={{ padding: '8px 12px', color: C.write }}>{(d.write_iops ?? 0).toFixed(0)}</td>
-                        <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{fmtGB(d.total_read_gb ?? 0)}</td>
-                        <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{fmtGB(d.total_write_gb ?? 0)}</td>
-                      </motion.tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <PhysicalDisksTable diskPools={diskPools} diskMetrics={diskMetrics} />
           </Panel>
         );
-      }
 
       case 'io-chart':
         return (
@@ -707,14 +664,29 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         );
 
       case 'storage-history': {
-        const capStorageMaxGB = capacityData.reduce((m, d) => Math.max(m, d.alloc || 0, d.free || 0), 0.01);
-        const capGbScale = getGbScale(capStorageMaxGB);
         const capNowMs = Date.now();
+        const capWindowStart = capNowMs - INTERVAL_MS[interval];
+
+        // Build display data: extend the lines flat to "now" so the chart always fills
+        // the full time window. If the last real point is >60s old, append a synthetic
+        // point at tsMs=now with the last known alloc/free values.
+        const capDisplayData = (() => {
+          if (capacityData.length === 0) return capacityData;
+          const last = capacityData[capacityData.length - 1];
+          const ageSec = (capNowMs - (last.tsMs || 0)) / 1000;
+          if (ageSec > 60) {
+            return [...capacityData, { ...last, tsMs: capNowMs }];
+          }
+          return capacityData;
+        })();
+
+        const capStorageMaxGB = capDisplayData.reduce((m, d) => Math.max(m, d.alloc || 0, d.free || 0), 0.01);
+        const capGbScale = getGbScale(capStorageMaxGB);
         const capHistXAxisProps = {
           dataKey: 'tsMs' as const,
           type: 'number' as const,
           scale: 'time' as const,
-          domain: [capNowMs - INTERVAL_MS[interval], capNowMs] as [number, number],
+          domain: [capWindowStart, capNowMs] as [number, number],
           ticks: getXTicks(interval, capNowMs),
           tickFormatter: (v: number) => fmtTickLabel(v, interval),
           axisLine: false, tickLine: false, tick: AXIS_TICK, minTickGap: 30,
@@ -757,7 +729,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
             <div style={{ height: 240 }}>
               {loadingCapacity ? <Skeleton height={240} /> : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={capacityData} margin={CHART_MARGIN}>
+                  <AreaChart data={capDisplayData} margin={CHART_MARGIN}>
                     <CartesianGrid {...GRID_PROPS} />
                     <XAxis {...capHistXAxisProps} />
                     <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} tickFormatter={capGbScale.fmt} width={85} />

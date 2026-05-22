@@ -324,7 +324,22 @@ async fn pool_status(Path(name): Path<String>) -> Result<Json<Value>, ApiError> 
 async fn pool_vdevs(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "pool")?;
     let raw = executor::zpool(&["status", "-v", &name]).await?;
-    let vdevs = parse_vdev_config(&raw);
+    let raw_vdevs = parse_vdev_config(&raw);
+
+    // Resolve SCSI IDs / full paths to short kernel device names (sda, sdb, …).
+    let mut vdevs: Vec<Value> = Vec::with_capacity(raw_vdevs.len());
+    for vdev in raw_vdevs {
+        let raw_disks = vdev["disks"].as_array().cloned().unwrap_or_default();
+        let mut resolved_disks: Vec<Value> = Vec::with_capacity(raw_disks.len());
+        for disk in raw_disks {
+            let raw_path = disk["path"].as_str().unwrap_or("").to_string();
+            let short    = crate::worker::resolve_disk_short_name(&raw_path).await;
+            let state    = disk["state"].as_str().unwrap_or("ONLINE").to_string();
+            resolved_disks.push(json!({ "path": short, "state": state }));
+        }
+        vdevs.push(json!({ "type": vdev["type"], "disks": resolved_disks }));
+    }
+
     Ok(Json(json!({ "name": name, "vdevs": vdevs })))
 }
 
