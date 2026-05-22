@@ -429,23 +429,22 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const dispLiveTotalR = displayData.reduce((s, d) => s + (d.read  || 0) * displaySecPt / 1024, 0);
   const dispLiveTotalW = displayData.reduce((s, d) => s + (d.write || 0) * displaySecPt / 1024, 0);
 
-  // Total pool capacity from the pools prop — same source as Dashboard "Available Space".
-  // available_bytes + used_bytes = logical total capacity from `zfs get available,used`.
-  const totalPoolCapacityGb = useMemo(() => {
-    return (poolsProp || []).reduce((s: number, p: any) =>
-      s + ((p.available_bytes || 0) + (p.used_bytes || 0)) / 1_073_741_824, 0
-    );
-  }, [(poolsProp || []).map((p: any) => `${p.available_bytes},${p.used_bytes}`).join('|')]);
-
-  // Override free = (totalCapacity - alloc) so the chart uses the same source as
-  // Dashboard Available Space instead of the raw zpool physical free stored in zfs_metrics.
+  // Pool Capacity chart: use exactly the same fields Dashboard uses.
+  // Dashboard "Used Storage"    → pools[].used_bytes      (from `zfs get used`,      via /api/v1/pools)
+  // Dashboard "Available Space" → pools[].available_bytes (from `zfs get available`, via /api/v1/pools)
+  // The zfs_metrics table stores raw zpool physical alloc/free which can differ significantly
+  // (e.g. RAIDZ physical alloc 28 TB vs logical used 8 TB). Reading from pools prop ensures
+  // Pool Capacity shows the same values as Dashboard with no additional API calls.
   const correctedCapacityData = useMemo(() => {
-    if (totalPoolCapacityGb <= 0 || capacityData.length === 0) return capacityData;
+    const totalUsedGb  = (poolsProp || []).reduce((s: number, p: any) => s + (p.used_bytes      || 0), 0) / 1_073_741_824;
+    const totalAvailGb = (poolsProp || []).reduce((s: number, p: any) => s + (p.available_bytes || 0), 0) / 1_073_741_824;
+    if ((totalUsedGb <= 0 && totalAvailGb <= 0) || capacityData.length === 0) return capacityData;
     return capacityData.map((d: any) => ({
       ...d,
-      free: Math.max(0, totalPoolCapacityGb - (d.alloc || 0)),
+      alloc: totalUsedGb,   // pools[].used_bytes      — Dashboard "Used Storage"
+      free:  totalAvailGb,  // pools[].available_bytes — Dashboard "Available Space"
     }));
-  }, [capacityData, totalPoolCapacityGb]);
+  }, [capacityData, (poolsProp || []).map((p: any) => `${p.available_bytes},${p.used_bytes}`).join('|')]);
 
   // Compute scales for charts
   const ioMaxMB = ioDisplayData.reduce((m, d) => Math.max(m, d.read || 0, d.write || 0), 0.01);
