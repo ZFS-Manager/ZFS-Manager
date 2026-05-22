@@ -429,6 +429,24 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const dispLiveTotalR = displayData.reduce((s, d) => s + (d.read  || 0) * displaySecPt / 1024, 0);
   const dispLiveTotalW = displayData.reduce((s, d) => s + (d.write || 0) * displaySecPt / 1024, 0);
 
+  // Total pool capacity from the pools prop — same source as Dashboard "Available Space".
+  // available_bytes + used_bytes = logical total capacity from `zfs get available,used`.
+  const totalPoolCapacityGb = useMemo(() => {
+    return (poolsProp || []).reduce((s: number, p: any) =>
+      s + ((p.available_bytes || 0) + (p.used_bytes || 0)) / 1_073_741_824, 0
+    );
+  }, [(poolsProp || []).map((p: any) => `${p.available_bytes},${p.used_bytes}`).join('|')]);
+
+  // Override free = (totalCapacity - alloc) so the chart uses the same source as
+  // Dashboard Available Space instead of the raw zpool physical free stored in zfs_metrics.
+  const correctedCapacityData = useMemo(() => {
+    if (totalPoolCapacityGb <= 0 || capacityData.length === 0) return capacityData;
+    return capacityData.map((d: any) => ({
+      ...d,
+      free: Math.max(0, totalPoolCapacityGb - (d.alloc || 0)),
+    }));
+  }, [capacityData, totalPoolCapacityGb]);
+
   // Compute scales for charts
   const ioMaxMB = ioDisplayData.reduce((m, d) => Math.max(m, d.read || 0, d.write || 0), 0.01);
   const bwScale = getBwScale(ioMaxMB);
@@ -682,13 +700,13 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         // the full time window. If the last real point is >60s old, append a synthetic
         // point at tsMs=now with the last known alloc/free values.
         const capDisplayData = (() => {
-          if (capacityData.length === 0) return capacityData;
-          const last = capacityData[capacityData.length - 1];
+          if (correctedCapacityData.length === 0) return correctedCapacityData;
+          const last = correctedCapacityData[correctedCapacityData.length - 1];
           const ageSec = (capNowMs - (last.tsMs || 0)) / 1000;
           if (ageSec > 60) {
-            return [...capacityData, { ...last, tsMs: capNowMs }];
+            return [...correctedCapacityData, { ...last, tsMs: capNowMs }];
           }
-          return capacityData;
+          return correctedCapacityData;
         })();
 
         const capStorageMaxGB = capDisplayData.reduce((m, d) => Math.max(m, d.alloc || 0, d.free || 0), 0.01);
@@ -705,7 +723,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
 
         // Compute forecast from capacity data for the selected interval:
         // avgWriteMbPerSec → GB/day → daysUntilFull = freeGb / gbPerDay
-        const lastFreeGb = capacityData.length > 0 ? (capacityData[capacityData.length - 1].free || 0) : 0;
+        const lastFreeGb = correctedCapacityData.length > 0 ? (correctedCapacityData[correctedCapacityData.length - 1].free || 0) : 0;
         const avgWriteMbPerSec = capacityData.length > 0
           ? capacityData.reduce((s, d) => s + (d.write || 0), 0) / capacityData.length
           : 0;
