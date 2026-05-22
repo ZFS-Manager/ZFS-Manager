@@ -526,7 +526,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                      {['Pool', 'Disk', 'Read MB/s', 'Write MB/s', 'Read IOPS', 'Write IOPS', 'Total Read', 'Total Written'].map(h => (
+                      {['Pool', 'Disk', 'Read', 'Write', 'Read IOPS', 'Write IOPS', 'Total Read', 'Total Written'].map(h => (
                         <th key={h} style={{ padding: '6px 12px', textAlign: 'left', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
                       ))}
                     </tr>

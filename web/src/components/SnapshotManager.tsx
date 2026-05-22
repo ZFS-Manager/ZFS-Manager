@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import PageTransition from './PageTransition';
 import {
   Camera, Trash2, RotateCcw, Search, Clock, Plus,
   X, Loader2, CheckCircle, XCircle, AlertTriangle
@@ -221,8 +222,10 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
 
   const allSelected = filtered.length > 0 && selected.size === filtered.length;
 
+  const animEnabled = localStorage.getItem('page_animations') !== 'false';
+
   return (
-    <div style={{ paddingBottom: 40 }}>
+    <PageTransition><div style={{ paddingBottom: 40 }}>
       <AnimatePresence>{toast && <Toast msg={toast.msg} type={toast.type} />}</AnimatePresence>
 
       {/* Create Modal */}
@@ -417,9 +420,9 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
                 return (
                   <motion.tr
                     key={snap.name || idx}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: Math.min(idx * 0.015, 0.3) }}
+                    initial={animEnabled ? { opacity: 0 } : false}
+                    animate={animEnabled ? { opacity: 1 } : undefined}
+                    transition={{ delay: animEnabled ? Math.min(idx * 0.015, 0.3) : 0 }}
                     style={isSelected ? { background: 'var(--accent-dim)' } : undefined}
                   >
                     <td style={{ textAlign: 'center' }}>
@@ -554,6 +557,6 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </div></PageTransition>
   );
 }
