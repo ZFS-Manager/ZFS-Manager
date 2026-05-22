@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { FileText, Search, AlertCircle, Info, AlertTriangle, Download, ChevronDown, ChevronRight } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { FileText, Search, Download, ChevronDown, ChevronRight } from 'lucide-react';
 import { ZFSLog, ZFSPool } from '../types';
 import PageTransition from './PageTransition';
-import Pagination from './Pagination';
 
 interface SystemLogsProps {
   logs: ZFSLog[];
@@ -17,14 +17,16 @@ const LEVEL = {
 
 const MAX_MSG = 120;
 
-const PAGE_SIZE_LOGS = 50;
+const LOAD_INITIAL = 25;
+const LOAD_MORE_BY = 25;
 
 export default function SystemLogs({ logs }: SystemLogsProps) {
   const [search, setSearch]           = useState('');
   const [levelFilter, setLevelFilter] = useState<'all' | 'error' | 'warning' | 'info'>('all');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [expanded, setExpanded]       = useState<Set<string>>(new Set());
-  const [page, setPage]               = useState(1);
+  const [visibleCount, setVisibleCount] = useState(LOAD_INITIAL);
+  const animEnabled = localStorage.getItem('page_animations') !== 'false';
 
   const sources = useMemo(() => {
     const all = logs.map(l => l.pool || 'system').filter(Boolean);
@@ -42,12 +44,12 @@ export default function SystemLogs({ logs }: SystemLogsProps) {
     [logs, search, levelFilter, sourceFilter]
   );
 
-  // Reset page when filters change
-  useEffect(() => { setPage(1); }, [search, levelFilter, sourceFilter]);
+  // Reset visible count when filters change
+  useEffect(() => { setVisibleCount(LOAD_INITIAL); }, [search, levelFilter, sourceFilter]);
 
-  const pageLogs = useMemo(() =>
-    filtered.slice((page - 1) * PAGE_SIZE_LOGS, page * PAGE_SIZE_LOGS),
-    [filtered, page]
+  const visibleLogs = useMemo(() =>
+    filtered.slice(0, visibleCount),
+    [filtered, visibleCount]
   );
 
   const counts = useMemo(() => ({
@@ -171,15 +173,19 @@ export default function SystemLogs({ logs }: SystemLogsProps) {
               </tr>
             </thead>
             <tbody>
-              {pageLogs.map((log, i) => {
+              {visibleLogs.map((log, i) => {
                 const lvl = log.level as keyof typeof LEVEL;
                 const cfg = LEVEL[lvl] || LEVEL.info;
                 const id  = log.id || String(i);
                 const isExpanded = expanded.has(id);
                 const isLong = log.message.length > MAX_MSG;
+                const delay = Math.min(i, 20) * 30;
                 return (
-                  <tr
+                  <motion.tr
                     key={id}
+                    initial={animEnabled ? { opacity: 0, y: -8 } : false}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.18, delay: delay / 1000 }}
                     onClick={() => isLong && toggleExpand(id)}
                     style={{ cursor: isLong ? 'pointer' : 'default', height: 'auto' }}
                   >
@@ -223,7 +229,7 @@ export default function SystemLogs({ logs }: SystemLogsProps) {
                         </p>
                       </div>
                     </td>
-                  </tr>
+                  </motion.tr>
                 );
               })}
             </tbody>
@@ -243,14 +249,22 @@ export default function SystemLogs({ logs }: SystemLogsProps) {
           </div>
         )}
 
-        {/* Pagination */}
-        <Pagination total={filtered.length} page={page} pageSize={PAGE_SIZE_LOGS} onChange={setPage} />
-
-        {/* Footer */}
+        {/* Footer + load-more */}
         {filtered.length > 0 && (
-          <div style={{ padding: '10px 20px', borderTop: '1px solid var(--border)', background: 'rgba(255,255,255,0.01)', fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-            {filtered.length} event{filtered.length !== 1 ? 's' : ''}
-            {(search || levelFilter !== 'all' || sourceFilter !== 'all') && ` · filtered from ${logs.length}`}
+          <div style={{ padding: '10px 20px', borderTop: '1px solid var(--border)', background: 'rgba(255,255,255,0.01)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+              Showing {Math.min(visibleCount, filtered.length)} of {filtered.length} event{filtered.length !== 1 ? 's' : ''}
+              {(search || levelFilter !== 'all' || sourceFilter !== 'all') && ` · filtered from ${logs.length}`}
+            </span>
+            {visibleCount < filtered.length && (
+              <button
+                className="btn btn-secondary"
+                onClick={() => setVisibleCount(v => v + LOAD_MORE_BY)}
+                style={{ fontSize: 11, padding: '4px 14px', height: 28 }}
+              >
+                Load more
+              </button>
+            )}
           </div>
         )}
       </div>

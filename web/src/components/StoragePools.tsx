@@ -1012,6 +1012,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+  const animEnabled = localStorage.getItem('page_animations') !== 'false';
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     notify({ type, title: type === 'success' ? 'Success' : 'Error', message: msg });
@@ -1211,7 +1212,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
 
       {/* Pool cards */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {pools.map(pool => {
+        {pools.map((pool, pi) => {
           const state      = scrubState[pool.name] || 'idle';
           const progress   = scrubProgress[pool.name];
           const isExpanded = expandedPool === pool.name;
@@ -1222,7 +1223,13 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           const isOnline   = pool.health === 'ONLINE';
 
           return (
-            <div key={pool.name} style={{ background: 'var(--bg-surface)', border: `1px solid ${isOnline ? 'var(--border)' : 'rgba(239,68,68,0.3)'}`, borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+            <motion.div
+              key={pool.name}
+              initial={animEnabled ? { opacity: 0, y: -8 } : false}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.18, delay: Math.min(pi, 20) * 30 / 1000 }}
+              style={{ background: 'var(--bg-surface)', border: `1px solid ${isOnline ? 'var(--border)' : 'rgba(239,68,68,0.3)'}`, borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}
+            >
 
               {/* Card header */}
               <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
@@ -1377,7 +1384,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                 </div>
               )}
 
-            </div>
+            </motion.div>
           );
         })}
 

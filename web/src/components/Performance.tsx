@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { motion } from 'framer-motion';
 import {
   AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -319,6 +320,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const [diskMetrics, setDiskMetrics]   = useState<Record<string, any[]>>({});
   const [diskPools, setDiskPools]       = useState<string[]>([]);
 
+  const animEnabled = localStorage.getItem('page_animations') !== 'false';
   const liveStats = stats;
   const livePoint = liveStats.length > 0 ? liveStats[liveStats.length - 1] : null;
 
@@ -371,7 +373,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         .catch(() => { setCapacityData([]); if (!liveMode) setHistoryData([]); })
         .finally(() => { setLoadingCapacity(false); setLoadingHistory(false); });
     fetchHistory();
-    const id = setInterval(fetchHistory, 10_000);
+    const id = setInterval(fetchHistory, 30_000);
     return () => clearInterval(id);
   }, [interval, liveMode]);
 
@@ -567,7 +569,13 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
                   </thead>
                   <tbody>
                     {allDisks.map((d: any, i: number) => (
-                      <tr key={`${d.pool}-${d.name}`} style={{ borderBottom: '1px solid var(--border-subtle)', background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)' }}>
+                      <motion.tr
+                        key={`${d.pool}-${d.name}`}
+                        initial={animEnabled ? { opacity: 0, y: -8 } : false}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.18, delay: Math.min(i, 20) * 30 / 1000 }}
+                        style={{ borderBottom: '1px solid var(--border-subtle)', background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)' }}
+                      >
                         <td style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>{d.pool}</td>
                         <td style={{ padding: '8px 12px', color: 'var(--text-primary)', fontWeight: 600 }}>{d.name}</td>
                         <td style={{ padding: '8px 12px', color: C.read }}>{fmtBw(d.read_bw_mb ?? 0)}</td>
@@ -576,7 +584,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
                         <td style={{ padding: '8px 12px', color: C.write }}>{(d.write_iops ?? 0).toFixed(0)}</td>
                         <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{fmtGB(d.total_read_gb ?? 0)}</td>
                         <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{fmtGB(d.total_write_gb ?? 0)}</td>
-                      </tr>
+                      </motion.tr>
                     ))}
                   </tbody>
                 </table>

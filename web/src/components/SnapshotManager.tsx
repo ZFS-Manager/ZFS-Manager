@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import PageTransition from './PageTransition';
-import Pagination from './Pagination';
 import {
   Camera, Trash2, RotateCcw, Search, Clock, Plus,
   X, Loader2, CheckCircle, XCircle, AlertTriangle
@@ -120,8 +119,7 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
   const [toast, setToast]                     = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const [selected, setSelected]               = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting]       = useState(false);
-  const [page, setPage]                       = useState(1);
-  const PAGE_SIZE = 20;
+  const [visibleCount, setVisibleCount]       = useState(15);
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ msg, type });
@@ -133,12 +131,12 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
     [snapshots, search]
   );
 
-  // Reset to page 1 when filters change
-  useEffect(() => { setPage(1); }, [search]);
+  // Reset visible count when filters change
+  useEffect(() => { setVisibleCount(15); }, [search]);
 
-  const pageSnaps = useMemo(() =>
-    filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-    [filtered, page]
+  const visibleSnaps = useMemo(() =>
+    filtered.slice(0, visibleCount),
+    [filtered, visibleCount]
   );
 
   const datasetOptions = useMemo(() => {
@@ -423,7 +421,7 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
               </tr>
             </thead>
             <tbody>
-              {pageSnaps.map((snap, idx) => {
+              {visibleSnaps.map((snap, idx) => {
                 const snapName    = snap.name?.split('@').pop() || snap.name;
                 const datasetName = snap.name?.split('@')[0] || '—';
                 const usedBytes   = Number(snap.used);
@@ -502,8 +500,21 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
           </table>
         </div>
 
-        {/* Pagination */}
-        <Pagination total={filtered.length} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
+        {/* Load more */}
+        {visibleCount < filtered.length && (
+          <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+              Showing {visibleCount} of {filtered.length}
+            </span>
+            <button
+              className="btn btn-secondary"
+              onClick={() => setVisibleCount(v => v + 15)}
+              style={{ fontSize: 11, padding: '4px 14px', height: 28 }}
+            >
+              Load more
+            </button>
+          </div>
+        )}
 
         {/* Empty state */}
         {filtered.length === 0 && (

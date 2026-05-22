@@ -210,6 +210,84 @@ fn is_vdev_group(name: &str) -> bool {
     VDEV_GROUP_PREFIXES.iter().any(|p| name.starts_with(p))
 }
 
+/// Resolves a raw disk name from zpool iostat output to a short kernel device name.
+///
+/// zpool may report disks as:
+///   - SCSI-ID symlinks:  scsi-0QEMU_QEMU_HARDDISK_drive-scsi0
+///   - Full paths:        /dev/sda, /dev/disk/by-id/...
+///   - Already short:     sda, sdb, loop10, nvme0n1
+///
+/// Strategy (in order):
+///   1. Already a short device name (no path separator, no common ID prefix) → return as-is.
+///   2. /dev/disk/by-id/{name} exists → readlink → basename.
+///   3. lsblk -no name {resolved_path} → first line.
+///   4. Strip well-known ID prefixes (scsi-, ata-, wwn-, usb-) → take remainder up to first '-' … → last dash segment.
+///   5. Final fallback: last path component of the name.
+async fn resolve_disk_short_name(name: &str) -> String {
+    // Already a short name (no '/', no ID-style prefix)?
+    if !name.contains('/')
+        && !name.starts_with("scsi-")
+        && !name.starts_with("ata-")
+        && !name.starts_with("wwn-")
+        && !name.starts_with("usb-")
+        && !name.starts_with("nvme-eui.")
+    {
+        return name.to_string();
+    }
+
+    // Try /dev/disk/by-id/ symlink resolution.
+    let by_id = format!("/dev/disk/by-id/{}", name);
+    if tokio::fs::metadata(&by_id).await.is_ok() {
+        if let Ok(target) = tokio::fs::read_link(&by_id).await {
+            let short = target
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            if !short.is_empty() {
+                return short;
+            }
+        }
+    }
+
+    // If it's a full path, try lsblk on it.
+    let dev_path = if name.starts_with('/') {
+        name.to_string()
+    } else {
+        format!("/dev/{}", name)
+    };
+    if tokio::fs::metadata(&dev_path).await.is_ok() {
+        let out = tokio::process::Command::new("lsblk")
+            .args(["-no", "name", &dev_path])
+            .output()
+            .await;
+        if let Ok(o) = out {
+            let s = String::from_utf8_lossy(&o.stdout);
+            let first = s.lines().next().unwrap_or("").trim().to_string();
+            if !first.is_empty() {
+                return first;
+            }
+        }
+    }
+
+    // Strip common SCSI/ATA/WWN ID prefixes and take the final dash-separated segment.
+    let stripped = name
+        .trim_start_matches("scsi-")
+        .trim_start_matches("ata-")
+        .trim_start_matches("wwn-")
+        .trim_start_matches("usb-")
+        .trim_start_matches("nvme-eui.");
+    // Heuristic: if the stripped ID ends with _drive-sdX style, grab that suffix.
+    if let Some(pos) = stripped.rfind("_drive-") {
+        let suffix = &stripped[pos + 7..]; // after "_drive-"
+        if !suffix.is_empty() {
+            return suffix.to_string();
+        }
+    }
+    // Last path component as final fallback.
+    name.rsplit('/').next().unwrap_or(name).to_string()
+}
+
 /// Returned by get_pool_iostat_with_disks.
 struct IostatResult {
     alloc_gb: f64,
@@ -285,8 +363,9 @@ async fn get_pool_iostat_with_disks(pool: &str) -> Option<IostatResult> {
         let dcols: Vec<&str> = trimmed.splitn(8, '\t').collect();
         if dcols.len() < 7 { continue; }
 
-        let name = dcols[0].trim().to_string();
-        if name.is_empty() || name == pool || is_vdev_group(&name) { continue; }
+        let raw_name = dcols[0].trim().to_string();
+        if raw_name.is_empty() || raw_name == pool || is_vdev_group(&raw_name) { continue; }
+        let name = resolve_disk_short_name(&raw_name).await;
 
         let parse = |s: &str| -> f64 { s.parse().unwrap_or(0.0) };
         let d_read_ops:  f64 = parse(dcols[3]);
@@ -852,4 +931,93 @@ pub async fn run_metrics_worker(state: crate::state::AppState) {
         run_slow_loop(state_slow),
         run_notifications_loop(state_notify),
     );
+}
+
+// Startup: warm Redis from PostgreSQL before worker loops
+//
+// Seeds the three Redis keys that the frontend reads on first page load so that
+// the UI shows correct data immediately rather than waiting for the first 1s tick.
+pub async fn warm_redis_from_postgres(state: &crate::state::AppState) {
+    let redis = match &state.redis {
+        Some(r) => r,
+        None => return,
+    };
+    let pg = match &state.pg {
+        Some(p) => p,
+        None => return,
+    };
+    let mut conn = redis.clone();
+
+    // 1. Seed zfs:live:snapshot with persisted totals so the all-time counters
+    //    are correct on first API call, before the 1s live loop fires.
+    {
+        use std::sync::atomic::Ordering;
+        let total_read_mb  = state.total_read_bytes.load(Ordering::Relaxed)  as f64 / 1_048_576.0;
+        let total_write_mb = state.total_write_bytes.load(Ordering::Relaxed) as f64 / 1_048_576.0;
+        let payload = serde_json::json!({
+            "cpu_percent":    0.0,
+            "arc_hit_ratio":  0.0,
+            "total_read_mb":  total_read_mb,
+            "total_write_mb": total_write_mb,
+            "read_bw_mb":     0.0,
+            "write_bw_mb":    0.0,
+            "read_iops":      0.0,
+            "write_iops":     0.0,
+        });
+        if let Ok(json_str) = serde_json::to_string(&payload) {
+            let _: redis::RedisResult<()> = conn.set_ex("zfs:live:snapshot", json_str, 30u64).await;
+        }
+    }
+
+    // 2. Seed zfs:metrics:latest from the most recent PostgreSQL row so that
+    //    the chart has a data point immediately (before the first slow-loop tick).
+    if let Ok(row) = pg.query_one(
+        "SELECT pool_name, read_bw_mb, write_bw_mb, iops, alloc_gb, free_gb, \
+         cpu_percent, arc_hit_ratio \
+         FROM zfs_metrics ORDER BY collected_at DESC LIMIT 1",
+        &[],
+    ).await {
+        let payload = serde_json::json!({
+            "pool_name":     row.get::<_, String>(0),
+            "read_bw_mb":    row.get::<_, f64>(1),
+            "write_bw_mb":   row.get::<_, f64>(2),
+            "iops":          row.get::<_, f64>(3),
+            "alloc_gb":      row.get::<_, f64>(4),
+            "free_gb":       row.get::<_, f64>(5),
+            "cpu_percent":   row.get::<_, f64>(6),
+            "arc_hit_ratio": row.get::<_, f64>(7),
+        });
+        if let Ok(json_str) = serde_json::to_string(&payload) {
+            let _: redis::RedisResult<()> =
+                conn.set_ex("zfs:metrics:latest", json_str, 30u64).await;
+        }
+        info!("Startup: seeded zfs:metrics:latest from PostgreSQL");
+    }
+
+    // 3. Seed per-disk Redis keys from the persisted cumulative totals so that
+    //    the Physical Disks table shows correct all-time values on first load.
+    {
+        let acc = state.disk_cumulative.read().await;
+        for (pool, disks) in acc.iter() {
+            let disk_list: Vec<serde_json::Value> = disks.iter().map(|(name, (r, w))| {
+                serde_json::json!({
+                    "name":           name,
+                    "read_bw_mb":     0.0,
+                    "write_bw_mb":    0.0,
+                    "read_iops":      0.0,
+                    "write_iops":     0.0,
+                    "total_read_gb":  *r as f64 / 1_073_741_824.0,
+                    "total_write_gb": *w as f64 / 1_073_741_824.0,
+                })
+            }).collect();
+            if let Ok(json_str) = serde_json::to_string(&disk_list) {
+                let key = format!("zfs:disks:{}:latest", pool);
+                let _: redis::RedisResult<()> = conn.set_ex(&key, json_str, 30u64).await;
+            }
+        }
+        let n: usize = acc.values().map(|m| m.len()).sum();
+        if n > 0 {
+            info!("Startup: seeded Redis per-disk keys ({n} disks across {} pools)", acc.len());
+        }
+    }
 }

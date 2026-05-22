@@ -429,6 +429,9 @@ async fn main() {
         disk_cumulative: Arc::new(tokio::sync::RwLock::new(init_disk_cumulative)),
     };
 
+    // Startup: warm Redis from PostgreSQL before worker loops
+    worker::warm_redis_from_postgres(&app_state).await;
+
     tokio::spawn(worker::run_metrics_worker(app_state.clone()));
 
     let cors = {

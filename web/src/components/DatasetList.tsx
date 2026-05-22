@@ -393,6 +393,7 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
   const [rewriteState,  setRewriteState]  = useState<Record<string, boolean>>({});
   const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null);
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
+  const animEnabled = localStorage.getItem('page_animations') !== 'false';
 
   useEffect(() => {
     setExpandedNodes(new Set(datasets.map(d => d.name)));
@@ -719,12 +720,17 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
                       </tr>
 
                       {/* Dataset rows */}
-                      {items.map(({ dataset: ds, depth, hasChildren }) => {
+                      {items.map(({ dataset: ds, depth, hasChildren }, idx) => {
                         const dsType = (ds as any).type || 'filesystem';
                         const typeLabel = dsType === 'volume' ? 'VOL' : dsType === 'snapshot' ? 'SNAP' : 'FS';
                         const typeClass = dsType === 'volume' ? 'badge badge-vol' : dsType === 'snapshot' ? 'badge badge-snap' : 'badge badge-fs';
                         return (
-                          <tr key={ds.id}>
+                          <motion.tr
+                            key={ds.id}
+                            initial={animEnabled ? { opacity: 0, y: -8 } : false}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.18, delay: Math.min(idx, 20) * 30 / 1000 }}
+                          >
                             <td style={{ paddingLeft: `${8 + depth * 18}px` }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                 {/* Depth connector */}
@@ -822,7 +828,7 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
                                 </button>
                               </div>
                             </td>
-                          </tr>
+                          </motion.tr>
                         );
                       })}
                     </React.Fragment>

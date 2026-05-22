@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { motion } from 'framer-motion';
 import { api } from '../api';
 import { Bell, Trash2, Plus, Mail, MessageSquare, Globe, Send, BellOff, AlertTriangle, Edit2, CheckCircle } from 'lucide-react';
 import PageTransition from '../components/PageTransition';
-import Pagination from '../components/Pagination';
 
-const PAGE_SIZE_NOTIF = 30;
+const NOTIF_INITIAL = 20;
+const NOTIF_MORE_BY = 20;
 
 /* ── Shared Local Styles & Components ── */
 function SectionHeader({ title, sub }: { title: string; sub?: string }) {
@@ -87,7 +88,8 @@ export default function Notifications() {
 
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
   const [alertState, setAlertState] = useState<{ title: string; message: string; type: 'success' | 'error' } | null>(null);
-  const [notifPage, setNotifPage] = useState(1);
+  const [notifVisible, setNotifVisible] = useState(NOTIF_INITIAL);
+  const animEnabled = localStorage.getItem('page_animations') !== 'false';
 
   const [editingChannelId, setEditingChannelId] = useState<number | null>(null);
   const [editingRuleId, setEditingRuleId] = useState<number | null>(null);
@@ -503,8 +505,14 @@ export default function Notifications() {
               No notification logs present.
             </div>
           ) : (
-            notifications.slice((notifPage - 1) * PAGE_SIZE_NOTIF, notifPage * PAGE_SIZE_NOTIF).map(n => (
-              <div key={n.id} style={{ padding: '10px 14px', borderRadius: 'var(--radius)', background: 'var(--bg-elevated)', border: '1px solid var(--border)', marginBottom: 8, display: 'flex', gap: 12, alignItems: 'center', opacity: n.is_read ? 0.6 : 1, transition: 'opacity 0.15s' }}>
+            notifications.slice(0, notifVisible).map((n, idx) => (
+              <motion.div
+                key={n.id}
+                initial={animEnabled ? { opacity: 0, y: -8 } : false}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.18, delay: Math.min(idx, 20) * 30 / 1000 }}
+                style={{ padding: '10px 14px', borderRadius: 'var(--radius)', background: 'var(--bg-elevated)', border: '1px solid var(--border)', marginBottom: 8, display: 'flex', gap: 12, alignItems: 'center', opacity: n.is_read ? 0.6 : 1, transition: 'opacity 0.15s' }}
+              >
                 <div style={{ width: 6, height: 6, borderRadius: '50%', background: n.is_read ? 'var(--text-muted)' : 'var(--danger)', flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: n.is_read ? 400 : 600, fontFamily: 'var(--font-ui)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.message}</div>
@@ -533,11 +541,26 @@ export default function Notifications() {
                     <Trash2 size={12} />
                   </button>
                 </div>
-              </div>
+              </motion.div>
             ))
           )}
+          {notifications.length > notifVisible && (
+            <div style={{ textAlign: 'center', marginTop: 8 }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setNotifVisible(v => v + NOTIF_MORE_BY)}
+                style={{ fontSize: 11, padding: '4px 18px', height: 28 }}
+              >
+                Load more
+              </button>
+            </div>
+          )}
+          {notifications.length > 0 && (
+            <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', textAlign: 'center', marginTop: 6 }}>
+              Showing {Math.min(notifVisible, notifications.length)} of {notifications.length}
+            </div>
+          )}
         </div>
-        <Pagination total={notifications.length} page={notifPage} pageSize={PAGE_SIZE_NOTIF} onChange={setNotifPage} />
       </div>
 
       {/* RICH CHANNEL MODAL (Larger Popup) */}
