@@ -326,19 +326,36 @@ async fn pool_vdevs(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     let raw = executor::zpool(&["status", "-v", &name]).await?;
     let raw_vdevs = parse_vdev_config(&raw);
 
-    // Resolve SCSI IDs / full paths to short kernel device names (sda, sdb, …).
-    let mut vdevs: Vec<Value> = Vec::with_capacity(raw_vdevs.len());
+    // Pass 1: resolve SCSI IDs / full paths to short kernel device names.
+    let mut vdev_data: Vec<(String, Vec<(String, String)>)> = Vec::with_capacity(raw_vdevs.len());
     for vdev in raw_vdevs {
+        let vtype = vdev["type"].as_str().unwrap_or("stripe").to_string();
         let raw_disks = vdev["disks"].as_array().cloned().unwrap_or_default();
-        let mut resolved_disks: Vec<Value> = Vec::with_capacity(raw_disks.len());
+        let mut disks: Vec<(String, String)> = Vec::with_capacity(raw_disks.len());
         for disk in raw_disks {
             let raw_path = disk["path"].as_str().unwrap_or("").to_string();
             let short    = crate::worker::resolve_disk_short_name(&raw_path).await;
             let state    = disk["state"].as_str().unwrap_or("ONLINE").to_string();
-            resolved_disks.push(json!({ "path": short, "state": state }));
+            disks.push((short, state));
         }
-        vdevs.push(json!({ "type": vdev["type"], "disks": resolved_disks }));
+        vdev_data.push((vtype, disks));
     }
+
+    // Pass 2: strip partition suffixes across the full disk list when unambiguous
+    // (sdb1 → sdb only if no sdb2 also exists in the pool).
+    let mut all_names: Vec<String> = vdev_data.iter()
+        .flat_map(|(_, disks)| disks.iter().map(|(n, _)| n.clone()))
+        .collect();
+    crate::worker::strip_partition_suffix_list(&mut all_names);
+
+    // Rebuild vdevs with stripped names.
+    let mut name_iter = all_names.into_iter();
+    let vdevs: Vec<Value> = vdev_data.into_iter().map(|(vtype, disks)| {
+        let resolved: Vec<Value> = disks.into_iter().map(|(_, state)| {
+            json!({ "path": name_iter.next().unwrap_or_default(), "state": state })
+        }).collect();
+        json!({ "type": vtype, "disks": resolved })
+    }).collect();
 
     Ok(Json(json!({ "name": name, "vdevs": vdevs })))
 }

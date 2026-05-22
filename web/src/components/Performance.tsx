@@ -158,7 +158,7 @@ function transformHistory(metrics: any[], interval: Interval): any[] {
   return Array.from(seen.values()).map(g => ({
     timestamp: g.ts, tsMs: g.tsMs, read: g.read, write: g.write, iops: g.iops,
     alloc: g.alloc, free: g.free, cpu: g.cpu / g.n, arcHit: g.arc / g.n,
-  }));
+  })).sort((a, b) => a.tsMs - b.tsMs);
 }
 
 
@@ -551,7 +551,17 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
           </Panel>
         );
 
-      case 'io-chart':
+      case 'io-chart': {
+        const ioNowMs = Date.now();
+        const ioChartData = (() => {
+          if (liveMode || chartData.length === 0) return ioDisplayData;
+          const last = chartData[chartData.length - 1];
+          const ageSec = (ioNowMs - (last.tsMs || 0)) / 1000;
+          if (ageSec > 60) {
+            return [...chartData, { ...last, tsMs: ioNowMs }];
+          }
+          return chartData;
+        })();
         return (
           <div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -630,7 +640,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
               >
                 <div style={{ height: 240, overflow: 'visible' }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={ioDisplayData} margin={CHART_MARGIN}>
+                    <AreaChart data={ioChartData} margin={CHART_MARGIN}>
                       <defs>
                         <linearGradient id="gRead" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.read} stopOpacity={0.15}/><stop offset="95%" stopColor={C.read} stopOpacity={0}/></linearGradient>
                         <linearGradient id="gWrite" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.write} stopOpacity={0.15}/><stop offset="95%" stopColor={C.write} stopOpacity={0}/></linearGradient>
@@ -662,6 +672,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
             )}
           </div>
         );
+      }
 
       case 'storage-history': {
         const capNowMs = Date.now();

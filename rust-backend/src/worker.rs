@@ -223,30 +223,32 @@ fn is_vdev_group(name: &str) -> bool {
 ///   3. lsblk -no name {resolved_path} → first line.
 ///   4. Strip well-known ID prefixes (scsi-, ata-, wwn-, usb-) → take remainder up to first '-' … → last dash segment.
 ///   5. Final fallback: last path component of the name.
-/// Strips trailing partition digits from disk names when the suffix is unambiguous.
-/// sdc1 → sdc  only when no sdc2 (or sdc3, …) is present in the same list.
-/// If both sdc1 and sdc2 exist the full names are kept.
-fn strip_partition_suffix(disks: &mut Vec<crate::state::DiskMetric>) {
-    // Collect candidate base names (names that end in digits)
-    let bases: Vec<String> = disks.iter().filter_map(|d| {
-        let b = d.name.trim_end_matches(|c: char| c.is_ascii_digit());
-        if b.len() < d.name.len() { Some(b.to_string()) } else { None }
+/// Strips trailing partition digits from a list of device names when the suffix is unambiguous.
+/// "sdc1" → "sdc"  only when no "sdc2" (or "sdc3", …) is present in the same list.
+/// If both "sdc1" and "sdc2" exist, both names are kept as-is.
+/// Used by both the iostat disk list and the pool_vdevs route.
+pub fn strip_partition_suffix_list(names: &mut Vec<String>) {
+    let bases: Vec<String> = names.iter().filter_map(|n| {
+        let b = n.trim_end_matches(|c: char| c.is_ascii_digit());
+        if b.len() < n.len() { Some(b.to_string()) } else { None }
     }).collect();
-
-    // Count how many disks share each base
     let mut base_count: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for b in &bases {
         *base_count.entry(b.as_str()).or_insert(0) += 1;
     }
-
-    for disk in disks.iter_mut() {
-        let base = disk.name.trim_end_matches(|c: char| c.is_ascii_digit());
-        if base.len() < disk.name.len() {
-            // Only strip when this base is unique (only one partition number present)
-            if base_count.get(base).copied().unwrap_or(0) == 1 {
-                disk.name = base.to_string();
-            }
+    for name in names.iter_mut() {
+        let base = name.trim_end_matches(|c: char| c.is_ascii_digit());
+        if base.len() < name.len() && base_count.get(base).copied().unwrap_or(0) == 1 {
+            *name = base.to_string();
         }
+    }
+}
+
+fn strip_partition_suffix(disks: &mut Vec<crate::state::DiskMetric>) {
+    let mut names: Vec<String> = disks.iter().map(|d| d.name.clone()).collect();
+    strip_partition_suffix_list(&mut names);
+    for (disk, name) in disks.iter_mut().zip(names) {
+        disk.name = name;
     }
 }
 
