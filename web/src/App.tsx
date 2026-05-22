@@ -86,6 +86,8 @@ function TopBar({
   onMenuOpen?: () => void;
   sysNotifications: any[];
   onMarkRead: (id: number) => void;
+  onMarkAllSystemRead: () => void;
+  onClearAllSystem: () => void;
 }) {
   const location = useLocation();
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -178,6 +180,8 @@ function TopBar({
               onClose={() => setDropdownOpen(false)}
               systemNotifications={sysNotifications}
               onMarkSystemRead={(id) => { onMarkRead(id); }}
+              onMarkAllSystemRead={onMarkAllSystemRead}
+              onClearAllSystem={onClearAllSystem}
             />
           )}
         </div>
@@ -471,6 +475,14 @@ export default function App() {
             onMarkRead={(id) => {
               fetch(`/api/v1/notifications/${id}/read`, { method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('zfs_access_token')}` } });
               setSysNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+            }}
+            onMarkAllSystemRead={() => {
+              fetch('/api/v1/notifications/read', { method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('zfs_access_token')}` } });
+              setSysNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+            }}
+            onClearAllSystem={() => {
+              fetch('/api/v1/notifications', { method: 'DELETE', headers: { 'Authorization': `Bearer ${localStorage.getItem('zfs_access_token')}` } });
+              setSysNotifications([]);
             }}
             onMenuOpen={breakpoint === 'mobile' ? () => setMobileSidebarOpen(true) : undefined}
           />

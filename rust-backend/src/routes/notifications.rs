@@ -38,7 +38,7 @@ pub struct NotificationRule {
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route("/api/v1/notifications", get(list_notifications))
+        .route("/api/v1/notifications", get(list_notifications).delete(clear_all_notifications))
         .route("/api/v1/notifications/read", post(mark_all_read))
         .route("/api/v1/notifications/:id/read", post(mark_read))
         .route("/api/v1/notifications/channels", get(list_channels).post(create_channel))
@@ -77,6 +77,13 @@ async fn list_notifications(State(state): State<AppState>) -> impl IntoResponse 
 async fn mark_all_read(State(state): State<AppState>) -> impl IntoResponse {
     if let Some(ref pg) = state.pg {
         let _ = pg.execute("UPDATE notifications SET is_read = true WHERE is_read = false", &[]).await;
+    }
+    StatusCode::OK
+}
+
+async fn clear_all_notifications(State(state): State<AppState>) -> impl IntoResponse {
+    if let Some(ref pg) = state.pg {
+        let _ = pg.execute("DELETE FROM notifications", &[]).await;
     }
     StatusCode::OK
 }

@@ -28,7 +28,7 @@ type Interval = '1h' | '6h' | '1d' | '7d' | '1m' | '1y';
 
 const INTERVALS: { key: Interval; label: string; api: string }[] = [
   { key: '1h',  label: '1H',  api: '1h'  },
-  { key: '6h',  label: '6H',  api: '1d'  },
+  { key: '6h',  label: '6H',  api: '6h'  },
   { key: '1d',  label: '24H', api: '1d'  },
   { key: '7d',  label: '7D',  api: '1w'  },
   { key: '1m',  label: '1M',  api: '1m'  },

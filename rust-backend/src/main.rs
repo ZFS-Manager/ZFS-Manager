@@ -237,6 +237,13 @@ async fn init_schema(client: &tokio_postgres::Client) {
             is_read BOOLEAN NOT NULL DEFAULT FALSE,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+        CREATE TABLE IF NOT EXISTS disk_stats (
+            pool_name TEXT NOT NULL,
+            disk_name TEXT NOT NULL,
+            total_read_bytes BIGINT NOT NULL DEFAULT 0,
+            total_write_bytes BIGINT NOT NULL DEFAULT 0,
+            PRIMARY KEY (pool_name, disk_name)
+        );
     ";
 
     match client.batch_execute(sql).await {
@@ -384,6 +391,34 @@ async fn main() {
         }
     }
 
+    // Load persisted per-disk totals so they survive restarts.
+    let init_disk_cumulative: HashMap<String, HashMap<String, (u64, u64)>> =
+        if let Some(ref pg) = pg_client {
+            match pg.query(
+                "SELECT pool_name, disk_name, total_read_bytes, total_write_bytes FROM disk_stats",
+                &[],
+            ).await {
+                Ok(rows) => {
+                    let mut map: HashMap<String, HashMap<String, (u64, u64)>> = HashMap::new();
+                    for row in rows {
+                        let pool: String = row.get(0);
+                        let disk: String = row.get(1);
+                        let r: i64       = row.get(2);
+                        let w: i64       = row.get(3);
+                        map.entry(pool).or_default().insert(disk, (r as u64, w as u64));
+                    }
+                    info!("Loaded disk totals from PostgreSQL ({} entries)", map.values().map(|m| m.len()).sum::<usize>());
+                    map
+                }
+                Err(e) => {
+                    warn!("Failed to load disk_stats: {e}");
+                    HashMap::new()
+                }
+            }
+        } else {
+            HashMap::new()
+        };
+
     let app_state = AppState {
         redis: redis_conn,
         pg: pg_client,
@@ -391,7 +426,7 @@ async fn main() {
         total_read_bytes: Arc::new(AtomicU64::new(init_read)),
         total_write_bytes: Arc::new(AtomicU64::new(init_write)),
         io_cache: Arc::new(tokio::sync::RwLock::new(state::CachedIoSnapshot::default())),
-        disk_cumulative: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        disk_cumulative: Arc::new(tokio::sync::RwLock::new(init_disk_cumulative)),
     };
 
     tokio::spawn(worker::run_metrics_worker(app_state.clone()));

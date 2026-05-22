@@ -321,11 +321,11 @@ async fn get_pool_iostat_with_disks(pool: &str) -> Option<IostatResult> {
     })
 }
 
-/// Queries RAID-aware pool capacity via `zpool list`.
-/// Returns (alloc_gb, free_gb) that account for RAID parity overhead.
+/// Returns (used_gb, available_gb) using `zfs get available,used` — the same
+/// logical values shown by the Dashboard "Available Space" card.
 async fn get_pool_capacity(pool: &str) -> Option<(f64, f64)> {
-    let output = tokio::process::Command::new("zpool")
-        .args(["list", "-H", "-p", "-o", "name,size,alloc,free", pool])
+    let output = tokio::process::Command::new("zfs")
+        .args(["get", "-H", "-p", "-o", "property,value", "available,used", pool])
         .output()
         .await;
 
@@ -335,14 +335,20 @@ async fn get_pool_capacity(pool: &str) -> Option<(f64, f64)> {
     };
 
     let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut available: f64 = 0.0;
+    let mut used: f64 = 0.0;
     for line in stdout.lines() {
         let cols: Vec<&str> = line.split('\t').collect();
-        if cols.len() < 4 { continue; }
-        let alloc: f64 = cols[2].parse().unwrap_or(0.0);
-        let free:  f64 = cols[3].parse().unwrap_or(0.0);
-        return Some((alloc / 1_073_741_824.0, free / 1_073_741_824.0));
+        if cols.len() < 2 { continue; }
+        match cols[0] {
+            "available" => available = cols[1].parse().unwrap_or(0.0),
+            "used"      => used      = cols[1].parse().unwrap_or(0.0),
+            _ => {}
+        }
     }
-    None
+    if available == 0.0 && used == 0.0 { return None; }
+    // Return (alloc_gb, free_gb) to match the existing callers' expectations
+    Some((used / 1_073_741_824.0, available / 1_073_741_824.0))
 }
 
 async fn push_to_redis(
@@ -791,6 +797,26 @@ async fn run_slow_loop(state: crate::state::AppState) {
                 ).await {
                     Ok(_) => info!("Persisted cumulative totals (read={tr}, write={tw})"),
                     Err(e) => warn!("Failed to update global_stats: {e}"),
+                }
+
+                // Persist per-disk cumulative totals so they survive restarts.
+                let disk_snap: Vec<(String, String, i64, i64)> = {
+                    let acc = state.disk_cumulative.read().await;
+                    acc.iter().flat_map(|(pool, disks)| {
+                        disks.iter().map(move |(disk, (r, w))| {
+                            (pool.clone(), disk.clone(), *r as i64, *w as i64)
+                        })
+                    }).collect()
+                };
+                for (pool, disk, r, w) in disk_snap {
+                    let _ = pg_client.execute(
+                        "INSERT INTO disk_stats (pool_name, disk_name, total_read_bytes, total_write_bytes) \
+                         VALUES ($1, $2, $3, $4) \
+                         ON CONFLICT (pool_name, disk_name) DO UPDATE \
+                         SET total_read_bytes = EXCLUDED.total_read_bytes, \
+                             total_write_bytes = EXCLUDED.total_write_bytes",
+                        &[&pool, &disk, &r, &w],
+                    ).await;
                 }
             }
             prev_tr = tr;

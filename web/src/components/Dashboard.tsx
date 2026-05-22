@@ -884,8 +884,9 @@ export default function Dashboard({
                     </ResponsiveContainer>
                   </div>
                   {(() => {
-                    const totalR = ioData.reduce((s, d) => s + (d.read  || 0), 0);
-                    const totalW = ioData.reduce((s, d) => s + (d.write || 0), 0);
+                    const secsPerPoint = histData1d.length > 2 ? 300 : 1;
+                    const totalR = ioData.reduce((s, d) => s + (d.read  || 0), 0) * secsPerPoint;
+                    const totalW = ioData.reduce((s, d) => s + (d.write || 0), 0) * secsPerPoint;
                     const peakW  = ioData.reduce((m, d) => Math.max(m, d.write || 0), 0);
                     const fmtData = (v: number) => v >= 1024 ? `${(v/1024).toFixed(1)} TB` : `${v.toFixed(1)} GB`;
                     const fmtBw   = (v: number) => v >= 1000 ? `${(v/1000).toFixed(2)} GB/s` : `${v.toFixed(0)} MB/s`;
@@ -943,8 +944,8 @@ export default function Dashboard({
             <Panel title="Live I/O" sub="Current throughput · 1s refresh">
               <div style={{ display: 'flex' }}>
                 {[
-                  { label: '↑ Read',       value: `${currentStats.read.toFixed(1)} MB/s`,  color: '#38bdf8' },
-                  { label: '↓ Write',      value: `${currentStats.write.toFixed(1)} MB/s`, color: '#818cf8' },
+                  { label: '↑ Read',       value: fmtBw(currentStats.read),  color: '#38bdf8' },
+                  { label: '↓ Write',      value: fmtBw(currentStats.write), color: '#818cf8' },
                   { label: '↑ Read IOPS',  value: `${(currentStats.readIops ?? 0).toFixed(0)} ops/s`,  color: '#38bdf8' },
                   { label: '↓ Write IOPS', value: `${(currentStats.writeIops ?? 0).toFixed(0)} ops/s`, color: '#818cf8' },
                 ].map(({ label, value, color }, i, arr) => (

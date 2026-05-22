@@ -28,6 +28,7 @@ struct HistoryParams {
 fn cache_ttl(interval: &str) -> u64 {
     match interval {
         "1h" => 20,   // 20s — data changes every 5s, keep brief
+        "6h" => 30,   // 30s
         "1d" => 60,   // 1 min
         "1w" => 180,  // 3 min
         "1m" => 300,  // 5 min
@@ -43,6 +44,16 @@ fn build_query(interval: &str) -> String {
                  FROM zfs_metrics \
                  WHERE collected_at > NOW() - INTERVAL '1 hour' \
                  ORDER BY collected_at ASC LIMIT 720"
+            .to_string(),
+
+        "6h" => "SELECT to_timestamp(floor(extract(epoch from collected_at) / 300) * 300) AS collected_at, \
+                 pool_name, \
+                 AVG(read_bw_mb) AS read_bw_mb, AVG(write_bw_mb) AS write_bw_mb, \
+                 AVG(iops) AS iops, AVG(alloc_gb) AS alloc_gb, AVG(free_gb) AS free_gb, \
+                 AVG(cpu_percent) AS cpu_percent, AVG(arc_hit_ratio) AS arc_hit_ratio \
+                 FROM zfs_metrics \
+                 WHERE collected_at > NOW() - INTERVAL '6 hours' \
+                 GROUP BY 1, 2 ORDER BY 1 ASC LIMIT 144"
             .to_string(),
 
         "1d" => "SELECT to_timestamp(floor(extract(epoch from collected_at) / 300) * 300) AS collected_at, \
