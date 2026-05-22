@@ -333,8 +333,10 @@ struct IostatResult {
 
 /// Runs `zpool iostat -v -H -p <pool> 1 2` (takes ~1 s).
 /// Parses both pool-level summary and individual leaf-disk metrics.
-/// The FIRST block contains cumulative nread/nwritten since pool import — used for total_read_gb/total_write_gb.
-/// The SECOND block contains the 1s delta — used for live bandwidth/IOPS rates.
+/// `zpool iostat ... 1 2` emits two samples; for live bandwidth/IOPS we use the later
+/// sample, which reflects the interval-based rates after the 1-second wait.
+/// Cumulative read/write totals are not taken from the first iostat block here; they are
+/// computed separately from pool statistics rather than from this command's rate output.
 async fn get_pool_iostat_with_disks(pool: &str) -> Option<IostatResult> {
     let output = tokio::process::Command::new("zpool")
         .args(["iostat", "-v", "-H", "-p", pool, "1", "2"])
