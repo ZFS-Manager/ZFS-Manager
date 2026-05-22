@@ -883,9 +883,22 @@ function SettingsPopout({
                       className="btn"
                       style={{ height: 30, padding: '0 14px', fontSize: 11, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--danger)', cursor: 'pointer', borderRadius: 'var(--radius)', display: 'flex', alignItems: 'center', gap: 6 }}
                       onClick={() => {
-                        if (window.confirm(`Permanently destroy pool "${poolName}" and all its data? This CANNOT be undone.`)) {
-                          api.destroyPool(poolName).then(() => { onSaved(); close(); }).catch(err => notify({ type: 'error', title: 'Destroy Failed', message: err.message }));
-                        }
+                        setConfirmState({
+                          open: true,
+                          title: 'Destroy Pool',
+                          message: `Permanently destroy pool "${poolName}" and all its data? This CANNOT be undone.`,
+                          confirmLabel: 'Destroy Pool',
+                          tone: 'danger',
+                          onConfirm: async () => {
+                            try {
+                              await api.destroyPool(poolName);
+                              onSaved();
+                              close();
+                            } catch (err: any) {
+                              notify({ type: 'error', title: 'Destroy Failed', message: err.message });
+                            }
+                          },
+                        });
                       }}
                     >
                       <Trash2 size={11} /> Destroy Pool
