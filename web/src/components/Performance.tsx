@@ -117,6 +117,7 @@ function transformHistory(metrics: any[], interval: Interval): any[] {
     } else {
       seen.set(key, {
         ts: fmtTs(m.collected_at, interval),
+        tsMs: new Date(m.collected_at).getTime(),
         read: m.read_bw_mb, write: m.write_bw_mb, iops: m.iops,
         alloc: m.alloc_gb, free: m.free_gb,
         cpu: m.cpu_percent, arc: m.arc_hit_ratio, n: 1,
@@ -124,7 +125,7 @@ function transformHistory(metrics: any[], interval: Interval): any[] {
     }
   }
   return Array.from(seen.values()).map(g => ({
-    timestamp: g.ts, read: g.read, write: g.write, iops: g.iops,
+    timestamp: g.ts, tsMs: g.tsMs, read: g.read, write: g.write, iops: g.iops,
     alloc: g.alloc, free: g.free, cpu: g.cpu / g.n, arcHit: g.arc / g.n,
   }));
 }
@@ -268,10 +269,17 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const [dragFrom, setDragFrom]         = useState<string | null>(null);
   const [dragOver, setDragOver]         = useState<string | null>(null);
 
-  const [interval, setIntervalMode]     = useState<Interval>('1d');
+  const [interval, _setInterval]        = useState<Interval>(() => {
+    const saved = localStorage.getItem('perf_interval') as Interval | null;
+    return (saved && INTERVALS.some(i => i.key === saved)) ? saved : '1d';
+  });
+  const selectInterval = useCallback((iv: Interval) => {
+    localStorage.setItem('perf_interval', iv);
+    _setInterval(iv);
+  }, []);
   const [capacityData, setCapacityData] = useState<any[]>([]);
   const [loadingCapacity, setLoadingCapacity] = useState(false);
-  const [liveMode, setLiveMode]         = useState(false);
+  const [liveMode, setLiveMode]         = useState(() => localStorage.getItem('perf_live') === 'true');
   const [historyData, setHistoryData]   = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [hidden, setHidden]             = useState<Set<string>>(new Set());
@@ -420,7 +428,11 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     axisLine: false, tickLine: false, tick: AXIS_TICK,
   };
   const histXAxisProps = {
-    dataKey: 'timestamp' as const,
+    dataKey: 'tsMs' as const,
+    type: 'number' as const,
+    scale: 'time' as const,
+    domain: [chartData.length > 0 ? chartData[0].tsMs : 'dataMin', Date.now()] as [number | string, number],
+    tickFormatter: (v: number) => fmtTs(new Date(v).toISOString(), interval),
     axisLine: false, tickLine: false, tick: AXIS_TICK, minTickGap: 40,
   };
 
@@ -551,7 +563,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
                 {INTERVALS.map(({ key, label }) => (
                   <button
                     key={key}
-                    onClick={() => setIntervalMode(key)}
+                    onClick={() => selectInterval(key)}
                     style={{
                       height: 32, padding: '0 16px',
                       fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
@@ -569,7 +581,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
               </div>
 
               <button
-                onClick={() => setLiveMode(v => !v)}
+                onClick={() => setLiveMode(v => { const next = !v; localStorage.setItem('perf_live', String(next)); return next; })}
                 style={{
                   height: 32, padding: '0 14px',
                   display: 'flex', alignItems: 'center', gap: 6,
@@ -626,7 +638,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
                       <CartesianGrid {...GRID_PROPS} />
                       <XAxis {...(liveMode ? liveXAxisProps : histXAxisProps)} />
                       <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} tickFormatter={bwScale.fmt} width={85} />
-                      <Tooltip {...TOOLTIP_STYLE} labelFormatter={(v, pts) => pts?.[0]?.payload?.hhmmss ?? v} formatter={(v: number) => [fmtBw(v), '']} />
+                      <Tooltip {...TOOLTIP_STYLE} labelFormatter={(v, pts) => pts?.[0]?.payload?.hhmmss ?? pts?.[0]?.payload?.timestamp ?? (typeof v === 'number' ? fmtTs(new Date(v).toISOString(), interval) : String(v))} formatter={(v: number) => [fmtBw(v), '']} />
                       {vis('read') && <Area type="monotone" dataKey="read" stroke={C.read} fill="url(#gRead)" strokeWidth={2} isAnimationActive={!liveMode} animationDuration={600} />}
                       {vis('write') && <Area type="monotone" dataKey="write" stroke={C.write} fill="url(#gWrite)" strokeWidth={2} isAnimationActive={!liveMode} animationDuration={600} />}
                     </AreaChart>
@@ -654,7 +666,14 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
       case 'storage-history': {
         const capStorageMaxGB = capacityData.reduce((m, d) => Math.max(m, d.alloc || 0, d.free || 0), 0.01);
         const capGbScale = getGbScale(capStorageMaxGB);
-        const capHistXAxisProps = { dataKey: 'timestamp' as const, axisLine: false, tickLine: false, tick: AXIS_TICK, minTickGap: 40 };
+        const capHistXAxisProps = {
+          dataKey: 'tsMs' as const,
+          type: 'number' as const,
+          scale: 'time' as const,
+          domain: [capacityData.length > 0 ? capacityData[0].tsMs : 'dataMin', Date.now()] as [number | string, number],
+          tickFormatter: (v: number) => fmtTs(new Date(v).toISOString(), interval),
+          axisLine: false, tickLine: false, tick: AXIS_TICK, minTickGap: 40,
+        };
 
         // Compute forecast from capacity data for the selected interval:
         // avgWriteMbPerSec → GB/day → daysUntilFull = freeGb / gbPerDay

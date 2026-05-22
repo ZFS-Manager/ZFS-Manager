@@ -80,6 +80,8 @@ function TopBar({
   onMenuOpen,
   sysNotifications,
   onMarkRead,
+  onMarkAllSystemRead,
+  onClearAllSystem,
 }: {
   loading: boolean;
   systemStats: any;
