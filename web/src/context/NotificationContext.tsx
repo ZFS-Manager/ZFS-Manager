@@ -201,10 +201,14 @@ export function NotificationCenter({
   onClose,
   systemNotifications = [],
   onMarkSystemRead,
+  onMarkAllSystemRead,
+  onClearAllSystem,
 }: {
   onClose: () => void;
   systemNotifications?: any[];
   onMarkSystemRead?: (id: number) => void;
+  onMarkAllSystemRead?: () => void;
+  onClearAllSystem?: () => void;
 }) {
   const { notifications, markRead, markAllRead, remove, clearAll, unreadCount } = useNotifications();
   const [tab, setTab] = useState<'app' | 'system'>('app');
@@ -242,11 +246,11 @@ export function NotificationCenter({
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
           <button
-            onClick={markAllRead}
+            onClick={() => { markAllRead(); onMarkAllSystemRead?.(); }}
             style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: 'var(--accent)', fontFamily: 'var(--font-ui)', padding: '2px 6px' }}
           >Mark all read</button>
           <button
-            onClick={clearAll}
+            onClick={() => { clearAll(); onClearAllSystem?.(); }}
             style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', padding: '2px 6px' }}
           >Clear</button>
         </div>

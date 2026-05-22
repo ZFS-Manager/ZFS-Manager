@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import PageTransition from './PageTransition';
 import {
   Camera, Trash2, RotateCcw, Search, Clock, Plus,
   X, Loader2, CheckCircle, XCircle, AlertTriangle
@@ -118,6 +119,7 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
   const [toast, setToast]                     = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const [selected, setSelected]               = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting]       = useState(false);
+  const [visibleCount, setVisibleCount]       = useState(15);
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ msg, type });
@@ -127,6 +129,14 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
   const filtered = useMemo(() =>
     snapshots.filter(s => s.name?.toLowerCase().includes(search.toLowerCase())),
     [snapshots, search]
+  );
+
+  // Reset visible count when filters change
+  useEffect(() => { setVisibleCount(15); }, [search]);
+
+  const visibleSnaps = useMemo(() =>
+    filtered.slice(0, visibleCount),
+    [filtered, visibleCount]
   );
 
   const datasetOptions = useMemo(() => {
@@ -221,8 +231,10 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
 
   const allSelected = filtered.length > 0 && selected.size === filtered.length;
 
+  const animEnabled = localStorage.getItem('page_animations') !== 'false';
+
   return (
-    <div style={{ paddingBottom: 40 }}>
+    <PageTransition><div style={{ paddingBottom: 40 }}>
       <AnimatePresence>{toast && <Toast msg={toast.msg} type={toast.type} />}</AnimatePresence>
 
       {/* Create Modal */}
@@ -409,7 +421,7 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
               </tr>
             </thead>
             <tbody>
-              {filtered.map((snap, idx) => {
+              {visibleSnaps.map((snap, idx) => {
                 const snapName    = snap.name?.split('@').pop() || snap.name;
                 const datasetName = snap.name?.split('@')[0] || '—';
                 const usedBytes   = Number(snap.used);
@@ -417,9 +429,9 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
                 return (
                   <motion.tr
                     key={snap.name || idx}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: Math.min(idx * 0.015, 0.3) }}
+                    initial={animEnabled ? { opacity: 0 } : false}
+                    animate={animEnabled ? { opacity: 1 } : undefined}
+                    transition={{ delay: animEnabled ? Math.min(idx * 0.015, 0.3) : 0 }}
                     style={isSelected ? { background: 'var(--accent-dim)' } : undefined}
                   >
                     <td style={{ textAlign: 'center' }}>
@@ -488,6 +500,22 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
           </table>
         </div>
 
+        {/* Load more */}
+        {visibleCount < filtered.length && (
+          <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+              Showing {visibleCount} of {filtered.length}
+            </span>
+            <button
+              className="btn btn-secondary"
+              onClick={() => setVisibleCount(v => v + 15)}
+              style={{ fontSize: 11, padding: '4px 14px', height: 28 }}
+            >
+              Load more
+            </button>
+          </div>
+        )}
+
         {/* Empty state */}
         {filtered.length === 0 && (
           <div style={{ padding: '80px 40px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
@@ -554,6 +582,6 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </div></PageTransition>
   );
 }

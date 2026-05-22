@@ -7,6 +7,8 @@ import { Activity, HardDrive, Edit2, Check, Plus } from 'lucide-react';
 import { api } from '../api';
 import { useLayout } from '../hooks/useLayout';
 import WidgetShell from './WidgetShell';
+import PageTransition from './PageTransition';
+import PhysicalDisksTable from './PhysicalDisksTable';
 
 interface PerformanceProps {
   stats: any[];
@@ -19,17 +21,16 @@ interface PerformanceProps {
     write_bw_mb: number;
     read_iops: number;
     write_iops: number;
-    total_read_gb_db?: number;
-    total_write_gb_db?: number;
   } | null;
   serverTimeOffsetMs?: number;
+  pools?: any[];
 }
 
 type Interval = '1h' | '6h' | '1d' | '7d' | '1m' | '1y';
 
 const INTERVALS: { key: Interval; label: string; api: string }[] = [
   { key: '1h',  label: '1H',  api: '1h'  },
-  { key: '6h',  label: '6H',  api: '1d'  },
+  { key: '6h',  label: '6H',  api: '6h'  },
   { key: '1d',  label: '24H', api: '1d'  },
   { key: '7d',  label: '7D',  api: '1w'  },
   { key: '1m',  label: '1M',  api: '1m'  },
@@ -40,6 +41,35 @@ const INTERVALS: { key: Interval; label: string; api: string }[] = [
 const SECONDS_PER_POINT: Record<Interval, number> = {
   '1h': 60, '6h': 300, '1d': 300, '7d': 1800, '1m': 7200, '1y': 86400,
 };
+
+const INTERVAL_MS: Record<Interval, number> = {
+  '1h':  60   * 60 * 1000,
+  '6h':  6    * 60 * 60 * 1000,
+  '1d':  24   * 60 * 60 * 1000,
+  '7d':  7    * 24 * 60 * 60 * 1000,
+  '1m':  30   * 24 * 60 * 60 * 1000,
+  '1y':  365  * 24 * 60 * 60 * 1000,
+};
+
+function getXTicks(interval: Interval, now: number): number[] {
+  const cfg: Record<Interval, { step: number; count: number }> = {
+    '1h': { step: 10 * 60 * 1000,           count: 7  },
+    '6h': { step: 30 * 60 * 1000,           count: 13 },
+    '1d': { step: 2  * 60 * 60 * 1000,      count: 13 },
+    '7d': { step: 24 * 60 * 60 * 1000,      count: 8  },
+    '1m': { step: 7  * 24 * 60 * 60 * 1000, count: 5  },
+    '1y': { step: 30 * 24 * 60 * 60 * 1000, count: 13 },
+  };
+  const { step, count } = cfg[interval];
+  return Array.from({ length: count }, (_, i) => now - (count - 1 - i) * step);
+}
+
+function fmtTickLabel(v: number, iv: Interval): string {
+  const d = new Date(v);
+  if (iv === '1h' || iv === '6h' || iv === '1d')
+    return d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+}
 
 const C = {
   read: '#38bdf8', write: '#818cf8',
@@ -60,7 +90,7 @@ const TOOLTIP_STYLE = {
   itemStyle: { fontWeight: 600 },
 };
 const AXIS_TICK  = { fill: '#52525b', fontSize: 10 };
-const GRID_PROPS = { strokeDasharray: '1 6' as const, stroke: 'rgba(255,255,255,0.04)', vertical: false };
+const GRID_PROPS = { strokeDasharray: '3 6' as const, stroke: 'rgba(255,255,255,0.15)', vertical: false };
 
 function getBwScale(maxMB: number): { unit: string; fmt: (v: number) => string } {
   if (maxMB >= 1000) return { unit: 'GB/s', fmt: v => `${(v / 1000).toFixed(1)}\u00A0GB/s` };
@@ -118,6 +148,7 @@ function transformHistory(metrics: any[], interval: Interval): any[] {
     } else {
       seen.set(key, {
         ts: fmtTs(m.collected_at, interval),
+        tsMs: new Date(m.collected_at).getTime(),
         read: m.read_bw_mb, write: m.write_bw_mb, iops: m.iops,
         alloc: m.alloc_gb, free: m.free_gb,
         cpu: m.cpu_percent, arc: m.arc_hit_ratio, n: 1,
@@ -125,9 +156,9 @@ function transformHistory(metrics: any[], interval: Interval): any[] {
     }
   }
   return Array.from(seen.values()).map(g => ({
-    timestamp: g.ts, read: g.read, write: g.write, iops: g.iops,
+    timestamp: g.ts, tsMs: g.tsMs, read: g.read, write: g.write, iops: g.iops,
     alloc: g.alloc, free: g.free, cpu: g.cpu / g.n, arcHit: g.arc / g.n,
-  }));
+  })).sort((a, b) => a.tsMs - b.tsMs);
 }
 
 
@@ -257,38 +288,51 @@ function SectionHeader({ label, badge }: { label: string; badge: string }) {
 
 const WIDGET_LABELS: Record<string, string> = {
   'live-gauges':     'Live I/O Gauges',
+  'disk-io':         'Physical Disks',
   'io-chart':        'Historical I/O Chart',
   'storage-history': 'Storage Space History',
   'smart-health':    'SMART / Disk Health',
 };
 
-export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0 }: PerformanceProps) {
+export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0, pools: poolsProp }: PerformanceProps) {
   const { widgets, loaded, setVisible, reorder, toast } = useLayout('performance');
   const [editMode, setEditMode]         = useState(false);
   const [dragFrom, setDragFrom]         = useState<string | null>(null);
   const [dragOver, setDragOver]         = useState<string | null>(null);
 
-  const [interval, setIntervalMode]     = useState<Interval>('1d');
+  const [interval, _setInterval]        = useState<Interval>(() => {
+    const saved = localStorage.getItem('perf_interval') as Interval | null;
+    return (saved && INTERVALS.some(i => i.key === saved)) ? saved : '1d';
+  });
+  const selectInterval = useCallback((iv: Interval) => {
+    localStorage.setItem('perf_interval', iv);
+    _setInterval(iv);
+  }, []);
   const [capacityData, setCapacityData] = useState<any[]>([]);
   const [loadingCapacity, setLoadingCapacity] = useState(false);
-  const [liveMode, setLiveMode]         = useState(false);
+  const [liveMode, setLiveMode]         = useState(() => localStorage.getItem('perf_live') === 'true');
   const [historyData, setHistoryData]   = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [hidden, setHidden]             = useState<Set<string>>(new Set());
   const [smartData, setSmartData]       = useState<any[]>([]);
 
+  // Per-disk metrics: poolName → disk rows; refreshed every 1 s
+  const [diskMetrics, setDiskMetrics]   = useState<Record<string, any[]>>({});
+  const [diskPools, setDiskPools]       = useState<string[]>([]);
+
+  const animEnabled = localStorage.getItem('page_animations') !== 'false';
   const liveStats = stats;
   const livePoint = liveStats.length > 0 ? liveStats[liveStats.length - 1] : null;
 
   const chartData = historyData;
   const secPerPt  = SECONDS_PER_POINT[interval];
 
-  // Live timestamps based on server time
+  // Live timestamps based on server time; stats are now updated every 1s
   const liveDataWithTimestamps = useMemo(() => {
     const now = Date.now() + serverTimeOffsetMs;
     const n   = liveStats.length;
     return liveStats.map((s: any, i: number) => {
-      const msAgo = (n - 1 - i) * 5000;
+      const msAgo = (n - 1 - i) * 1000;
       const t     = new Date(now - msAgo);
       return {
         tsMs:     t.getTime(),
@@ -312,36 +356,26 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     return smoothedLiveData;
   }, [liveMode, chartData, smoothedLiveData]);
 
-  // Fetch chart history when interval changes (and not in live mode); poll every 10s
-  useEffect(() => {
-    if (liveMode) return;
-    setHistoryData([]);
-    setLoadingHistory(true);
-    const apiInterval = INTERVALS.find(i => i.key === interval)?.api ?? interval;
-    const fetch = () =>
-      api.getMetricsHistory(apiInterval)
-        .then(res => setHistoryData(transformHistory(res.metrics, interval)))
-        .catch(() => setHistoryData([]))
-        .finally(() => setLoadingHistory(false));
-    fetch();
-    const id = setInterval(fetch, 10_000);
-    return () => clearInterval(id);
-  }, [interval, liveMode]);
-
-  // Fetch capacity history for Pool Capacity widget — follows the selected interval, poll every 15s
+  // Single history fetch shared by IO chart and capacity widget; poll every 10s.
+  // When liveMode=true the IO chart uses live stream data, but capacity still needs history.
   useEffect(() => {
     setCapacityData([]);
     setLoadingCapacity(true);
+    if (!liveMode) { setHistoryData([]); setLoadingHistory(true); }
     const apiInterval = INTERVALS.find(i => i.key === interval)?.api ?? interval;
-    const fetchCap = () =>
+    const fetchHistory = () =>
       api.getMetricsHistory(apiInterval)
-        .then(res => setCapacityData(transformHistory(res.metrics, interval)))
-        .catch(() => setCapacityData([]))
-        .finally(() => setLoadingCapacity(false));
-    fetchCap();
-    const id = setInterval(fetchCap, 15_000);
+        .then(res => {
+          const data = transformHistory(res.metrics, interval);
+          setCapacityData(data);
+          if (!liveMode) setHistoryData(data);
+        })
+        .catch(() => { setCapacityData([]); if (!liveMode) setHistoryData([]); })
+        .finally(() => { setLoadingCapacity(false); setLoadingHistory(false); });
+    fetchHistory();
+    const id = setInterval(fetchHistory, 30_000);
     return () => clearInterval(id);
-  }, [interval]);
+  }, [interval, liveMode]);
 
   useEffect(() => {
     api.getDisks().then(async res => {
@@ -358,6 +392,24 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
       );
     }).catch(() => {});
   }, []);
+
+  // Per-disk metrics every 1s; uses pool names from the prop to avoid a duplicate getPools call
+  useEffect(() => {
+    const names = (poolsProp || []).map((p: any) => p.name).filter(Boolean);
+    if (names.length === 0) { setDiskMetrics({}); setDiskPools([]); return; }
+    setDiskPools(names);
+    const fetchDisks = async () => {
+      try {
+        const results = await Promise.all(names.map((n: string) => api.getPoolDiskMetrics(n)));
+        const map: Record<string, any[]> = {};
+        results.forEach((r, i) => { map[names[i]] = r.disks || []; });
+        setDiskMetrics(map);
+      } catch { /* ignore */ }
+    };
+    fetchDisks();
+    const id = setInterval(fetchDisks, 1_000);
+    return () => clearInterval(id);
+  }, [(poolsProp || []).map((p: any) => p.name).join(',')]);
 
   const toggle = useCallback((key: string) => {
     setHidden(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
@@ -376,6 +428,23 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const dispLiveAvgW  = displayData.length ? displayData.reduce((s, d) => s + (d.write || 0), 0) / displayData.length : 0;
   const dispLiveTotalR = displayData.reduce((s, d) => s + (d.read  || 0) * displaySecPt / 1024, 0);
   const dispLiveTotalW = displayData.reduce((s, d) => s + (d.write || 0) * displaySecPt / 1024, 0);
+
+  // Pool Capacity chart: use exactly the same fields Dashboard uses.
+  // Dashboard "Used Storage"    → pools[].used_bytes      (from `zfs get used`,      via /api/v1/pools)
+  // Dashboard "Available Space" → pools[].available_bytes (from `zfs get available`, via /api/v1/pools)
+  // The zfs_metrics table stores raw zpool physical alloc/free which can differ significantly
+  // (e.g. RAIDZ physical alloc 28 TB vs logical used 8 TB). Reading from pools prop ensures
+  // Pool Capacity shows the same values as Dashboard with no additional API calls.
+  const correctedCapacityData = useMemo(() => {
+    const totalUsedGb  = (poolsProp || []).reduce((s: number, p: any) => s + (p.used_bytes      || 0), 0) / 1_073_741_824;
+    const totalAvailGb = (poolsProp || []).reduce((s: number, p: any) => s + (p.available_bytes || 0), 0) / 1_073_741_824;
+    if ((totalUsedGb <= 0 && totalAvailGb <= 0) || capacityData.length === 0) return capacityData;
+    return capacityData.map((d: any) => ({
+      ...d,
+      alloc: totalUsedGb,   // pools[].used_bytes      — Dashboard "Used Storage"
+      free:  totalAvailGb,  // pools[].available_bytes — Dashboard "Available Space"
+    }));
+  }, [capacityData, (poolsProp || []).map((p: any) => `${p.available_bytes},${p.used_bytes}`).join('|')]);
 
   // Compute scales for charts
   const ioMaxMB = ioDisplayData.reduce((m, d) => Math.max(m, d.read || 0, d.write || 0), 0.01);
@@ -399,6 +468,10 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const totalWriteGB = (liveMetrics?.total_write_mb ?? 0) / 1024;
 
   // XAxis config
+  const nowMs = Date.now();
+  const histXDomain: [number, number] = [nowMs - INTERVAL_MS[interval], nowMs];
+  const histXTicks = getXTicks(interval, nowMs);
+
   const liveXAxisProps = {
     dataKey: 'tsMs' as const,
     type: 'number' as const,
@@ -408,8 +481,13 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     axisLine: false, tickLine: false, tick: AXIS_TICK,
   };
   const histXAxisProps = {
-    dataKey: 'timestamp' as const,
-    axisLine: false, tickLine: false, tick: AXIS_TICK, minTickGap: 40,
+    dataKey: 'tsMs' as const,
+    type: 'number' as const,
+    scale: 'time' as const,
+    domain: histXDomain,
+    ticks: histXTicks,
+    tickFormatter: (v: number) => fmtTickLabel(v, interval),
+    axisLine: false, tickLine: false, tick: AXIS_TICK, minTickGap: 30,
   };
 
   const handleDragStart = useCallback((id: string) => setDragFrom(id), []);
@@ -436,8 +514,8 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         const totalWrite = fmtTotal(totalWriteGB);
         return (
           <div>
-            <SectionHeader label="Live I/O" badge="0.5 s" />
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
+            <SectionHeader label="Live I/O" badge="1 s" />
+            <div className="perf-stats-grid">
               <GaugeCard
                 label="↑ Read Speed"
                 value={ioReadBw >= 1000 ? (ioReadBw / 1000).toFixed(2) : ioReadBw.toFixed(1)}
@@ -483,7 +561,24 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         );
       }
 
-      case 'io-chart':
+      case 'disk-io':
+        return (
+          <Panel title="Physical Disks" sub="Per-disk I/O · 1 s refresh">
+            <PhysicalDisksTable diskPools={diskPools} diskMetrics={diskMetrics} />
+          </Panel>
+        );
+
+      case 'io-chart': {
+        const ioNowMs = Date.now();
+        const ioChartData = (() => {
+          if (liveMode || chartData.length === 0) return ioDisplayData;
+          const last = chartData[chartData.length - 1];
+          const ageSec = (ioNowMs - (last.tsMs || 0)) / 1000;
+          if (ageSec > 60) {
+            return [...chartData, { ...last, tsMs: ioNowMs }];
+          }
+          return chartData;
+        })();
         return (
           <div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -495,7 +590,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
                 {INTERVALS.map(({ key, label }) => (
                   <button
                     key={key}
-                    onClick={() => setIntervalMode(key)}
+                    onClick={() => selectInterval(key)}
                     style={{
                       height: 32, padding: '0 16px',
                       fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
@@ -513,7 +608,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
               </div>
 
               <button
-                onClick={() => setLiveMode(v => !v)}
+                onClick={() => setLiveMode(v => { const next = !v; localStorage.setItem('perf_live', String(next)); return next; })}
                 style={{
                   height: 32, padding: '0 14px',
                   display: 'flex', alignItems: 'center', gap: 6,
@@ -560,9 +655,9 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
                   </div>
                 }
               >
-                <div style={{ height: 240, marginLeft: 8, overflow: 'visible' }}>
+                <div style={{ height: 240, overflow: 'visible' }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={ioDisplayData} margin={CHART_MARGIN}>
+                    <AreaChart data={ioChartData} margin={CHART_MARGIN}>
                       <defs>
                         <linearGradient id="gRead" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.read} stopOpacity={0.15}/><stop offset="95%" stopColor={C.read} stopOpacity={0}/></linearGradient>
                         <linearGradient id="gWrite" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.write} stopOpacity={0.15}/><stop offset="95%" stopColor={C.write} stopOpacity={0}/></linearGradient>
@@ -570,7 +665,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
                       <CartesianGrid {...GRID_PROPS} />
                       <XAxis {...(liveMode ? liveXAxisProps : histXAxisProps)} />
                       <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} tickFormatter={bwScale.fmt} width={85} />
-                      <Tooltip {...TOOLTIP_STYLE} labelFormatter={(v, pts) => pts?.[0]?.payload?.hhmmss ?? v} formatter={(v: number) => [fmtBw(v), '']} />
+                      <Tooltip {...TOOLTIP_STYLE} labelFormatter={(v, pts) => pts?.[0]?.payload?.hhmmss ?? pts?.[0]?.payload?.timestamp ?? (typeof v === 'number' ? fmtTs(new Date(v).toISOString(), interval) : String(v))} formatter={(v: number) => [fmtBw(v), '']} />
                       {vis('read') && <Area type="monotone" dataKey="read" stroke={C.read} fill="url(#gRead)" strokeWidth={2} isAnimationActive={!liveMode} animationDuration={600} />}
                       {vis('write') && <Area type="monotone" dataKey="write" stroke={C.write} fill="url(#gWrite)" strokeWidth={2} isAnimationActive={!liveMode} animationDuration={600} />}
                     </AreaChart>
@@ -594,15 +689,40 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
             )}
           </div>
         );
+      }
 
       case 'storage-history': {
-        const capStorageMaxGB = capacityData.reduce((m, d) => Math.max(m, d.alloc || 0, d.free || 0), 0.01);
+        const capNowMs = Date.now();
+        const capWindowStart = capNowMs - INTERVAL_MS[interval];
+
+        // Build display data: extend the lines flat to "now" so the chart always fills
+        // the full time window. If the last real point is >60s old, append a synthetic
+        // point at tsMs=now with the last known alloc/free values.
+        const capDisplayData = (() => {
+          if (correctedCapacityData.length === 0) return correctedCapacityData;
+          const last = correctedCapacityData[correctedCapacityData.length - 1];
+          const ageSec = (capNowMs - (last.tsMs || 0)) / 1000;
+          if (ageSec > 60) {
+            return [...correctedCapacityData, { ...last, tsMs: capNowMs }];
+          }
+          return correctedCapacityData;
+        })();
+
+        const capStorageMaxGB = capDisplayData.reduce((m, d) => Math.max(m, d.alloc || 0, d.free || 0), 0.01);
         const capGbScale = getGbScale(capStorageMaxGB);
-        const capHistXAxisProps = { dataKey: 'timestamp' as const, axisLine: false, tickLine: false, tick: AXIS_TICK, minTickGap: 40 };
+        const capHistXAxisProps = {
+          dataKey: 'tsMs' as const,
+          type: 'number' as const,
+          scale: 'time' as const,
+          domain: [capWindowStart, capNowMs] as [number, number],
+          ticks: getXTicks(interval, capNowMs),
+          tickFormatter: (v: number) => fmtTickLabel(v, interval),
+          axisLine: false, tickLine: false, tick: AXIS_TICK, minTickGap: 30,
+        };
 
         // Compute forecast from capacity data for the selected interval:
         // avgWriteMbPerSec → GB/day → daysUntilFull = freeGb / gbPerDay
-        const lastFreeGb = capacityData.length > 0 ? (capacityData[capacityData.length - 1].free || 0) : 0;
+        const lastFreeGb = correctedCapacityData.length > 0 ? (correctedCapacityData[correctedCapacityData.length - 1].free || 0) : 0;
         const avgWriteMbPerSec = capacityData.length > 0
           ? capacityData.reduce((s, d) => s + (d.write || 0), 0) / capacityData.length
           : 0;
@@ -637,7 +757,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
             <div style={{ height: 240 }}>
               {loadingCapacity ? <Skeleton height={240} /> : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={capacityData} margin={CHART_MARGIN}>
+                  <AreaChart data={capDisplayData} margin={CHART_MARGIN}>
                     <CartesianGrid {...GRID_PROPS} />
                     <XAxis {...capHistXAxisProps} />
                     <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} tickFormatter={capGbScale.fmt} width={85} />
@@ -709,6 +829,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   if (!loaded) return <div style={{ padding: 24 }}><Skeleton height={400} /></div>;
 
   return (
+    <PageTransition>
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.01em' }}>System Performance</h1>
@@ -751,5 +872,6 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         </div>
       )}
     </div>
+    </PageTransition>
   );
 }

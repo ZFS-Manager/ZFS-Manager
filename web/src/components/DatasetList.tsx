@@ -9,6 +9,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { api, formatBytes } from '../api';
 import { useNotifications } from '../context/NotificationContext';
+import PageTransition from './PageTransition';
 
 interface DatasetListProps {
   datasets: ZFSDataset[];
@@ -138,22 +139,28 @@ const ACT_BTN: React.CSSProperties = {
 type PropDef = {
   name: string;
   label: string;
+  desc: string;
+  group: string;
   type: 'toggle' | 'select' | 'text';
   options?: string[];
 };
 
 const DATASET_PROP_DEFS: PropDef[] = [
-  { name: 'compression',  label: 'Compression',    type: 'select', options: ['off', 'lz4', 'zstd', 'gzip', 'zle'] },
-  { name: 'atime',        label: 'Access Time',    type: 'toggle' },
-  { name: 'relatime',     label: 'Relative Atime', type: 'toggle' },
-  { name: 'dedup',        label: 'Deduplication',  type: 'toggle' },
-  { name: 'readonly',     label: 'Read-Only',      type: 'toggle' },
-  { name: 'recordsize',   label: 'Record Size',    type: 'select', options: ['512', '1K', '2K', '4K', '8K', '16K', '32K', '64K', '128K', '1M'] },
-  { name: 'xattr',        label: 'Extended Attrs', type: 'select', options: ['on', 'off', 'sa'] },
-  { name: 'quota',        label: 'Quota',          type: 'text' },
-  { name: 'reservation',  label: 'Reservation',    type: 'text' },
-  { name: 'snapdir',      label: 'Snapshot Dir',   type: 'select', options: ['hidden', 'visible'] },
-  { name: 'sync',         label: 'Sync Mode',      type: 'select', options: ['standard', 'always', 'disabled'] },
+  // Compression & I/O
+  { name: 'compression', label: 'Compression',    desc: 'Compression algorithm for new blocks — lz4 is fastest with minimal overhead', group: 'Compression & I/O', type: 'select', options: ['off', 'lz4', 'zstd', 'gzip', 'zle'] },
+  { name: 'recordsize',  label: 'Record Size',    desc: 'Suggested block size; tune to workload — 4K–16K for DBs, 128K for media', group: 'Compression & I/O', type: 'select', options: ['512', '1K', '2K', '4K', '8K', '16K', '32K', '64K', '128K', '1M'] },
+  { name: 'xattr',       label: 'Extended Attrs', desc: 'Storage method for extended attributes — sa avoids extra znodes on ZFS', group: 'Compression & I/O', type: 'select', options: ['on', 'off', 'sa'] },
+  { name: 'sync',        label: 'Sync Mode',      desc: 'Controls fsync() behavior — disabled improves throughput at risk of data loss on crash', group: 'Compression & I/O', type: 'select', options: ['standard', 'always', 'disabled'] },
+  // Access
+  { name: 'atime',    label: 'Access Time',    desc: 'Update last-access timestamp on every read — disable for better read performance', group: 'Access', type: 'toggle' },
+  { name: 'relatime', label: 'Relative Atime', desc: 'Only update atime if older than mtime — compromise between on and off', group: 'Access', type: 'toggle' },
+  { name: 'dedup',    label: 'Deduplication',  desc: 'Eliminate duplicate blocks — requires roughly 5 GB RAM per 1 TB of data', group: 'Access', type: 'toggle' },
+  { name: 'readonly', label: 'Read-Only',      desc: 'Mount dataset in read-only mode — prevents any writes or modifications', group: 'Access', type: 'toggle' },
+  // Quotas
+  { name: 'quota',      label: 'Quota',       desc: 'Hard size limit including descendants and snapshots (e.g. 100G)', group: 'Quotas', type: 'text' },
+  { name: 'reservation',label: 'Reservation', desc: 'Minimum space guaranteed from pool free space (e.g. 10G)', group: 'Quotas', type: 'text' },
+  // Visibility
+  { name: 'snapdir', label: 'Snapshot Dir', desc: 'Controls visibility of the .zfs/snapshot directory to regular users', group: 'Visibility', type: 'select', options: ['hidden', 'visible'] },
 ];
 
 function PopoutPropRow({ def, value, currentValue, onChange }: {
@@ -161,19 +168,21 @@ function PopoutPropRow({ def, value, currentValue, onChange }: {
 }) {
   const changed = value !== currentValue;
   const inputStyle: React.CSSProperties = {
-    flex: 1, height: 30, padding: '0 8px',
+    width: 120, height: 30, padding: '0 8px', flexShrink: 0,
     background: 'var(--bg-elevated)',
     border: `1px solid ${changed ? 'var(--accent)' : 'var(--border)'}`,
     borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)',
     fontFamily: 'var(--font-mono)', fontSize: 11, outline: 'none',
   };
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)' }}>
-      <div style={{ width: 130, flexShrink: 0 }}>
-        <div style={{ fontSize: 11, fontWeight: 500, color: changed ? 'var(--accent)' : 'var(--text-secondary)', fontFamily: 'var(--font-ui)' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, fontWeight: 500, color: changed ? 'var(--accent)' : 'var(--text-primary)', fontFamily: 'var(--font-ui)' }}>
           {def.label}
         </div>
-        <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{def.name}</div>
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', marginTop: 2, lineHeight: 1.4 }}>
+          {def.desc}
+        </div>
       </div>
       {def.type === 'toggle' ? (
         <button
@@ -318,15 +327,24 @@ function DatasetSettingsPopout({
               <button className="btn btn-secondary" onClick={load}>Retry</button>
             </div>
           ) : (
-            <div style={{ paddingTop: 16, paddingBottom: 20 }}>
-              {DATASET_PROP_DEFS.map(def => (
-                <PopoutPropRow
-                  key={def.name}
-                  def={def}
-                  value={edits[def.name] ?? ''}
-                  currentValue={props[def.name] ?? ''}
-                  onChange={v => setEdits(e => ({ ...e, [def.name]: v }))}
-                />
+            <div style={{ paddingTop: 8, paddingBottom: 20 }}>
+              {Array.from(new Set(DATASET_PROP_DEFS.map(d => d.group))).map(group => (
+                <div key={group}>
+                  <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, marginBottom: 2, paddingBottom: 8, borderBottom: '1px solid var(--border)' }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>
+                      {group}
+                    </span>
+                  </div>
+                  {DATASET_PROP_DEFS.filter(d => d.group === group).map(def => (
+                    <PopoutPropRow
+                      key={def.name}
+                      def={def}
+                      value={edits[def.name] ?? ''}
+                      currentValue={props[def.name] ?? ''}
+                      onChange={v => setEdits(e => ({ ...e, [def.name]: v }))}
+                    />
+                  ))}
+                </div>
               ))}
             </div>
           )}
@@ -393,6 +411,7 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
   const [rewriteState,  setRewriteState]  = useState<Record<string, boolean>>({});
   const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null);
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
+  const animEnabled = localStorage.getItem('page_animations') !== 'false';
 
   useEffect(() => {
     setExpandedNodes(new Set(datasets.map(d => d.name)));
@@ -524,6 +543,7 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
   }, [sortedFlat]);
 
   return (
+    <PageTransition>
     <div style={{ paddingBottom: 40 }}>
       {/* Create Modal */}
       <AnimatePresence>
@@ -677,6 +697,9 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
                   <th onClick={() => handleSort('used')} className={sortField === 'used' ? 'sort-active' : ''} style={{ cursor: 'pointer' }}>
                     Used {sortField === 'used' && (sortDir === 'asc' ? <ArrowUp size={10} style={{ display: 'inline' }} /> : <ArrowDown size={10} style={{ display: 'inline' }} />)}
                   </th>
+                  <th onClick={() => handleSort('avail')} className={sortField === 'avail' ? 'sort-active' : ''} style={{ cursor: 'pointer' }}>
+                    Available {sortField === 'avail' && (sortDir === 'asc' ? <ArrowUp size={10} style={{ display: 'inline' }} /> : <ArrowDown size={10} style={{ display: 'inline' }} />)}
+                  </th>
                   <th>Referenced</th>
                   <th>Compression</th>
                   <th style={{ minWidth: 180 }}>Mount Point</th>
@@ -690,7 +713,7 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
                     <React.Fragment key={poolName}>
                       {/* Pool header row */}
                       <tr>
-                        <td colSpan={7} style={{
+                        <td colSpan={8} style={{
                           padding: '8px 16px',
                           background: 'var(--bg-elevated)',
                           borderBottom: '1px solid var(--border)',
@@ -715,12 +738,17 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
                       </tr>
 
                       {/* Dataset rows */}
-                      {items.map(({ dataset: ds, depth, hasChildren }) => {
+                      {items.map(({ dataset: ds, depth, hasChildren }, idx) => {
                         const dsType = (ds as any).type || 'filesystem';
                         const typeLabel = dsType === 'volume' ? 'VOL' : dsType === 'snapshot' ? 'SNAP' : 'FS';
                         const typeClass = dsType === 'volume' ? 'badge badge-vol' : dsType === 'snapshot' ? 'badge badge-snap' : 'badge badge-fs';
                         return (
-                          <tr key={ds.id}>
+                          <motion.tr
+                            key={ds.id}
+                            initial={animEnabled ? { opacity: 0, y: -8 } : false}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.18, delay: Math.min(idx, 20) * 30 / 1000 }}
+                          >
                             <td style={{ paddingLeft: `${8 + depth * 18}px` }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                 {/* Depth connector */}
@@ -769,6 +797,11 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
                               </span>
                             </td>
                             <td>
+                              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>
+                                {ds.avail}
+                              </span>
+                            </td>
+                            <td>
                               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>
                                 {ds.refer}
                               </span>
@@ -813,7 +846,7 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
                                 </button>
                               </div>
                             </td>
-                          </tr>
+                          </motion.tr>
                         );
                       })}
                     </React.Fragment>
@@ -881,5 +914,6 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
         </div>
       )}
     </div>
+    </PageTransition>
   );
 }

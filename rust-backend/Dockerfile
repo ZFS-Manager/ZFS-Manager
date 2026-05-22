@@ -29,6 +29,8 @@ FROM alpine:3.20
 RUN apk add --no-cache zfs util-linux smartmontools
 
 COPY --from=builder /app/target/release/zfs-manager /usr/local/bin/zfs-manager
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # Create data directory
 RUN mkdir -p /home/docker/zfs-manager
@@ -41,4 +43,4 @@ ENV ZFS_MANAGER_DATA=/home/docker/zfs-manager
 
 WORKDIR /home/docker/zfs-manager
 
-ENTRYPOINT ["/usr/local/bin/zfs-manager"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

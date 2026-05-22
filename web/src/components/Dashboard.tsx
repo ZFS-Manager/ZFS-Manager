@@ -12,6 +12,8 @@ import { ZFSPool, ZFSDataset, ZFSLog } from '../types';
 import { formatBytes, api } from '../api';
 import { useLayout } from '../hooks/useLayout';
 import WidgetShell from './WidgetShell';
+import PageTransition from './PageTransition';
+import PhysicalDisksTable from './PhysicalDisksTable';
 
 interface DashboardProps {
   pools: ZFSPool[];
@@ -48,6 +50,17 @@ function useCounter(target: number, duration = 600) {
     return () => cancelAnimationFrame(rafRef.current);
   }, [target, duration]);
   return val;
+}
+
+function fmtBw(v: number): string {
+  if (v >= 1000) return `${(v / 1000).toFixed(2)} GB/s`;
+  if (v >= 1)    return `${v.toFixed(2)} MB/s`;
+  return `${(v * 1024).toFixed(0)} KB/s`;
+}
+function fmtGB(v: number): string {
+  if (v >= 1000) return `${(v / 1000).toFixed(2)} TB`;
+  if (v >= 1)    return `${v.toFixed(2)} GB`;
+  return `${(v * 1024).toFixed(0)} MB`;
 }
 
 function fmtDays(d: number): string {
@@ -583,6 +596,7 @@ function WidgetTray({ allWidgets, onAdd }: { allWidgets: Array<{ id: string; lab
 const WIDGET_LABELS: Record<string, string> = {
   'stats-row':        'Stats Row',
   'io-activity':      'I/O Activity',
+  'disk-io':          'Physical Disks',
   'pool-cards':       'Pool Cards',
   'system-resources': 'System Resources',
   'activity-log':     'Activity Log',
@@ -603,6 +617,8 @@ export default function Dashboard({
   const [histData1d, setHistData1d] = useState<any[]>([]);
   const [histData7d, setHistData7d] = useState<any[]>([]);
   const [scrubLive,  setScrubLive]  = useState<Record<string, {inProgress: boolean; progress: number; timeRemaining: string}>>({});
+  const [diskMetrics, setDiskMetrics] = useState<Record<string, any[]>>({});
+  const [diskPools,   setDiskPools]   = useState<string[]>([]);
   const [ioShowRead,  setIoShowRead]  = useState(true);
   const [ioShowWrite, setIoShowWrite] = useState(true);
 
@@ -677,6 +693,24 @@ export default function Dashboard({
     return () => clearInterval(id);
   }, [pools.length]);
 
+  // Per-disk metrics every 1s — uses pools prop so no duplicate getPools call
+  useEffect(() => {
+    const names = pools.map(p => p.name).filter(Boolean);
+    if (names.length === 0) { setDiskMetrics({}); setDiskPools([]); return; }
+    setDiskPools(names);
+    const fetchDisks = async () => {
+      try {
+        const results = await Promise.all(names.map(n => api.getPoolDiskMetrics(n)));
+        const map: Record<string, any[]> = {};
+        results.forEach((r, i) => { map[names[i]] = r.disks || []; });
+        setDiskMetrics(map);
+      } catch { /* ignore */ }
+    };
+    fetchDisks();
+    const id = setInterval(fetchDisks, 1_000);
+    return () => clearInterval(id);
+  }, [pools.map(p => p.name).join(',')]);
+
   const ioData      = histData1d.length > 2 ? histData1d : historicalStats;
   const bannerPools = [...pools].filter(p => p.cap >= 80).sort((a, b) => b.cap - a.cap);
 
@@ -699,7 +733,7 @@ export default function Dashboard({
       case 'stats-row':
         const rawPct = totalRawCapacity > 0 ? (totalRawUsed / totalRawCapacity) * 100 : 0;
         return (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16, alignItems: 'stretch' }}>
+          <div className="stats-row-5">
             <StatCard
               label="Total Storage"
               value={formatBytes(totalCapacity, 2)}
@@ -742,6 +776,13 @@ export default function Dashboard({
               }
             />
           </div>
+        );
+
+      case 'disk-io':
+        return (
+          <Panel title="Physical Disks" sub="Per-disk I/O · 1 s refresh">
+            <PhysicalDisksTable diskPools={diskPools} diskMetrics={diskMetrics} />
+          </Panel>
         );
 
       case 'io-activity':
@@ -808,8 +849,9 @@ export default function Dashboard({
                     </ResponsiveContainer>
                   </div>
                   {(() => {
-                    const totalR = ioData.reduce((s, d) => s + (d.read  || 0), 0);
-                    const totalW = ioData.reduce((s, d) => s + (d.write || 0), 0);
+                    const secsPerPoint = histData1d.length > 2 ? 300 : 1;
+                    const totalR = ioData.reduce((s, d) => s + (d.read  || 0), 0) * secsPerPoint;
+                    const totalW = ioData.reduce((s, d) => s + (d.write || 0), 0) * secsPerPoint;
                     const peakW  = ioData.reduce((m, d) => Math.max(m, d.write || 0), 0);
                     const fmtData = (v: number) => v >= 1024 ? `${(v/1024).toFixed(1)} TB` : `${v.toFixed(1)} GB`;
                     const fmtBw   = (v: number) => v >= 1000 ? `${(v/1000).toFixed(2)} GB/s` : `${v.toFixed(0)} MB/s`;
@@ -864,11 +906,11 @@ export default function Dashboard({
       case 'system-resources':
         return (
           <div className="two-col">
-            <Panel title="Live I/O" sub="Current throughput · 5s refresh">
+            <Panel title="Live I/O" sub="Current throughput · 1s refresh">
               <div style={{ display: 'flex' }}>
                 {[
-                  { label: '↑ Read',       value: `${currentStats.read.toFixed(1)} MB/s`,  color: '#38bdf8' },
-                  { label: '↓ Write',      value: `${currentStats.write.toFixed(1)} MB/s`, color: '#818cf8' },
+                  { label: '↑ Read',       value: fmtBw(currentStats.read),  color: '#38bdf8' },
+                  { label: '↓ Write',      value: fmtBw(currentStats.write), color: '#818cf8' },
                   { label: '↑ Read IOPS',  value: `${(currentStats.readIops ?? 0).toFixed(0)} ops/s`,  color: '#38bdf8' },
                   { label: '↓ Write IOPS', value: `${(currentStats.writeIops ?? 0).toFixed(0)} ops/s`, color: '#818cf8' },
                 ].map(({ label, value, color }, i, arr) => (
@@ -980,6 +1022,7 @@ export default function Dashboard({
   };
 
   return (
+    <PageTransition>
     <div style={{ paddingBottom: 48 }}>
 
       {/* Toast */}
@@ -995,27 +1038,14 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* Edit mode tray */}
-      {editMode && (
-        <WidgetTray
-          allWidgets={widgets.map(w => ({ id: w.id, label: WIDGET_LABELS[w.id] || w.id, visible: w.visible }))}
-          onAdd={handleAdd}
-        />
-      )}
-
       {/* Toolbar */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
         <button
           onClick={() => setEditMode(m => !m)}
-          className="btn"
-          style={{
-            gap: 6,
-            background: editMode ? 'var(--accent-dim)' : 'transparent',
-            borderColor: editMode ? 'var(--accent-mid)' : 'var(--border)',
-            color: editMode ? 'var(--accent)' : 'var(--text-muted)',
-          }}
+          className="btn btn-secondary"
+          style={{ gap: 6 }}
         >
-          {editMode ? <><Check size={13} /> Done</> : <><Edit2 size={13} /> Edit Dashboard</>}
+          {editMode ? <><Check size={13} /> Done</> : <><Edit2 size={13} /> Edit Layout</>}
         </button>
       </div>
 
@@ -1056,6 +1086,23 @@ export default function Dashboard({
         </div>
       )}
 
+      {/* Hidden widgets tray (edit mode) */}
+      {editMode && (
+        <div style={{ marginTop: 24, padding: 24, border: '1px dashed var(--border)', borderRadius: 'var(--radius-lg)', textAlign: 'center' }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--text-secondary)' }}>Hidden Widgets</h3>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
+            {widgets.filter(w => !w.visible).map(w => (
+              <button key={w.id} className="btn btn-secondary" onClick={() => handleAdd(w.id)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Plus size={14} /> {WIDGET_LABELS[w.id] || w.id}
+              </button>
+            ))}
+            {widgets.every(w => w.visible) && (
+              <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>All widgets are currently visible.</p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Empty state */}
       {loaded && pools.length === 0 && !loading && (
         <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '64px 32px', textAlign: 'center', marginTop: 16 }}>
@@ -1069,5 +1116,6 @@ export default function Dashboard({
         </div>
       )}
     </div>
+    </PageTransition>
   );
 }

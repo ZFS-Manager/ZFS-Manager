@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     routing::get,
     Json, Router,
 };
@@ -15,6 +15,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/metrics/history",         get(get_metrics_history))
         .route("/api/v1/metrics/live",             get(get_live_metrics))
         .route("/api/v1/metrics/fill-prediction",  get(get_fill_prediction))
+        .route("/api/v1/pools/:pool/disks",        get(get_pool_disk_metrics))
         .with_state(state)
 }
 
@@ -27,6 +28,7 @@ struct HistoryParams {
 fn cache_ttl(interval: &str) -> u64 {
     match interval {
         "1h" => 20,   // 20s — data changes every 5s, keep brief
+        "6h" => 30,   // 30s
         "1d" => 60,   // 1 min
         "1w" => 180,  // 3 min
         "1m" => 300,  // 5 min
@@ -42,6 +44,16 @@ fn build_query(interval: &str) -> String {
                  FROM zfs_metrics \
                  WHERE collected_at > NOW() - INTERVAL '1 hour' \
                  ORDER BY collected_at ASC LIMIT 720"
+            .to_string(),
+
+        "6h" => "SELECT to_timestamp(floor(extract(epoch from collected_at) / 300) * 300) AS collected_at, \
+                 pool_name, \
+                 AVG(read_bw_mb) AS read_bw_mb, AVG(write_bw_mb) AS write_bw_mb, \
+                 AVG(iops) AS iops, AVG(alloc_gb) AS alloc_gb, AVG(free_gb) AS free_gb, \
+                 AVG(cpu_percent) AS cpu_percent, AVG(arc_hit_ratio) AS arc_hit_ratio \
+                 FROM zfs_metrics \
+                 WHERE collected_at > NOW() - INTERVAL '6 hours' \
+                 GROUP BY 1, 2 ORDER BY 1 ASC LIMIT 144"
             .to_string(),
 
         "1d" => "SELECT to_timestamp(floor(extract(epoch from collected_at) / 300) * 300) AS collected_at, \
@@ -182,45 +194,29 @@ async fn get_metrics_history(
 async fn get_live_metrics(
     State(state): State<AppState>,
 ) -> Json<Value> {
-    let mut cpu_percent    = 0.0f64;
-    let mut arc_hit_ratio  = 0.0f64;
-    let mut total_read_mb  = 0.0f64;
-    let mut total_write_mb = 0.0f64;
-    let mut read_bw_mb     = 0.0f64;
-    let mut write_bw_mb    = 0.0f64;
-    let mut read_iops      = 0.0f64;
-    let mut write_iops     = 0.0f64;
-
+    // Fast path: Redis snapshot written every 1s by the live loop.
     if let Some(ref redis_conn) = state.redis {
         let mut conn = redis_conn.clone();
-
-        // Fast 500ms loop: cpu, arc, cumulative totals
         let snapshot: redis::RedisResult<Option<String>> = conn.get("zfs:live:snapshot").await;
         if let Ok(Some(hit)) = snapshot {
             if let Ok(val) = serde_json::from_str::<Value>(&hit) {
-                cpu_percent    = val["cpu_percent"].as_f64().unwrap_or(0.0);
-                arc_hit_ratio  = val["arc_hit_ratio"].as_f64().unwrap_or(0.0);
-                total_read_mb  = val["total_read_mb"].as_f64().unwrap_or(0.0);
-                total_write_mb = val["total_write_mb"].as_f64().unwrap_or(0.0);
-            }
-        }
-
-        // Slow 5s loop: instantaneous IO throughput
-        let latest: redis::RedisResult<Option<String>> = conn.get("zfs:metrics:latest").await;
-        if let Ok(Some(hit)) = latest {
-            if let Ok(val) = serde_json::from_str::<Value>(&hit) {
-                read_bw_mb  = val["read_bw_mb"].as_f64().unwrap_or(0.0);
-                write_bw_mb = val["write_bw_mb"].as_f64().unwrap_or(0.0);
-                let iops    = val["iops"].as_f64().unwrap_or(0.0);
-                read_iops   = iops / 2.0;
-                write_iops  = iops / 2.0;
+                return Json(val);
             }
         }
     }
 
+    // Fallback: Redis unavailable or key expired — read from in-memory state (no syscall).
+    use std::sync::atomic::Ordering;
+    let (read_bw_mb, write_bw_mb, read_iops, write_iops) = {
+        let cache = state.io_cache.read().await;
+        (cache.read_bw_mb, cache.write_bw_mb, cache.read_iops, cache.write_iops)
+    };
+    let total_read_mb  = state.total_read_bytes.load(Ordering::Relaxed)  as f64 / 1_048_576.0;
+    let total_write_mb = state.total_write_bytes.load(Ordering::Relaxed) as f64 / 1_048_576.0;
+
     Json(json!({
-        "cpu_percent":    cpu_percent,
-        "arc_hit_ratio":  arc_hit_ratio,
+        "cpu_percent":    0.0,
+        "arc_hit_ratio":  0.0,
         "total_read_mb":  total_read_mb,
         "total_write_mb": total_write_mb,
         "read_bw_mb":     read_bw_mb,
@@ -228,6 +224,45 @@ async fn get_live_metrics(
         "read_iops":      read_iops,
         "write_iops":     write_iops,
     }))
+}
+
+/// GET /api/v1/pools/:pool/disks
+///
+/// Returns the most recent per-disk I/O metrics for every leaf vdev in the pool.
+/// Primary source: Redis key written every 1s by the slow loop.
+/// Fallback: in-memory cache (always available, never empty after first collection).
+async fn get_pool_disk_metrics(
+    State(state): State<AppState>,
+    Path(pool): Path<String>,
+) -> Json<Value> {
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        let key = format!("zfs:disks:{}:latest", pool);
+        let cached: redis::RedisResult<Option<String>> = conn.get(&key).await;
+        if let Ok(Some(hit)) = cached {
+            if let Ok(val) = serde_json::from_str::<Value>(&hit) {
+                return Json(json!({ "pool": pool, "disks": val }));
+            }
+        }
+    }
+
+    // Fallback to in-memory cache when Redis is unavailable or key expired
+    let disks: Vec<Value> = {
+        let cache = state.io_cache.read().await;
+        cache.pool_disks.get(&pool).map(|disks| {
+            disks.iter().map(|d| json!({
+                "name":           d.name,
+                "read_bw_mb":     d.read_bw_mb,
+                "write_bw_mb":    d.write_bw_mb,
+                "read_iops":      d.read_iops,
+                "write_iops":     d.write_iops,
+                "total_read_gb":  d.total_read_gb,
+                "total_write_gb": d.total_write_gb,
+            })).collect()
+        }).unwrap_or_default()
+    };
+
+    Json(json!({ "pool": pool, "disks": disks }))
 }
 
 // ── Fill prediction ───────────────────────────────────────────────────────────

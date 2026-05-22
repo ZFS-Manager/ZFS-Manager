@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Key, Lock, Plus, Trash2, Eye, EyeOff, CheckCircle, XCircle, Copy, AlertTriangle } from 'lucide-react';
+import { Key, Lock, Plus, Trash2, Eye, EyeOff, CheckCircle, XCircle, Copy, AlertTriangle, Monitor } from 'lucide-react';
 import { api } from '../api';
+import PageTransition from './PageTransition';
 
 interface SettingsProps {
   onPasswordChanged?: () => void;
@@ -484,6 +485,57 @@ function ApiKeys({ addToast }: { addToast: (msg: string, type: 'success' | 'erro
   );
 }
 
+/* ── Appearance section ── */
+function Appearance() {
+  const [animEnabled, setAnimEnabled] = useState(
+    localStorage.getItem('page_animations') !== 'false'
+  );
+
+  const toggle = () => {
+    const next = !animEnabled;
+    setAnimEnabled(next);
+    localStorage.setItem('page_animations', next ? 'true' : 'false');
+  };
+
+  return (
+    <div style={{
+      background: 'var(--bg-surface)', border: '1px solid var(--border)',
+      borderRadius: 'var(--radius-lg)', padding: 28,
+    }}>
+      <SectionHeader
+        title="Appearance"
+        sub="Customize visual behavior of the interface."
+      />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+        <div>
+          <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
+            Page transition animations
+          </div>
+          <div style={{ fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
+            Slide-in animation when switching between pages
+          </div>
+        </div>
+        <button
+          onClick={toggle}
+          style={{
+            width: 44, height: 22, borderRadius: 11, flexShrink: 0,
+            background: animEnabled ? 'var(--success)' : 'var(--bg-elevated)',
+            border: `1px solid ${animEnabled ? 'var(--success)' : 'var(--border)'}`,
+            position: 'relative', cursor: 'pointer', transition: 'all 0.2s',
+          }}
+        >
+          <div style={{
+            position: 'absolute', top: 2,
+            left: animEnabled ? 22 : 2,
+            width: 16, height: 16, borderRadius: 8,
+            background: '#fff', transition: 'left 0.2s',
+          }} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ── Main Settings page ── */
 export default function Settings({ onPasswordChanged }: SettingsProps) {
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
@@ -503,6 +555,7 @@ export default function Settings({ onPasswordChanged }: SettingsProps) {
   };
 
   return (
+    <PageTransition>
     <div style={{ paddingBottom: 48 }}>
       <ToastContainer toasts={toasts} onClose={removeToast} />
 
@@ -515,11 +568,22 @@ export default function Settings({ onPasswordChanged }: SettingsProps) {
           Settings
         </h1>
         <p style={{ fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-muted)' }}>
-          Manage your account security and API access
+          Manage your account security, API access and appearance
         </p>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+        {/* Appearance section */}
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <Monitor size={15} style={{ color: 'var(--accent)' }} />
+            <span style={{ fontFamily: 'var(--font-ui)', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              Appearance
+            </span>
+          </div>
+          <Appearance />
+        </div>
+
         {/* Password section */}
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
@@ -543,5 +607,6 @@ export default function Settings({ onPasswordChanged }: SettingsProps) {
         </div>
       </div>
     </div>
+    </PageTransition>
   );
 }

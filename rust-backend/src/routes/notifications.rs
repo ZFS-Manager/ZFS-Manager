@@ -38,9 +38,10 @@ pub struct NotificationRule {
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route("/api/v1/notifications", get(list_notifications))
+        .route("/api/v1/notifications", get(list_notifications).delete(clear_all_notifications))
         .route("/api/v1/notifications/read", post(mark_all_read))
         .route("/api/v1/notifications/:id/read", post(mark_read))
+        .route("/api/v1/notifications/:id", delete(delete_notification))
         .route("/api/v1/notifications/channels", get(list_channels).post(create_channel))
         .route("/api/v1/notifications/channels/:id", delete(delete_channel))
         .route("/api/v1/notifications/channels/:id/test", post(test_channel))
@@ -81,12 +82,29 @@ async fn mark_all_read(State(state): State<AppState>) -> impl IntoResponse {
     StatusCode::OK
 }
 
+async fn clear_all_notifications(State(state): State<AppState>) -> impl IntoResponse {
+    if let Some(ref pg) = state.pg {
+        let _ = pg.execute("DELETE FROM notifications", &[]).await;
+    }
+    StatusCode::OK
+}
+
 async fn mark_read(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<i32>,
 ) -> impl IntoResponse {
     if let Some(ref pg) = state.pg {
         let _ = pg.execute("UPDATE notifications SET is_read = true WHERE id = $1", &[&id]).await;
+    }
+    StatusCode::OK
+}
+
+async fn delete_notification(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<i32>,
+) -> impl IntoResponse {
+    if let Some(ref pg) = state.pg {
+        let _ = pg.execute("DELETE FROM notifications WHERE id = $1", &[&id]).await;
     }
     StatusCode::OK
 }
@@ -307,17 +325,41 @@ pub async fn trigger_rules_for_event(state: &AppState, trigger_type: &str, messa
         Err(_) => return,
     };
 
+    if matched_rows.is_empty() { return; }
+
+    // Collect all channel IDs across all matched rules, then batch-fetch in one query
+    let all_channel_ids: Vec<i32> = {
+        let mut seen = std::collections::HashSet::new();
+        for row in &matched_rows {
+            let ids: Vec<i32> = row.get(2);
+            seen.extend(ids);
+        }
+        seen.into_iter().collect()
+    };
+
+    let ch_map: std::collections::HashMap<i32, (String, serde_json::Value)> =
+        if all_channel_ids.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            match pg.query(
+                "SELECT id, type, config FROM notification_channels WHERE id = ANY($1)",
+                &[&all_channel_ids],
+            ).await {
+                Ok(ch_rows) => ch_rows.iter().map(|r| {
+                    (r.get::<_, i32>(0), (r.get::<_, String>(1), r.get::<_, serde_json::Value>(2)))
+                }).collect(),
+                Err(_) => return,
+            }
+        };
+
     for row in matched_rows {
         let rule_name: String = row.get(1);
         let channel_ids: Vec<i32> = row.get(2);
+        let full_msg = format!("[Rule: {}] {}", rule_name, message);
 
         for channel_id in channel_ids {
-            if let Ok(ch_row) = pg.query_one("SELECT type, config FROM notification_channels WHERE id = $1", &[&channel_id]).await {
-                let ctype: String = ch_row.get(0);
-                let config: serde_json::Value = ch_row.get(1);
-
-                let full_msg = format!("[Rule: {}] {}", rule_name, message);
-                let _ = dispatch_notification(&ctype, &config, &full_msg).await;
+            if let Some((ctype, config)) = ch_map.get(&channel_id) {
+                let _ = dispatch_notification(ctype, config, &full_msg).await;
             }
         }
     }

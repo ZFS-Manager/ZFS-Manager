@@ -122,6 +122,7 @@ export const api = {
     request<any>(`/pools/${name}/import`, { method: 'POST', body: JSON.stringify({ dir }) }),
   createPool: (name: string, vdevs: string[], options: string[] = []) =>
     request<any>('/pools', { method: 'POST', body: JSON.stringify({ name, vdevs, options }) }),
+  destroyPool: (name: string) => request<any>(`/pools/${name}`, { method: 'DELETE' }),
 
   // ── Datasets ───────────────────────────────────────────────────────────────
   getDatasets: () => request<{ datasets: any[] }>('/datasets'),
@@ -213,4 +214,19 @@ export const api = {
       `/pools/${encodeURIComponent(name)}/settings`,
       { method: 'PUT', body: JSON.stringify({ scope, prop, value }) },
     ),
+
+  // ── Per-disk metrics ───────────────────────────────────────────────────────
+  getPoolDiskMetrics: (poolName: string) =>
+    request<{
+      pool: string;
+      disks: Array<{
+        name: string;
+        read_bw_mb: number;
+        write_bw_mb: number;
+        read_iops: number;
+        write_iops: number;
+        total_read_gb: number;
+        total_write_gb: number;
+      }>;
+    }>(`/pools/${encodeURIComponent(poolName)}/disks`),
 };
