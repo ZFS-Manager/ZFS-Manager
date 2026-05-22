@@ -7,6 +7,7 @@ import { Activity, HardDrive, Edit2, Check, Plus } from 'lucide-react';
 import { api } from '../api';
 import { useLayout } from '../hooks/useLayout';
 import WidgetShell from './WidgetShell';
+import PageTransition from './PageTransition';
 
 interface PerformanceProps {
   stats: any[];
@@ -784,6 +785,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   if (!loaded) return <div style={{ padding: 24 }}><Skeleton height={400} /></div>;
 
   return (
+    <PageTransition>
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.01em' }}>System Performance</h1>
@@ -826,5 +828,6 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         </div>
       )}
     </div>
+    </PageTransition>
   );
 }

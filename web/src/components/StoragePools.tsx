@@ -9,6 +9,7 @@ import {
 import { ZFSPool } from '../types';
 import { api, formatBytes } from '../api';
 import { useNotifications } from '../context/NotificationContext';
+import PageTransition from './PageTransition';
 
 interface StoragePoolsProps {
   pools: ZFSPool[];
@@ -656,27 +657,35 @@ function DiskRow({ disk, poolName, onReplace, onSmartClick }: {
 type PropDef = {
   name: string;
   label: string;
+  desc: string;
+  group: string;
   scope: 'pool' | 'dataset';
   type: 'toggle' | 'select' | 'text';
   options?: string[];
 };
 
 const POOL_PROP_DEFS: PropDef[] = [
-  { name: 'autoreplace',   label: 'Auto Replace',       scope: 'pool',    type: 'toggle' },
-  { name: 'autotrim',      label: 'Auto Trim',          scope: 'pool',    type: 'toggle' },
-  { name: 'autoexpand',    label: 'Auto Expand',        scope: 'pool',    type: 'toggle' },
-  { name: 'failmode',      label: 'Fail Mode',          scope: 'pool',    type: 'select', options: ['wait', 'continue', 'panic'] },
-  { name: 'comment',       label: 'Comment',            scope: 'pool',    type: 'text' },
-  { name: 'compression',   label: 'Compression',        scope: 'dataset', type: 'select', options: ['off', 'lz4', 'zstd', 'gzip', 'zle'] },
-  { name: 'atime',         label: 'Access Time',        scope: 'dataset', type: 'toggle' },
-  { name: 'relatime',      label: 'Relative Atime',     scope: 'dataset', type: 'toggle' },
-  { name: 'dedup',         label: 'Deduplication',      scope: 'dataset', type: 'toggle' },
-  { name: 'recordsize',    label: 'Record Size',        scope: 'dataset', type: 'select', options: ['512', '1K', '2K', '4K', '8K', '16K', '32K', '64K', '128K', '1M'] },
-  { name: 'xattr',         label: 'Extended Attrs',     scope: 'dataset', type: 'select', options: ['on', 'off', 'sa'] },
-  { name: 'quota',         label: 'Quota',              scope: 'dataset', type: 'text' },
-  { name: 'reservation',   label: 'Reservation',        scope: 'dataset', type: 'text' },
-  { name: 'snapdir',       label: 'Snapshot Dir',       scope: 'dataset', type: 'select', options: ['hidden', 'visible'] },
-  { name: 'sync',          label: 'Sync Mode',          scope: 'dataset', type: 'select', options: ['standard', 'always', 'disabled'] },
+  // Maintenance
+  { name: 'autoreplace', label: 'Auto Replace', desc: 'Automatically substitute a hot spare when a drive fails', group: 'Maintenance', scope: 'pool', type: 'toggle' },
+  { name: 'autotrim',    label: 'Auto Trim',    desc: 'Periodically send TRIM to SSD vdevs to reclaim free space', group: 'Maintenance', scope: 'pool', type: 'toggle' },
+  { name: 'autoexpand',  label: 'Auto Expand',  desc: 'Grow the pool automatically after a larger replacement disk is added', group: 'Maintenance', scope: 'pool', type: 'toggle' },
+  // Behavior
+  { name: 'failmode', label: 'Fail Mode', desc: 'Action taken when pool cannot service an I/O request due to missing vdev', group: 'Behavior', scope: 'pool', type: 'select', options: ['wait', 'continue', 'panic'] },
+  { name: 'comment',  label: 'Comment',   desc: 'Descriptive label stored in the pool configuration', group: 'Behavior', scope: 'pool', type: 'text' },
+  // Compression & I/O
+  { name: 'compression', label: 'Compression',    desc: 'Compression algorithm for new data blocks — lz4 is fastest with minimal overhead', group: 'Compression & I/O', scope: 'dataset', type: 'select', options: ['off', 'lz4', 'zstd', 'gzip', 'zle'] },
+  { name: 'recordsize',  label: 'Record Size',    desc: 'Suggested block size; 128K suits large files, 4K–16K suits databases', group: 'Compression & I/O', scope: 'dataset', type: 'select', options: ['512', '1K', '2K', '4K', '8K', '16K', '32K', '64K', '128K', '1M'] },
+  { name: 'xattr',       label: 'Extended Attrs', desc: 'Storage method for extended attributes — sa avoids extra znodes', group: 'Compression & I/O', scope: 'dataset', type: 'select', options: ['on', 'off', 'sa'] },
+  { name: 'sync',        label: 'Sync Mode',      desc: 'Controls fsync() semantics — disabled improves throughput at risk of data loss on crash', group: 'Compression & I/O', scope: 'dataset', type: 'select', options: ['standard', 'always', 'disabled'] },
+  // Access
+  { name: 'atime',    label: 'Access Time',    desc: 'Update last-access timestamp on every read — disable for better read performance', group: 'Access', scope: 'dataset', type: 'toggle' },
+  { name: 'relatime', label: 'Relative Atime', desc: 'Only update atime if older than mtime — a compromise between on and off', group: 'Access', scope: 'dataset', type: 'toggle' },
+  { name: 'dedup',    label: 'Deduplication',  desc: 'Eliminate duplicate blocks — requires ~5 GB RAM per 1 TB of data', group: 'Access', scope: 'dataset', type: 'toggle' },
+  // Quotas
+  { name: 'quota',       label: 'Quota',       desc: 'Hard limit on total size including descendants and snapshots (e.g. 100G)', group: 'Quotas', scope: 'dataset', type: 'text' },
+  { name: 'reservation', label: 'Reservation', desc: 'Minimum space guaranteed for this dataset from pool free (e.g. 10G)', group: 'Quotas', scope: 'dataset', type: 'text' },
+  // Visibility
+  { name: 'snapdir', label: 'Snapshot Dir', desc: 'Controls whether .zfs/snapshot is browsable by regular users', group: 'Visibility', scope: 'dataset', type: 'select', options: ['hidden', 'visible'] },
 ];
 
 /* ── Settings Popout (slide-in from right) ──────────────────────────────────── */
@@ -745,16 +754,19 @@ function SettingsPopout({
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  const poolPropDefs    = POOL_PROP_DEFS.filter(d => d.scope === 'pool');
-  const datasetPropDefs = POOL_PROP_DEFS.filter(d => d.scope === 'dataset');
+  const poolPropGroups    = Array.from(new Map(POOL_PROP_DEFS.filter(d => d.scope === 'pool').map(d => [d.group, d.group])).keys());
+  const datasetPropGroups = Array.from(new Map(POOL_PROP_DEFS.filter(d => d.scope === 'dataset').map(d => [d.group, d.group])).keys());
 
-  const sectionLabel = (text: string) => (
+  const sectionHeader = (title: string) => (
     <div style={{
-      fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
-      color: 'var(--text-muted)', fontFamily: 'var(--font-ui)',
-      paddingBottom: 8, borderBottom: '1px solid var(--border-subtle)', marginBottom: 4,
+      display: 'flex', alignItems: 'center', gap: 8,
+      marginTop: 20, marginBottom: 2, paddingBottom: 8,
+      borderBottom: '1px solid var(--border)',
     }}>
-      {text}
+      <span style={{
+        fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
+        color: 'var(--text-muted)', fontFamily: 'var(--font-ui)',
+      }}>{title}</span>
     </div>
   );
 
@@ -819,29 +831,67 @@ function SettingsPopout({
             </div>
           ) : (
             <>
-              <div style={{ paddingTop: 16, paddingBottom: 4 }}>
-                {sectionLabel('Pool Properties')}
-                {poolPropDefs.map(def => (
-                  <PopoutPropRow
-                    key={def.name}
-                    def={def}
-                    value={edits[def.name] ?? ''}
-                    currentValue={props[def.name] ?? ''}
-                    onChange={v => setEdits(e => ({ ...e, [def.name]: v }))}
-                  />
+              {/* Pool Property Groups */}
+              <div style={{ paddingTop: 8 }}>
+                {poolPropGroups.map(group => (
+                  <div key={group}>
+                    {sectionHeader(group)}
+                    {POOL_PROP_DEFS.filter(d => d.scope === 'pool' && d.group === group).map(def => (
+                      <PopoutPropRow
+                        key={def.name}
+                        def={def}
+                        value={edits[def.name] ?? ''}
+                        currentValue={props[def.name] ?? ''}
+                        onChange={v => setEdits(e => ({ ...e, [def.name]: v }))}
+                      />
+                    ))}
+                  </div>
                 ))}
               </div>
-              <div style={{ paddingTop: 16, paddingBottom: 20 }}>
-                {sectionLabel('Dataset Properties')}
-                {datasetPropDefs.map(def => (
-                  <PopoutPropRow
-                    key={def.name}
-                    def={def}
-                    value={edits[def.name] ?? ''}
-                    currentValue={props[def.name] ?? ''}
-                    onChange={v => setEdits(e => ({ ...e, [def.name]: v }))}
-                  />
+              {/* Dataset Property Groups */}
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', fontFamily: 'var(--font-ui)', letterSpacing: '0.03em', marginBottom: 4, marginTop: 8 }}>
+                  Default Dataset Properties
+                </div>
+                {datasetPropGroups.map(group => (
+                  <div key={group}>
+                    {sectionHeader(group)}
+                    {POOL_PROP_DEFS.filter(d => d.scope === 'dataset' && d.group === group).map(def => (
+                      <PopoutPropRow
+                        key={def.name}
+                        def={def}
+                        value={edits[def.name] ?? ''}
+                        currentValue={props[def.name] ?? ''}
+                        onChange={v => setEdits(e => ({ ...e, [def.name]: v }))}
+                      />
+                    ))}
+                  </div>
                 ))}
+              </div>
+              {/* Danger Zone */}
+              <div style={{ marginTop: 24, marginBottom: 24 }}>
+                <div style={{ borderTop: '1px solid rgba(239,68,68,0.25)', paddingTop: 16 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--danger)', fontFamily: 'var(--font-ui)', marginBottom: 12 }}>
+                    Danger Zone
+                  </div>
+                  <div style={{ background: 'rgba(239,68,68,0.04)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: 'var(--radius)', padding: '12px 14px' }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)', marginBottom: 4 }}>Destroy Pool</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', marginBottom: 12, lineHeight: 1.5 }}>
+                      Permanently destroys this pool and all data within it. This cannot be undone.
+                    </div>
+                    <button
+                      className="btn"
+                      style={{ height: 30, padding: '0 14px', fontSize: 11, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--danger)', cursor: 'pointer', borderRadius: 'var(--radius)', display: 'flex', alignItems: 'center', gap: 6 }}
+                      onClick={() => {
+                        if (window.confirm(`Permanently destroy pool "${poolName}" and all its data? This CANNOT be undone.`)) {
+                          api.destroyPool(poolName).then(() => { onSaved(); close(); }).catch(err => notify({ type: 'error', title: 'Destroy Failed', message: err.message }));
+                        }
+                      }}
+                    >
+                      <Trash2 size={11} /> Destroy Pool
+                    </button>
+                  </div>
+                </div>
               </div>
             </>
           )}
@@ -882,7 +932,7 @@ function PopoutPropRow({
 }) {
   const changed = value !== currentValue;
   const inputStyle: React.CSSProperties = {
-    flex: 1, height: 30, padding: '0 8px',
+    width: 120, height: 30, padding: '0 8px', flexShrink: 0,
     background: 'var(--bg-elevated)',
     border: `1px solid ${changed ? 'var(--accent)' : 'var(--border)'}`,
     borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)',
@@ -890,12 +940,14 @@ function PopoutPropRow({
   };
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border-subtle)' }}>
-      <div style={{ width: 130, flexShrink: 0 }}>
-        <div style={{ fontSize: 11, fontWeight: 500, color: changed ? 'var(--accent)' : 'var(--text-secondary)', fontFamily: 'var(--font-ui)' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, fontWeight: 500, color: changed ? 'var(--accent)' : 'var(--text-primary)', fontFamily: 'var(--font-ui)' }}>
           {def.label}
         </div>
-        <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{def.name}</div>
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', marginTop: 2, lineHeight: 1.4 }}>
+          {(def as any).desc || def.name}
+        </div>
       </div>
 
       {def.type === 'toggle' ? (
@@ -1089,6 +1141,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
   };
 
   return (
+    <PageTransition>
     <div style={{ paddingBottom: 48 }}>
 
       {/* Modals */}
@@ -1356,5 +1409,6 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
         </div>
       )}
     </div>
+    </PageTransition>
   );
 }

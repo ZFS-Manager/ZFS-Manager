@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
-import { Bell, Trash2, Plus, Mail, MessageSquare, Globe, Send, BellOff, AlertTriangle, Edit2 } from 'lucide-react';
+import { Bell, Trash2, Plus, Mail, MessageSquare, Globe, Send, BellOff, AlertTriangle, Edit2, CheckCircle } from 'lucide-react';
+import PageTransition from '../components/PageTransition';
 
 /* ── Shared Local Styles & Components ── */
 function SectionHeader({ title, sub }: { title: string; sub?: string }) {
@@ -299,6 +300,32 @@ export default function Notifications() {
     setShowRuleModal(true);
   };
 
+  const markRead = async (id: number) => {
+    await fetch(`/api/v1/notifications/${id}/read`, { method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('zfs_access_token')}` } });
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+  };
+
+  const deleteNotification = async (id: number) => {
+    await fetch(`/api/v1/notifications/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${localStorage.getItem('zfs_access_token')}` } });
+    setNotifications(prev => prev.filter(n => n.id !== id));
+  };
+
+  const markAllRead = async () => {
+    await fetch('/api/v1/notifications/read', { method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('zfs_access_token')}` } });
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+  };
+
+  const clearAll = () => {
+    setConfirmState({
+      title: "Clear All Notifications",
+      message: "Are you sure you want to permanently delete all notification log entries? This cannot be undone.",
+      onConfirm: async () => {
+        await fetch('/api/v1/notifications', { method: 'DELETE', headers: { 'Authorization': `Bearer ${localStorage.getItem('zfs_access_token')}` } });
+        setNotifications([]);
+      }
+    });
+  };
+
   const deleteRule = async (id: number) => {
     setConfirmState({
       title: "Delete Rule",
@@ -322,6 +349,7 @@ export default function Notifications() {
   };
 
   return (
+    <PageTransition>
     <div style={{ paddingBottom: 48 }}>
       {/* Page header */}
       <div style={{ marginBottom: 32 }}>
@@ -440,25 +468,67 @@ export default function Notifications() {
         background: 'var(--bg-surface)', border: '1px solid var(--border)',
         borderRadius: 'var(--radius-lg)', padding: 28
       }}>
-        <SectionHeader
-          title="System Notifications Log"
-          sub="Historical archive of all triggered alerts."
-        />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+          <SectionHeader
+            title="System Notifications Log"
+            sub="Historical archive of all triggered alerts."
+          />
+          {notifications.length > 0 && (
+            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+              <button
+                className="btn btn-secondary"
+                style={{ height: 32, padding: '0 12px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}
+                onClick={markAllRead}
+              >
+                <CheckCircle size={13} style={{ color: 'var(--success)' }} /> Mark All Read
+              </button>
+              <button
+                className="btn btn-secondary"
+                style={{ height: 32, padding: '0 12px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}
+                onClick={clearAll}
+              >
+                <Trash2 size={13} style={{ color: 'var(--danger)' }} /> Clear All
+              </button>
+            </div>
+          )}
+        </div>
 
-        <div style={{ marginTop: 20 }}>
+        <div>
           {notifications.length === 0 ? (
             <div style={{ color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: '32px 0' }}>
               No notification logs present.
             </div>
           ) : (
             notifications.map(n => (
-              <div key={n.id} style={{ padding: '12px 14px', borderRadius: 'var(--radius)', background: 'var(--bg-elevated)', border: '1px solid var(--border)', marginBottom: 8, display: 'flex', gap: 16, alignItems: 'center' }}>
+              <div key={n.id} style={{ padding: '10px 14px', borderRadius: 'var(--radius)', background: 'var(--bg-elevated)', border: '1px solid var(--border)', marginBottom: 8, display: 'flex', gap: 12, alignItems: 'center', opacity: n.is_read ? 0.6 : 1, transition: 'opacity 0.15s' }}>
                 <div style={{ width: 6, height: 6, borderRadius: '50%', background: n.is_read ? 'var(--text-muted)' : 'var(--danger)', flexShrink: 0 }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: n.is_read ? 400 : 600, fontFamily: 'var(--font-ui)' }}>{n.message}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, fontFamily: 'var(--font-mono)' }}>{new Date(n.created_at).toLocaleString()}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: n.is_read ? 400 : 600, fontFamily: 'var(--font-ui)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.message}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3, fontFamily: 'var(--font-mono)' }}>{new Date(n.created_at).toLocaleString()}</div>
                 </div>
-                <span className={`badge ${n.level === 'error' ? 'badge-danger' : 'badge-warning'}`} style={{ textTransform: 'uppercase', fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 4 }}>{n.level}</span>
+                <span className={`badge ${n.level === 'error' ? 'badge-danger' : n.level === 'warning' ? 'badge-warning' : ''}`} style={{ textTransform: 'uppercase', fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 4, flexShrink: 0 }}>{n.level}</span>
+                <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                  {!n.is_read && (
+                    <button
+                      title="Mark as read"
+                      onClick={() => markRead(n.id)}
+                      style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-muted)' }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--success)'; (e.currentTarget as HTMLElement).style.borderColor = 'rgba(34,197,94,0.35)'; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; }}
+                    >
+                      <CheckCircle size={12} />
+                    </button>
+                  )}
+                  <button
+                    title="Delete"
+                    onClick={() => deleteNotification(n.id)}
+                    style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-muted)' }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--danger)'; (e.currentTarget as HTMLElement).style.borderColor = 'rgba(239,68,68,0.35)'; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; }}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
               </div>
             ))
           )}
@@ -781,5 +851,6 @@ export default function Notifications() {
         </div>
       )}
     </div>
+    </PageTransition>
   );
 }

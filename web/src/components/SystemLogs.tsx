@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { FileText, Search, AlertCircle, Info, AlertTriangle, Download, ChevronDown, ChevronRight } from 'lucide-react';
 import { ZFSLog, ZFSPool } from '../types';
+import PageTransition from './PageTransition';
 
 interface SystemLogsProps {
   logs: ZFSLog[];
@@ -70,6 +71,7 @@ export default function SystemLogs({ logs }: SystemLogsProps) {
   ];
 
   return (
+    <PageTransition>
     <div style={{ paddingBottom: 40 }}>
 
       {/* Page header */}
@@ -238,5 +240,6 @@ export default function SystemLogs({ logs }: SystemLogsProps) {
         )}
       </div>
     </div>
+    </PageTransition>
   );
 }

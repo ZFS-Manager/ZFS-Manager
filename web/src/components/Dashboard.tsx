@@ -12,6 +12,7 @@ import { ZFSPool, ZFSDataset, ZFSLog } from '../types';
 import { formatBytes, api } from '../api';
 import { useLayout } from '../hooks/useLayout';
 import WidgetShell from './WidgetShell';
+import PageTransition from './PageTransition';
 
 interface DashboardProps {
   pools: ZFSPool[];
@@ -1057,6 +1058,7 @@ export default function Dashboard({
   };
 
   return (
+    <PageTransition>
     <div style={{ paddingBottom: 48 }}>
 
       {/* Toast */}
@@ -1146,5 +1148,6 @@ export default function Dashboard({
         </div>
       )}
     </div>
+    </PageTransition>
   );
 }

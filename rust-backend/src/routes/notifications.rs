@@ -41,6 +41,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/notifications", get(list_notifications).delete(clear_all_notifications))
         .route("/api/v1/notifications/read", post(mark_all_read))
         .route("/api/v1/notifications/:id/read", post(mark_read))
+        .route("/api/v1/notifications/:id", delete(delete_notification))
         .route("/api/v1/notifications/channels", get(list_channels).post(create_channel))
         .route("/api/v1/notifications/channels/:id", delete(delete_channel))
         .route("/api/v1/notifications/channels/:id/test", post(test_channel))
@@ -94,6 +95,16 @@ async fn mark_read(
 ) -> impl IntoResponse {
     if let Some(ref pg) = state.pg {
         let _ = pg.execute("UPDATE notifications SET is_read = true WHERE id = $1", &[&id]).await;
+    }
+    StatusCode::OK
+}
+
+async fn delete_notification(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<i32>,
+) -> impl IntoResponse {
+    if let Some(ref pg) = state.pg {
+        let _ = pg.execute("DELETE FROM notifications WHERE id = $1", &[&id]).await;
     }
     StatusCode::OK
 }

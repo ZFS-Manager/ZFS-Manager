@@ -122,6 +122,7 @@ export const api = {
     request<any>(`/pools/${name}/import`, { method: 'POST', body: JSON.stringify({ dir }) }),
   createPool: (name: string, vdevs: string[], options: string[] = []) =>
     request<any>('/pools', { method: 'POST', body: JSON.stringify({ name, vdevs, options }) }),
+  destroyPool: (name: string) => request<any>(`/pools/${name}`, { method: 'DELETE' }),
 
   // ── Datasets ───────────────────────────────────────────────────────────────
   getDatasets: () => request<{ datasets: any[] }>('/datasets'),
