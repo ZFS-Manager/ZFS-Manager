@@ -810,9 +810,7 @@ async fn run_slow_loop(state: crate::state::AppState) {
             cache.write_bw_mb = agg_write_bw_mb;
             cache.read_iops   = agg_read_iops;
             cache.write_iops  = agg_write_iops;
-            if !new_pool_disks.is_empty() {
-                cache.pool_disks = new_pool_disks;
-            }
+            cache.pool_disks  = new_pool_disks;
         }
 
         // ── Redis: push pending metrics + update latest key ───────────────────
