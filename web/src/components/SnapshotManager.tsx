@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import PageTransition from './PageTransition';
+import Pagination from './Pagination';
 import {
   Camera, Trash2, RotateCcw, Search, Clock, Plus,
   X, Loader2, CheckCircle, XCircle, AlertTriangle
@@ -119,6 +120,8 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
   const [toast, setToast]                     = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const [selected, setSelected]               = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting]       = useState(false);
+  const [page, setPage]                       = useState(1);
+  const PAGE_SIZE = 20;
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ msg, type });
@@ -128,6 +131,14 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
   const filtered = useMemo(() =>
     snapshots.filter(s => s.name?.toLowerCase().includes(search.toLowerCase())),
     [snapshots, search]
+  );
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setPage(1); }, [search]);
+
+  const pageSnaps = useMemo(() =>
+    filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [filtered, page]
   );
 
   const datasetOptions = useMemo(() => {
@@ -412,7 +423,7 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
               </tr>
             </thead>
             <tbody>
-              {filtered.map((snap, idx) => {
+              {pageSnaps.map((snap, idx) => {
                 const snapName    = snap.name?.split('@').pop() || snap.name;
                 const datasetName = snap.name?.split('@')[0] || '—';
                 const usedBytes   = Number(snap.used);
@@ -490,6 +501,9 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
             </tbody>
           </table>
         </div>
+
+        {/* Pagination */}
+        <Pagination total={filtered.length} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
 
         {/* Empty state */}
         {filtered.length === 0 && (

@@ -287,6 +287,20 @@ html, body, #root {
   .two-col { grid-template-columns: 1fr; }
 }
 
+/* Dashboard 5-column stats row: 5 → 2 → 1 */
+.stats-row-5 {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+@media (max-width: 1199px) {
+  .stats-row-5 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 767px) {
+  .stats-row-5 { grid-template-columns: 1fr; }
+}
+
 /* Performance stats grid: 6 on desktop, 3 on tablet, 2 on mobile */
 .perf-stats-grid {
   display: grid;
@@ -327,8 +341,8 @@ html, body, #root {
   /* Always show row actions on mobile (no hover) */
   .data-table tbody tr .row-actions { opacity: 1; }
 
-  /* Btn shrink */
-  .btn { height: 30px; padding: 0 10px; font-size: 11px; }
+  /* Touch targets: minimum 44px per Apple HIG */
+  .btn { min-height: 44px; height: auto; padding: 10px 14px; font-size: 12px; }
 
   /* Input full-width */
   .input { font-size: 12px; }

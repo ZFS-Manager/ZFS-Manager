@@ -41,6 +41,35 @@ const SECONDS_PER_POINT: Record<Interval, number> = {
   '1h': 60, '6h': 300, '1d': 300, '7d': 1800, '1m': 7200, '1y': 86400,
 };
 
+const INTERVAL_MS: Record<Interval, number> = {
+  '1h':  60   * 60 * 1000,
+  '6h':  6    * 60 * 60 * 1000,
+  '1d':  24   * 60 * 60 * 1000,
+  '7d':  7    * 24 * 60 * 60 * 1000,
+  '1m':  30   * 24 * 60 * 60 * 1000,
+  '1y':  365  * 24 * 60 * 60 * 1000,
+};
+
+function getXTicks(interval: Interval, now: number): number[] {
+  const cfg: Record<Interval, { step: number; count: number }> = {
+    '1h': { step: 10 * 60 * 1000,           count: 7  },
+    '6h': { step: 30 * 60 * 1000,           count: 13 },
+    '1d': { step: 2  * 60 * 60 * 1000,      count: 13 },
+    '7d': { step: 24 * 60 * 60 * 1000,      count: 8  },
+    '1m': { step: 7  * 24 * 60 * 60 * 1000, count: 5  },
+    '1y': { step: 30 * 24 * 60 * 60 * 1000, count: 13 },
+  };
+  const { step, count } = cfg[interval];
+  return Array.from({ length: count }, (_, i) => now - (count - 1 - i) * step);
+}
+
+function fmtTickLabel(v: number, iv: Interval): string {
+  const d = new Date(v);
+  if (iv === '1h' || iv === '6h' || iv === '1d')
+    return d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+}
+
 const C = {
   read: '#38bdf8', write: '#818cf8',
   iops: '#f59e0b', cpu: '#a78bfa', arc: '#34d399',
@@ -420,6 +449,10 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const totalWriteGB = (liveMetrics?.total_write_mb ?? 0) / 1024;
 
   // XAxis config
+  const nowMs = Date.now();
+  const histXDomain: [number, number] = [nowMs - INTERVAL_MS[interval], nowMs];
+  const histXTicks = getXTicks(interval, nowMs);
+
   const liveXAxisProps = {
     dataKey: 'tsMs' as const,
     type: 'number' as const,
@@ -432,9 +465,10 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     dataKey: 'tsMs' as const,
     type: 'number' as const,
     scale: 'time' as const,
-    domain: [chartData.length > 0 ? chartData[0].tsMs : 'dataMin', Date.now()] as [number | string, number],
-    tickFormatter: (v: number) => fmtTs(new Date(v).toISOString(), interval),
-    axisLine: false, tickLine: false, tick: AXIS_TICK, minTickGap: 40,
+    domain: histXDomain,
+    ticks: histXTicks,
+    tickFormatter: (v: number) => fmtTickLabel(v, interval),
+    axisLine: false, tickLine: false, tick: AXIS_TICK, minTickGap: 30,
   };
 
   const handleDragStart = useCallback((id: string) => setDragFrom(id), []);
@@ -462,7 +496,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         return (
           <div>
             <SectionHeader label="Live I/O" badge="1 s" />
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
+            <div className="perf-stats-grid">
               <GaugeCard
                 label="↑ Read Speed"
                 value={ioReadBw >= 1000 ? (ioReadBw / 1000).toFixed(2) : ioReadBw.toFixed(1)}
@@ -629,7 +663,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
                   </div>
                 }
               >
-                <div style={{ height: 240, marginLeft: 8, overflow: 'visible' }}>
+                <div style={{ height: 240, overflow: 'visible' }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={ioDisplayData} margin={CHART_MARGIN}>
                       <defs>
@@ -667,13 +701,15 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
       case 'storage-history': {
         const capStorageMaxGB = capacityData.reduce((m, d) => Math.max(m, d.alloc || 0, d.free || 0), 0.01);
         const capGbScale = getGbScale(capStorageMaxGB);
+        const capNowMs = Date.now();
         const capHistXAxisProps = {
           dataKey: 'tsMs' as const,
           type: 'number' as const,
           scale: 'time' as const,
-          domain: [capacityData.length > 0 ? capacityData[0].tsMs : 'dataMin', Date.now()] as [number | string, number],
-          tickFormatter: (v: number) => fmtTs(new Date(v).toISOString(), interval),
-          axisLine: false, tickLine: false, tick: AXIS_TICK, minTickGap: 40,
+          domain: [capNowMs - INTERVAL_MS[interval], capNowMs] as [number, number],
+          ticks: getXTicks(interval, capNowMs),
+          tickFormatter: (v: number) => fmtTickLabel(v, interval),
+          axisLine: false, tickLine: false, tick: AXIS_TICK, minTickGap: 30,
         };
 
         // Compute forecast from capacity data for the selected interval:

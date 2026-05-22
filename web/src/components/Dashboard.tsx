@@ -732,7 +732,7 @@ export default function Dashboard({
       case 'stats-row':
         const rawPct = totalRawCapacity > 0 ? (totalRawUsed / totalRawCapacity) * 100 : 0;
         return (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16, alignItems: 'stretch' }}>
+          <div className="stats-row-5">
             <StatCard
               label="Total Storage"
               value={formatBytes(totalCapacity, 2)}
@@ -1074,27 +1074,14 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* Edit mode tray */}
-      {editMode && (
-        <WidgetTray
-          allWidgets={widgets.map(w => ({ id: w.id, label: WIDGET_LABELS[w.id] || w.id, visible: w.visible }))}
-          onAdd={handleAdd}
-        />
-      )}
-
       {/* Toolbar */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
         <button
           onClick={() => setEditMode(m => !m)}
-          className="btn"
-          style={{
-            gap: 6,
-            background: editMode ? 'var(--accent-dim)' : 'transparent',
-            borderColor: editMode ? 'var(--accent-mid)' : 'var(--border)',
-            color: editMode ? 'var(--accent)' : 'var(--text-muted)',
-          }}
+          className="btn btn-secondary"
+          style={{ gap: 6 }}
         >
-          {editMode ? <><Check size={13} /> Done</> : <><Edit2 size={13} /> Edit Dashboard</>}
+          {editMode ? <><Check size={13} /> Done</> : <><Edit2 size={13} /> Edit Layout</>}
         </button>
       </div>
 
@@ -1132,6 +1119,23 @@ export default function Dashboard({
               </WidgetShell>
             );
           })}
+        </div>
+      )}
+
+      {/* Hidden widgets tray (edit mode) */}
+      {editMode && (
+        <div style={{ marginTop: 24, padding: 24, border: '1px dashed var(--border)', borderRadius: 'var(--radius-lg)', textAlign: 'center' }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--text-secondary)' }}>Hidden Widgets</h3>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
+            {widgets.filter(w => !w.visible).map(w => (
+              <button key={w.id} className="btn btn-secondary" onClick={() => handleAdd(w.id)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Plus size={14} /> {WIDGET_LABELS[w.id] || w.id}
+              </button>
+            ))}
+            {widgets.every(w => w.visible) && (
+              <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>All widgets are currently visible.</p>
+            )}
+          </div>
         </div>
       )}
 

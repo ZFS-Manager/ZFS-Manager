@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { FileText, Search, AlertCircle, Info, AlertTriangle, Download, ChevronDown, ChevronRight } from 'lucide-react';
 import { ZFSLog, ZFSPool } from '../types';
 import PageTransition from './PageTransition';
+import Pagination from './Pagination';
 
 interface SystemLogsProps {
   logs: ZFSLog[];
@@ -16,11 +17,14 @@ const LEVEL = {
 
 const MAX_MSG = 120;
 
+const PAGE_SIZE_LOGS = 50;
+
 export default function SystemLogs({ logs }: SystemLogsProps) {
   const [search, setSearch]           = useState('');
   const [levelFilter, setLevelFilter] = useState<'all' | 'error' | 'warning' | 'info'>('all');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [expanded, setExpanded]       = useState<Set<string>>(new Set());
+  const [page, setPage]               = useState(1);
 
   const sources = useMemo(() => {
     const all = logs.map(l => l.pool || 'system').filter(Boolean);
@@ -36,6 +40,14 @@ export default function SystemLogs({ logs }: SystemLogsProps) {
       return matchSearch && matchLevel && matchSource;
     }),
     [logs, search, levelFilter, sourceFilter]
+  );
+
+  // Reset page when filters change
+  useEffect(() => { setPage(1); }, [search, levelFilter, sourceFilter]);
+
+  const pageLogs = useMemo(() =>
+    filtered.slice((page - 1) * PAGE_SIZE_LOGS, page * PAGE_SIZE_LOGS),
+    [filtered, page]
   );
 
   const counts = useMemo(() => ({
@@ -159,7 +171,7 @@ export default function SystemLogs({ logs }: SystemLogsProps) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((log, i) => {
+              {pageLogs.map((log, i) => {
                 const lvl = log.level as keyof typeof LEVEL;
                 const cfg = LEVEL[lvl] || LEVEL.info;
                 const id  = log.id || String(i);
@@ -230,6 +242,9 @@ export default function SystemLogs({ logs }: SystemLogsProps) {
             </p>
           </div>
         )}
+
+        {/* Pagination */}
+        <Pagination total={filtered.length} page={page} pageSize={PAGE_SIZE_LOGS} onChange={setPage} />
 
         {/* Footer */}
         {filtered.length > 0 && (

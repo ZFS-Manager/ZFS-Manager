@@ -1,7 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { api } from '../api';
 import { Bell, Trash2, Plus, Mail, MessageSquare, Globe, Send, BellOff, AlertTriangle, Edit2, CheckCircle } from 'lucide-react';
 import PageTransition from '../components/PageTransition';
+import Pagination from '../components/Pagination';
+
+const PAGE_SIZE_NOTIF = 30;
 
 /* ── Shared Local Styles & Components ── */
 function SectionHeader({ title, sub }: { title: string; sub?: string }) {
@@ -84,6 +87,7 @@ export default function Notifications() {
 
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
   const [alertState, setAlertState] = useState<{ title: string; message: string; type: 'success' | 'error' } | null>(null);
+  const [notifPage, setNotifPage] = useState(1);
 
   const [editingChannelId, setEditingChannelId] = useState<number | null>(null);
   const [editingRuleId, setEditingRuleId] = useState<number | null>(null);
@@ -499,7 +503,7 @@ export default function Notifications() {
               No notification logs present.
             </div>
           ) : (
-            notifications.map(n => (
+            notifications.slice((notifPage - 1) * PAGE_SIZE_NOTIF, notifPage * PAGE_SIZE_NOTIF).map(n => (
               <div key={n.id} style={{ padding: '10px 14px', borderRadius: 'var(--radius)', background: 'var(--bg-elevated)', border: '1px solid var(--border)', marginBottom: 8, display: 'flex', gap: 12, alignItems: 'center', opacity: n.is_read ? 0.6 : 1, transition: 'opacity 0.15s' }}>
                 <div style={{ width: 6, height: 6, borderRadius: '50%', background: n.is_read ? 'var(--text-muted)' : 'var(--danger)', flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -533,6 +537,7 @@ export default function Notifications() {
             ))
           )}
         </div>
+        <Pagination total={notifications.length} page={notifPage} pageSize={PAGE_SIZE_NOTIF} onChange={setNotifPage} />
       </div>
 
       {/* RICH CHANNEL MODAL (Larger Popup) */}
