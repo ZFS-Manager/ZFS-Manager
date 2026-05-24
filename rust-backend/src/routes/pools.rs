@@ -320,7 +320,29 @@ async fn destroy_pool(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "pool")?;
+
+    // Collect disk paths before destroy so we can wipe ZFS labels afterward
+    let disk_paths: Vec<String> = if let Ok(status) = executor::zpool(&["status", "-P", &name]).await {
+        parse_vdev_config(&status)
+            .into_iter()
+            .flat_map(|v| {
+                v["disks"].as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|d| d["path"].as_str().map(|s| s.to_string()))
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+
     executor::zpool(&["destroy", &name]).await?;
+
+    // Wipe ZFS labels so disks appear free immediately in the next enumeration
+    for disk in &disk_paths {
+        let _ = executor::zpool(&["labelclear", "-f", disk]).await;
+    }
 
     // Bust caches so disks immediately appear free and the pool list is stale
     if let Some(ref redis_conn) = state.redis {
@@ -563,7 +585,7 @@ async fn expand_pool(
         let vt = vt.trim();
         if !vt.is_empty() && vt != "stripe" {
             // Validate vdev type
-            if !["mirror", "raidz", "raidz1", "raidz2", "raidz3"].contains(&vt) {
+            if !["mirror", "raidz", "raidz1", "raidz2", "raidz3", "spare", "log", "cache"].contains(&vt) {
                 return Err(ApiError::BadRequest(format!("Invalid vdev_type: {vt}")));
             }
             args.push(vt.to_string());

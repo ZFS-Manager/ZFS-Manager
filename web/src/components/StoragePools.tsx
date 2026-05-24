@@ -607,6 +607,15 @@ function ImportPoolModal({ onClose, onSuccess }: { onClose: () => void; onSucces
 }
 
 /* ── Expand Pool Modal ────────────────────────────────────────────────────────── */
+type VdevRole = 'data' | 'spare' | 'log' | 'cache';
+
+const ROLE_LABELS: Record<VdevRole, string> = {
+  data:  'Data Vdev',
+  spare: 'Spare',
+  log:   'Log',
+  cache: 'Cache',
+};
+
 function ExpandPoolModal({ poolName, onClose, onSuccess }: {
   poolName: string;
   onClose: () => void;
@@ -617,6 +626,7 @@ function ExpandPoolModal({ poolName, onClose, onSuccess }: {
   const [vdevInfo, setVdevInfo]       = useState<{ type: string; diskCount: number } | null>(null);
   const [selectedDisks, setSelectedDisks] = useState<string[]>(['']);
   const [activeSlot, setActiveSlot]   = useState(0);
+  const [role, setRole]               = useState<VdevRole>('data');
 
   useEffect(() => {
     api.getPoolVdevs(poolName).then(res => {
@@ -630,6 +640,15 @@ function ExpandPoolModal({ poolName, onClose, onSuccess }: {
     }).catch(() => setVdevInfo({ type: 'stripe', diskCount: 1 }));
   }, [poolName]);
 
+  // Reset disk selection when role changes
+  const handleRoleChange = (r: VdevRole) => {
+    setRole(r);
+    const slots = r === 'data' ? (vdevInfo?.diskCount ?? 1) : 1;
+    setSelectedDisks(Array(slots).fill(''));
+    setActiveSlot(0);
+    setError('');
+  };
+
   const handleDiskSelect = (path: string) => {
     setSelectedDisks(prev => {
       const next = [...prev];
@@ -642,10 +661,11 @@ function ExpandPoolModal({ poolName, onClose, onSuccess }: {
   };
 
   const filled = selectedDisks.filter(Boolean);
-  const needed = vdevInfo?.diskCount ?? 1;
+  const needed = role === 'data' ? (vdevInfo?.diskCount ?? 1) : 1;
   const ready  = filled.length >= needed && !filled.some(d => !d);
 
   const vdevTypeLabel = (() => {
+    if (role !== 'data') return null;
     const t = vdevInfo?.type;
     if (!t || t === 'stripe') return null;
     if (t === 'mirror')  return 'Mirror';
@@ -656,8 +676,9 @@ function ExpandPoolModal({ poolName, onClose, onSuccess }: {
   })();
 
   const cmdPreview = (() => {
-    const t = vdevInfo?.type;
     const disks = selectedDisks.map(d => d || '<disk>');
+    if (role !== 'data') return `zpool add ${poolName} ${role} ${disks[0]}`;
+    const t = vdevInfo?.type;
     if (!t || t === 'stripe') return `zpool add ${poolName} ${disks[0]}`;
     return `zpool add ${poolName} ${t} ${disks.join(' ')}`;
   })();
@@ -666,7 +687,11 @@ function ExpandPoolModal({ poolName, onClose, onSuccess }: {
     if (!ready) { setError(`Select ${needed} disk${needed > 1 ? 's' : ''} to continue`); return; }
     setExpanding(true); setError('');
     try {
-      await api.expandPool(poolName, selectedDisks, vdevInfo?.type !== 'stripe' ? vdevInfo?.type : undefined);
+      if (role !== 'data') {
+        await api.expandPool(poolName, selectedDisks, role);
+      } else {
+        await api.expandPool(poolName, selectedDisks, vdevInfo?.type !== 'stripe' ? vdevInfo?.type : undefined);
+      }
       onSuccess();
     }
     catch (err: any) { setError(err.message || 'Expand failed'); }
@@ -685,8 +710,30 @@ function ExpandPoolModal({ poolName, onClose, onSuccess }: {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {/* Vdev type hint */}
-          {vdevTypeLabel && (
+          {/* Role selector */}
+          <div>
+            <label style={S.modal.label}>Vdev role</label>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {(['data', 'spare', 'log', 'cache'] as VdevRole[]).map(r => (
+                <button
+                  key={r}
+                  onClick={() => handleRoleChange(r)}
+                  style={{
+                    flex: 1, padding: '6px 4px', fontSize: 11, fontFamily: 'var(--font-ui)',
+                    background: role === r ? 'var(--accent)' : 'var(--bg-elevated)',
+                    color: role === r ? '#fff' : 'var(--text-secondary)',
+                    border: `1px solid ${role === r ? 'var(--accent)' : 'var(--border)'}`,
+                    borderRadius: 'var(--radius)', cursor: 'pointer', transition: 'all 0.12s',
+                  }}
+                >
+                  {ROLE_LABELS[r]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Data vdev type hint */}
+          {role === 'data' && vdevTypeLabel && (
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 14px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 'var(--radius)' }}>
               <AlertTriangle size={13} style={{ color: 'var(--info)', marginTop: 1, flexShrink: 0 }} />
               <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', lineHeight: 1.5 }}>
@@ -695,7 +742,17 @@ function ExpandPoolModal({ poolName, onClose, onSuccess }: {
             </div>
           )}
 
-          {/* Disk slots */}
+          {/* Non-data role hint */}
+          {role !== 'data' && (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 14px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 'var(--radius)' }}>
+              <AlertTriangle size={13} style={{ color: 'var(--info)', marginTop: 1, flexShrink: 0 }} />
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', lineHeight: 1.5 }}>
+                Adding a <strong>{ROLE_LABELS[role]}</strong> disk. Select at least <strong>1 disk</strong> — no vdev type restriction.
+              </span>
+            </div>
+          )}
+
+          {/* Disk slots (only shown when >1 needed) */}
           {needed > 1 && (
             <div>
               <label style={S.modal.label}>Selected disks ({filled.length}/{needed})</label>
@@ -755,7 +812,7 @@ function ExpandPoolModal({ poolName, onClose, onSuccess }: {
             <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
             <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleExpand} disabled={expanding || !ready}>
               {expanding ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Expand size={14} />}
-              {expanding ? 'Adding…' : `Add ${needed > 1 ? vdevTypeLabel + ' Vdev' : 'Disk'}`}
+              {expanding ? 'Adding…' : `Add ${role !== 'data' ? ROLE_LABELS[role] : (needed > 1 ? vdevTypeLabel + ' Vdev' : 'Disk')}`}
             </button>
           </div>
         </div>
