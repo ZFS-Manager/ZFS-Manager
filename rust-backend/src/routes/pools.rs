@@ -532,8 +532,8 @@ async fn expand_pool(
     if body.disk.is_empty() {
         return Err(ApiError::BadRequest("'disk' is required".into()));
     }
-    executor::zpool(&["online", "-e", &name, &body.disk]).await?;
-    Ok(Json(json!({ "message": format!("Pool '{name}' expanded on '{}'", body.disk) })))
+    executor::zpool(&["add", &name, &body.disk]).await?;
+    Ok(Json(json!({ "message": format!("Disk '{}' added to pool '{name}'", body.disk) })))
 }
 
 async fn replace_disk(

@@ -159,6 +159,11 @@ export const api = {
   getSystemStats: () => request<any>('/stats/system'),
   getDisks:       () => request<{ blockdevices: any[] }>('/system/disks'),
   getSmartData:   (device: string) => request<any>(`/system/smart/${encodeURIComponent(device)}`),
+  getEnrichedDisks: () => request<{ disks: Array<{
+    name: string; size_bytes: number; size_human: string;
+    in_use: boolean; pool: string | null; partitions: boolean;
+    model: string | null; serial: string | null;
+  }> }>('/disks'),
 
   // ── Metrics ────────────────────────────────────────────────────────────────
   getMetricsHistory: (interval: string) =>

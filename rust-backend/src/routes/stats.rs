@@ -1,6 +1,7 @@
 use axum::{extract::{Path, State}, routing::get, Json, Router};
 use redis::AsyncCommands;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use tracing::warn;
 
 use crate::error::ApiError;
@@ -12,6 +13,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/system/disks", get(list_disks))
         .route("/api/v1/system/smart/:device", get(get_smart_data))
         .route("/api/v1/time", get(get_server_time))
+        .route("/api/v1/disks", get(list_enriched_disks))
         .with_state(state)
 }
 
@@ -277,4 +279,148 @@ async fn list_disks() -> Result<Json<Value>, ApiError> {
     } else {
         Ok(Json(json!({ "blockdevices": [] })))
     }
+}
+
+// ── Enriched disk list ────────────────────────────────────────────────────────
+
+fn format_size_human(bytes: u64) -> String {
+    if bytes == 0 { return "0 B".to_string(); }
+    const UNITS: &[(u64, &str)] = &[
+        (1_099_511_627_776, "TB"),
+        (1_073_741_824, "GB"),
+        (1_048_576, "MB"),
+        (1_024, "KB"),
+    ];
+    for &(threshold, unit) in UNITS {
+        if bytes >= threshold {
+            let val = bytes as f64 / threshold as f64;
+            return if val >= 100.0 { format!("{:.0} {}", val, unit) }
+                   else if val >= 10.0 { format!("{:.1} {}", val, unit) }
+                   else { format!("{:.2} {}", val, unit) };
+        }
+    }
+    format!("{} B", bytes)
+}
+
+async fn list_enriched_disks(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    const CACHE_KEY: &str = "zfs:disks-enriched";
+
+    // Check 10-second Redis cache
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        let cached: redis::RedisResult<Option<String>> = conn.get(CACHE_KEY).await;
+        if let Ok(Some(hit)) = cached {
+            if let Ok(val) = serde_json::from_str::<Value>(&hit) {
+                return Ok(Json(val));
+            }
+        }
+    }
+
+    // One lsblk call for the full device tree (disk + partition children)
+    let lsblk_out = tokio::process::Command::new("lsblk")
+        .args(["-Jb", "-o", "NAME,SIZE,TYPE,MODEL"])
+        .output()
+        .await
+        .map_err(|e| ApiError::InternalError(e.to_string()))?;
+
+    let lsblk_json: Value = serde_json::from_slice(&lsblk_out.stdout)
+        .unwrap_or_else(|_| json!({"blockdevices": []}));
+
+    // Detect ZFS pool membership via zpool status
+    let mut disk_pool_map: HashMap<String, String> = HashMap::new();
+    if let Ok(out) = tokio::process::Command::new("zpool").args(["status"]).output().await {
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut current_pool = String::new();
+        let mut in_config = false;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if let Some(pool) = trimmed.strip_prefix("pool:") {
+                current_pool = pool.trim().to_string();
+                in_config = false;
+            } else if trimmed == "config:" {
+                in_config = true;
+            } else if in_config && (line.starts_with('\t') || line.starts_with("  ")) {
+                let tok = trimmed.split_whitespace().next().unwrap_or("");
+                // Skip header, the pool root line, and virtual vdev keywords
+                if tok.is_empty() || tok == "NAME" || tok == current_pool
+                    || ["logs", "cache", "spares", "special", "dedup", "errors:"].contains(&tok)
+                {
+                    continue;
+                }
+                // Normalize: strip /dev/ prefix, then map both the full name and the base (no digits)
+                let short = tok.strip_prefix("/dev/").unwrap_or(tok);
+                let base = short.trim_end_matches(|c: char| c.is_ascii_digit());
+                disk_pool_map.insert(short.to_string(), current_pool.clone());
+                if base.len() < short.len() {
+                    disk_pool_map.insert(base.to_string(), current_pool.clone());
+                }
+            }
+        }
+    }
+
+    // Build enriched disk list
+    let mut disks: Vec<Value> = Vec::new();
+    if let Some(blockdevices) = lsblk_json["blockdevices"].as_array() {
+        for dev in blockdevices {
+            let dev_type = dev["type"].as_str().unwrap_or("");
+            let name = dev["name"].as_str().unwrap_or("");
+            // Only physical disks; skip loop, sr/rom, etc.
+            if dev_type != "disk" || name.starts_with("loop") || name.starts_with("sr") || name == "rom" {
+                continue;
+            }
+
+            let size_bytes = dev["size"].as_u64().unwrap_or(0);
+
+            // Model: lsblk value first, then sysfs fallback
+            let model_raw = dev["model"].as_str().unwrap_or("").trim().to_string();
+            let model: Option<String> = if !model_raw.is_empty() {
+                Some(model_raw)
+            } else {
+                std::fs::read_to_string(format!("/sys/block/{}/device/model", name))
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            };
+
+            // Serial: sysfs (no subprocess needed when running as root)
+            let serial: Option<String> =
+                std::fs::read_to_string(format!("/sys/block/{}/device/serial", name))
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+
+            let pool = disk_pool_map.get(name).cloned();
+
+            // Partitions: any children in lsblk tree
+            let has_partitions = dev["children"]
+                .as_array()
+                .map(|c| !c.is_empty())
+                .unwrap_or(false);
+
+            let in_use = pool.is_some() || has_partitions;
+
+            disks.push(json!({
+                "name": name,
+                "size_bytes": size_bytes,
+                "size_human": format_size_human(size_bytes),
+                "in_use": in_use,
+                "pool": pool,
+                "partitions": has_partitions,
+                "model": model,
+                "serial": serial,
+            }));
+        }
+    }
+
+    let result = json!({ "disks": disks });
+
+    // Cache for 10 seconds
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        if let Ok(s) = serde_json::to_string(&result) {
+            let _: redis::RedisResult<()> = conn.set_ex(CACHE_KEY, s, 10u64).await;
+        }
+    }
+
+    Ok(Json(result))
 }

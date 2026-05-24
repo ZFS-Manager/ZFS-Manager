@@ -67,7 +67,7 @@ function iconBtn(onClick: () => void, icon: React.ReactNode, title: string, col 
 }
 
 
-/* ── Device Picker ────────────────────────────────────────────────────────────── */
+/* ── Device Picker (legacy — used by Replace Disk only) ──────────────────────── */
 function DevicePicker({ onSelect, onClose, usedDisks = new Set<string>() }: {
   onSelect: (path: string) => void;
   onClose: () => void;
@@ -138,6 +138,146 @@ function DevicePicker({ onSelect, onClose, usedDisks = new Set<string>() }: {
                 </button>
               );
             })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Disk Picker (enriched — Expand Pool & Create Pool) ──────────────────────── */
+interface EnrichedDisk {
+  name: string; size_bytes: number; size_human: string;
+  in_use: boolean; pool: string | null; partitions: boolean;
+  model: string | null; serial: string | null;
+}
+
+function DiskStatusBadge({ disk }: { disk: EnrichedDisk }) {
+  if (!disk.in_use) return (
+    <span style={{ fontSize: 10, color: 'var(--success)', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 600, flexShrink: 0 }}>FREE</span>
+  );
+  if (disk.pool) return (
+    <span style={{ fontSize: 10, color: '#f87171', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 600, flexShrink: 0 }}>POOL: {disk.pool}</span>
+  );
+  return (
+    <span style={{ fontSize: 10, color: 'var(--warning)', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 600, flexShrink: 0 }}>IN USE</span>
+  );
+}
+
+function DiskPicker({ onSelect, onClose }: {
+  onSelect: (path: string) => void;
+  onClose: () => void;
+}) {
+  const [disks, setDisks]           = useState<EnrichedDisk[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [showUsed, setShowUsed]     = useState(false);
+  const [confirmDisk, setConfirmDisk] = useState<EnrichedDisk | null>(null);
+
+  useEffect(() => {
+    api.getEnrichedDisks()
+      .then(res => setDisks(res.disks || []))
+      .catch(() => setDisks([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const freeDisks = disks.filter(d => !d.in_use);
+  const usedDisks = disks.filter(d => d.in_use);
+  const visible   = showUsed ? disks : freeDisks;
+
+  const handleClick = (disk: EnrichedDisk) => {
+    if (disk.in_use) { setConfirmDisk(disk); return; }
+    onSelect(`/dev/${disk.name}`);
+    onClose();
+  };
+
+  return (
+    <div style={{ ...S.modal.overlay, zIndex: 300 }} onClick={onClose}>
+      <div style={{ ...S.modal.box, maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+          <div>
+            <h4 style={S.modal.title}>Select Disk</h4>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>/api/v1/disks</p>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
+        </div>
+
+        {/* Show-used toggle */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, padding: '8px 12px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)' }}>Show used disks</span>
+          <button onClick={() => { setShowUsed(v => !v); setConfirmDisk(null); }} style={{ width: 36, height: 20, borderRadius: 10, background: showUsed ? 'var(--warning)' : 'var(--bg-base)', border: '1px solid var(--border)', position: 'relative', cursor: 'pointer', transition: 'all 0.2s', padding: 0, flexShrink: 0 }}>
+            <div style={{ position: 'absolute', top: 2, left: showUsed ? 17 : 2, width: 14, height: 14, borderRadius: 7, background: '#fff', transition: 'left 0.2s' }} />
+          </button>
+        </div>
+
+        {/* Inline confirmation warning for used disks */}
+        {confirmDisk && (
+          <div style={{ padding: '12px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 'var(--radius)', marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <AlertTriangle size={13} style={{ color: 'var(--danger)', flexShrink: 0 }} />
+              <span style={{ fontSize: 12, color: 'var(--danger)', fontWeight: 600 }}>Disk is in use!</span>
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--text-secondary)', margin: '0 0 10px 0', lineHeight: 1.5 }}>
+              {confirmDisk.pool
+                ? `This disk belongs to pool "${confirmDisk.pool}". Adding it again may corrupt the pool.`
+                : 'This disk has existing partitions. Using it may destroy data.'}
+            </p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-secondary" style={{ flex: 1, fontSize: 11, padding: '5px 10px' }} onClick={() => setConfirmDisk(null)}>Cancel</button>
+              <button className="btn btn-primary" style={{ flex: 1, fontSize: 11, padding: '5px 10px', background: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={() => { onSelect(`/dev/${confirmDisk.name}`); onClose(); }}>Use Anyway</button>
+            </div>
+          </div>
+        )}
+
+        {/* Disk list */}
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '32px 0', justifyContent: 'center', color: 'var(--text-muted)' }}>
+            <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
+            <span style={{ fontSize: 12, fontFamily: 'var(--font-ui)' }}>Scanning devices…</span>
+          </div>
+        ) : visible.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '28px 0' }}>
+            <p style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 8 }}>
+              {freeDisks.length === 0 ? 'No free disks available' : 'No disks to show'}
+            </p>
+            {freeDisks.length === 0 && usedDisks.length > 0 && !showUsed && (
+              <button onClick={() => setShowUsed(true)} style={{ fontSize: 11, color: 'var(--info)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+                Show {usedDisks.length} used disk{usedDisks.length !== 1 ? 's' : ''}
+              </button>
+            )}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto' }}>
+            {visible.map((disk, i) => (
+              <button
+                key={i}
+                onClick={() => handleClick(disk)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
+                  background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius)', cursor: 'pointer', textAlign: 'left',
+                  opacity: disk.in_use ? 0.65 : 1, transition: 'all 0.12s',
+                }}
+                onMouseEnter={e => { if (!disk.in_use) (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; }}
+              >
+                <HardDrive size={16} style={{ color: disk.in_use ? 'var(--text-muted)' : 'var(--info)', flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>/dev/{disk.name}</span>
+                    <DiskStatusBadge disk={disk} />
+                  </div>
+                  {(disk.model || disk.serial) && (
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2, fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {[disk.model, disk.serial].filter(Boolean).join(' · ')}
+                    </div>
+                  )}
+                </div>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: disk.in_use ? 'var(--text-muted)' : 'var(--text-secondary)', fontWeight: 600, minWidth: 60, textAlign: 'right', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                  {disk.size_human}
+                </span>
+              </button>
+            ))}
           </div>
         )}
       </div>
@@ -401,17 +541,18 @@ function ImportPoolModal({ onClose, onSuccess }: { onClose: () => void; onSucces
 }
 
 /* ── Expand Pool Modal ────────────────────────────────────────────────────────── */
-function ExpandPoolModal({ poolName, poolDisks, onClose, onSuccess, usedDisks = new Set<string>() }: {
-  poolName: string; poolDisks: { path: string; state: string }[];
-  onClose: () => void; onSuccess: () => void;
-  usedDisks?: Set<string>;
+function ExpandPoolModal({ poolName, onClose, onSuccess }: {
+  poolName: string;
+  onClose: () => void;
+  onSuccess: () => void;
 }) {
-  const [selected, setSelected] = useState('');
+  const [selected, setSelected]   = useState('');
   const [expanding, setExpanding] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError]         = useState('');
+  const [showPicker, setShowPicker] = useState(false);
 
   const handleExpand = async () => {
-    if (!selected) { setError('Select a disk to expand'); return; }
+    if (!selected) { setError('Select a disk to add'); return; }
     setExpanding(true); setError('');
     try { await api.expandPool(poolName, selected); onSuccess(); }
     catch (err: any) { setError(err.message || 'Expand failed'); }
@@ -419,46 +560,52 @@ function ExpandPoolModal({ poolName, poolDisks, onClose, onSuccess, usedDisks = 
   };
 
   return (
-    <div style={S.modal.overlay} onClick={onClose}>
-      <div style={S.modal.box} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
-          <h3 style={S.modal.title}>Expand Pool</h3>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <label style={S.modal.label}>Select disk to expand</label>
-          {poolDisks.length === 0 ? (
-            <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>No disks found</p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {poolDisks.map((d, i) => (
-                <button key={i} onClick={() => setSelected(d.path)} style={{
-                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
-                  background: selected === d.path ? 'var(--accent-dim)' : 'var(--bg-elevated)',
-                  border: `1px solid ${selected === d.path ? 'var(--accent-mid)' : 'var(--border)'}`,
-                  borderRadius: 'var(--radius)', cursor: 'pointer', transition: 'all 0.12s',
-                }}>
-                  <HardDrive size={14} style={{ color: selected === d.path ? 'var(--accent)' : 'var(--text-muted)' }} />
-                  <div>
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{d.path}</div>
-                    <div style={{ fontSize: 10, color: d.state === 'ONLINE' ? 'var(--success)' : 'var(--danger)', textTransform: 'uppercase', marginTop: 2 }}>{d.state}</div>
-                  </div>
-                  {selected === d.path && <CheckCircle size={13} style={{ color: 'var(--accent)', marginLeft: 'auto' }} />}
-                </button>
-              ))}
+    <>
+      {showPicker && (
+        <DiskPicker
+          onSelect={path => { setSelected(path); setShowPicker(false); }}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
+      <div style={S.modal.overlay} onClick={onClose}>
+        <div style={S.modal.box} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+            <div>
+              <h3 style={S.modal.title}>Add Disk to Pool</h3>
+              <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>zpool add {poolName}</p>
             </div>
-          )}
-          {error && <div style={{ padding: '10px 14px', background: 'var(--danger-dim)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleExpand} disabled={expanding || !selected}>
-              {expanding ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Expand size={14} />}
-              {expanding ? 'Expanding…' : 'Expand'}
-            </button>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <label style={S.modal.label}>Disk to add</label>
+            {selected ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--accent-dim)', border: '1px solid var(--accent-mid)', borderRadius: 'var(--radius)' }}>
+                  <HardDrive size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{selected}</span>
+                  <CheckCircle size={13} style={{ color: 'var(--accent)', marginLeft: 'auto' }} />
+                </div>
+                <button className="btn btn-secondary" onClick={() => { setSelected(''); setShowPicker(true); }} style={{ whiteSpace: 'nowrap', fontSize: 11 }}>
+                  Change
+                </button>
+              </div>
+            ) : (
+              <button className="btn btn-secondary" onClick={() => setShowPicker(true)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <HardDrive size={13} /> Browse Disks
+              </button>
+            )}
+            {error && <div style={{ padding: '10px 14px', background: 'var(--danger-dim)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
+              <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleExpand} disabled={expanding || !selected}>
+                {expanding ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Expand size={14} />}
+                {expanding ? 'Adding…' : 'Add Disk'}
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -511,10 +658,9 @@ function CreatePoolModal({ onClose, onSuccess, usedDisks = new Set<string>() }: 
   return (
     <>
       {showPicker && (
-        <DevicePicker
+        <DiskPicker
           onSelect={path => { handlePickerSelect(path); setShowPicker(false); }}
           onClose={() => setShowPicker(false)}
-          usedDisks={usedDisks}
         />
       )}
       <div style={S.modal.overlay} onClick={onClose}>
@@ -1306,10 +1452,8 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
       {expandTarget && (
         <ExpandPoolModal
           poolName={expandTarget}
-          poolDisks={getPoolDisks(expandTarget)}
           onClose={() => setExpandTarget(null)}
-          onSuccess={() => { showToast(`Pool "${expandTarget}" expanded`, 'success'); setExpandTarget(null); onRefresh(); }}
-          usedDisks={usedDisksSet}
+          onSuccess={() => { showToast(`Disk added to pool "${expandTarget}"`, 'success'); setExpandTarget(null); onRefresh(); }}
         />
       )}
       {replaceTarget && (
