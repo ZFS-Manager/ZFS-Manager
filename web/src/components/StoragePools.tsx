@@ -168,9 +168,8 @@ function DiskPicker({ onSelect, onClose }: {
   onSelect: (path: string) => void;
   onClose: () => void;
 }) {
-  const [disks, setDisks]           = useState<EnrichedDisk[]>([]);
-  const [loading, setLoading]       = useState(true);
-  const [showUsed, setShowUsed]     = useState(false);
+  const [disks, setDisks]             = useState<EnrichedDisk[]>([]);
+  const [loading, setLoading]         = useState(true);
   const [confirmDisk, setConfirmDisk] = useState<EnrichedDisk | null>(null);
 
   useEffect(() => {
@@ -179,10 +178,6 @@ function DiskPicker({ onSelect, onClose }: {
       .catch(() => setDisks([]))
       .finally(() => setLoading(false));
   }, []);
-
-  const freeDisks = disks.filter(d => !d.in_use);
-  const usedDisks = disks.filter(d => d.in_use);
-  const visible   = showUsed ? disks : freeDisks;
 
   const handleClick = (disk: EnrichedDisk) => {
     if (disk.in_use) { setConfirmDisk(disk); return; }
@@ -200,14 +195,6 @@ function DiskPicker({ onSelect, onClose }: {
             <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>/api/v1/disks</p>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
-        </div>
-
-        {/* Show-used toggle */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, padding: '8px 12px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
-          <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)' }}>Show used disks</span>
-          <button onClick={() => { setShowUsed(v => !v); setConfirmDisk(null); }} style={{ width: 36, height: 20, borderRadius: 10, background: showUsed ? 'var(--warning)' : 'var(--bg-base)', border: '1px solid var(--border)', position: 'relative', cursor: 'pointer', transition: 'all 0.2s', padding: 0, flexShrink: 0 }}>
-            <div style={{ position: 'absolute', top: 2, left: showUsed ? 17 : 2, width: 14, height: 14, borderRadius: 7, background: '#fff', transition: 'left 0.2s' }} />
-          </button>
         </div>
 
         {/* Inline confirmation warning for used disks */}
@@ -229,26 +216,19 @@ function DiskPicker({ onSelect, onClose }: {
           </div>
         )}
 
-        {/* Disk list */}
+        {/* Disk list — all disks always shown */}
         {loading ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '32px 0', justifyContent: 'center', color: 'var(--text-muted)' }}>
             <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
             <span style={{ fontSize: 12, fontFamily: 'var(--font-ui)' }}>Scanning devices…</span>
           </div>
-        ) : visible.length === 0 ? (
+        ) : disks.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '28px 0' }}>
-            <p style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 8 }}>
-              {freeDisks.length === 0 ? 'No free disks available' : 'No disks to show'}
-            </p>
-            {freeDisks.length === 0 && usedDisks.length > 0 && !showUsed && (
-              <button onClick={() => setShowUsed(true)} style={{ fontSize: 11, color: 'var(--info)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-                Show {usedDisks.length} used disk{usedDisks.length !== 1 ? 's' : ''}
-              </button>
-            )}
+            <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>No block devices found</p>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto' }}>
-            {visible.map((disk, i) => (
+            {disks.map((disk, i) => (
               <button
                 key={i}
                 onClick={() => handleClick(disk)}
@@ -673,7 +653,7 @@ function CreatePoolModal({ onClose, onSuccess, usedDisks = new Set<string>() }: 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             <div>
               <label style={S.modal.label}>Pool Name</label>
-              <input style={S.modal.input} type="text" placeholder="e.g. tank, storage, data" value={poolName} onChange={e => setPoolName(e.target.replace(/[^a-zA-Z0-9_\-:.]/g, ''))} />
+              <input style={S.modal.input} type="text" placeholder="e.g. tank, storage, data" value={poolName} onChange={e => setPoolName(e.target.value.replace(/[^a-zA-Z0-9_\-:.]/g, ''))} />
             </div>
 
             <div>
