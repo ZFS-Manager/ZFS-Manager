@@ -53,6 +53,8 @@ pub struct ExpandBody {
     pub disk:      Option<String>,
     pub disks:     Option<Vec<String>>,
     pub vdev_type: Option<String>,
+    #[serde(default)]
+    pub force:     bool,
 }
 
 #[derive(Deserialize)]
@@ -587,7 +589,9 @@ async fn expand_pool(
         return Err(ApiError::BadRequest("'disk' or 'disks' is required".into()));
     }
 
-    let mut args = vec!["add".to_string(), name.clone()];
+    let mut args = vec!["add".to_string()];
+    if body.force { args.push("-f".to_string()); }
+    args.push(name.clone());
     if let Some(vt) = &body.vdev_type {
         let vt = vt.trim();
         if !vt.is_empty() && vt != "stripe" {

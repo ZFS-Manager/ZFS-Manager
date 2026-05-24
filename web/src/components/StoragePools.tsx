@@ -607,90 +607,30 @@ function ImportPoolModal({ onClose, onSuccess }: { onClose: () => void; onSucces
 }
 
 /* ── Expand Pool Modal ────────────────────────────────────────────────────────── */
-type VdevRole = 'data' | 'spare' | 'log' | 'cache';
-
-const ROLE_LABELS: Record<VdevRole, string> = {
-  data:  'Data Vdev',
-  spare: 'Spare',
-  log:   'Log',
-  cache: 'Cache',
-};
-
 function ExpandPoolModal({ poolName, onClose, onSuccess }: {
   poolName: string;
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const [expanding, setExpanding]     = useState(false);
-  const [error, setError]             = useState('');
-  const [vdevInfo, setVdevInfo]       = useState<{ type: string; diskCount: number } | null>(null);
-  const [selectedDisks, setSelectedDisks] = useState<string[]>(['']);
-  const [activeSlot, setActiveSlot]   = useState(0);
-  const [role, setRole]               = useState<VdevRole>('data');
+  const [expanding, setExpanding] = useState(false);
+  const [error, setError]         = useState('');
+  const [mode, setMode]           = useState<'extend' | 'cache'>('extend');
+  const [disk, setDisk]           = useState('');
 
-  useEffect(() => {
-    api.getPoolVdevs(poolName).then(res => {
-      const vdevs = res.vdevs || [];
-      if (vdevs.length === 0) { setVdevInfo({ type: 'stripe', diskCount: 1 }); return; }
-      const first = vdevs[0];
-      const t = first.type || 'stripe';
-      const n = t === 'stripe' ? 1 : ((first.disks || []).length || 1);
-      setVdevInfo({ type: t, diskCount: n });
-      setSelectedDisks(Array(n).fill(''));
-    }).catch(() => setVdevInfo({ type: 'stripe', diskCount: 1 }));
-  }, [poolName]);
+  const ready = disk.trim() !== '';
 
-  // Reset disk selection when role changes
-  const handleRoleChange = (r: VdevRole) => {
-    setRole(r);
-    const slots = r === 'data' ? (vdevInfo?.diskCount ?? 1) : 1;
-    setSelectedDisks(Array(slots).fill(''));
-    setActiveSlot(0);
-    setError('');
-  };
-
-  const handleDiskSelect = (path: string) => {
-    setSelectedDisks(prev => {
-      const next = [...prev];
-      next[activeSlot] = path;
-      // Auto-advance to next empty slot
-      const nextEmpty = next.findIndex((d, i) => i > activeSlot && !d);
-      if (nextEmpty >= 0) setTimeout(() => setActiveSlot(nextEmpty), 0);
-      return next;
-    });
-  };
-
-  const filled = selectedDisks.filter(Boolean);
-  const needed = role === 'data' ? (vdevInfo?.diskCount ?? 1) : 1;
-  const ready  = filled.length >= needed && !filled.some(d => !d);
-
-  const vdevTypeLabel = (() => {
-    if (role !== 'data') return null;
-    const t = vdevInfo?.type;
-    if (!t || t === 'stripe') return null;
-    if (t === 'mirror')  return 'Mirror';
-    if (t === 'raidz1')  return 'RAIDZ-1';
-    if (t === 'raidz2')  return 'RAIDZ-2';
-    if (t === 'raidz3')  return 'RAIDZ-3';
-    return t.toUpperCase();
-  })();
-
-  const cmdPreview = (() => {
-    const disks = selectedDisks.map(d => d || '<disk>');
-    if (role !== 'data') return `zpool add ${poolName} ${role} ${disks[0]}`;
-    const t = vdevInfo?.type;
-    if (!t || t === 'stripe') return `zpool add ${poolName} ${disks[0]}`;
-    return `zpool add ${poolName} ${t} ${disks.join(' ')}`;
-  })();
+  const cmdPreview = mode === 'cache'
+    ? `zpool add ${poolName} cache ${disk || '<disk>'}`
+    : `zpool add -f ${poolName} ${disk || '<disk>'}`;
 
   const handleExpand = async () => {
-    if (!ready) { setError(`Select ${needed} disk${needed > 1 ? 's' : ''} to continue`); return; }
+    if (!ready) { setError('Select a disk to continue'); return; }
     setExpanding(true); setError('');
     try {
-      if (role !== 'data') {
-        await api.expandPool(poolName, selectedDisks, role);
+      if (mode === 'cache') {
+        await api.expandPool(poolName, [disk], 'cache', false);
       } else {
-        await api.expandPool(poolName, selectedDisks, vdevInfo?.type !== 'stripe' ? vdevInfo?.type : undefined);
+        await api.expandPool(poolName, [disk], undefined, true);
       }
       onSuccess();
     }
@@ -703,102 +643,50 @@ function ExpandPoolModal({ poolName, onClose, onSuccess }: {
       <div style={{ ...S.modal.box, maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
-            <h3 style={S.modal.title}>Add Vdev to Pool</h3>
+            <h3 style={S.modal.title}>Expand Pool</h3>
             <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>zpool add {poolName}</p>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {/* Role selector */}
+          {/* Mode selector */}
           <div>
-            <label style={S.modal.label}>Vdev role</label>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {(['data', 'spare', 'log', 'cache'] as VdevRole[]).map(r => (
+            <label style={S.modal.label}>Operation</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {(['extend', 'cache'] as const).map(m => (
                 <button
-                  key={r}
-                  onClick={() => handleRoleChange(r)}
+                  key={m}
+                  onClick={() => { setMode(m); setDisk(''); setError(''); }}
                   style={{
-                    flex: 1, padding: '6px 4px', fontSize: 11, fontFamily: 'var(--font-ui)',
-                    background: role === r ? 'var(--accent)' : 'var(--bg-elevated)',
-                    color: role === r ? '#fff' : 'var(--text-secondary)',
-                    border: `1px solid ${role === r ? 'var(--accent)' : 'var(--border)'}`,
+                    flex: 1, padding: '8px 6px', fontSize: 12, fontFamily: 'var(--font-ui)',
+                    background: mode === m ? 'var(--accent)' : 'var(--bg-elevated)',
+                    color: mode === m ? '#fff' : 'var(--text-secondary)',
+                    border: `1px solid ${mode === m ? 'var(--accent)' : 'var(--border)'}`,
                     borderRadius: 'var(--radius)', cursor: 'pointer', transition: 'all 0.12s',
                   }}
                 >
-                  {ROLE_LABELS[r]}
+                  {m === 'extend' ? 'Extend Pool' : 'Add Cache'}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Data vdev type hint */}
-          {role === 'data' && vdevTypeLabel && (
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 14px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 'var(--radius)' }}>
-              <AlertTriangle size={13} style={{ color: 'var(--info)', marginTop: 1, flexShrink: 0 }} />
-              <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', lineHeight: 1.5 }}>
-                This pool uses <strong>{vdevTypeLabel}</strong>. You must select <strong>{needed} disk{needed > 1 ? 's' : ''}</strong> to form a new {vdevTypeLabel} vdev.
-              </span>
-            </div>
-          )}
+          {/* Hint */}
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 14px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 'var(--radius)' }}>
+            <AlertTriangle size={13} style={{ color: 'var(--info)', marginTop: 1, flexShrink: 0 }} />
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', lineHeight: 1.5 }}>
+              {mode === 'extend'
+                ? <>Adds one disk as a new vdev using <code style={{ fontFamily: 'var(--font-mono)' }}>zpool add -f</code>. Mix sizes with caution.</>
+                : <>Adds one disk as an <strong>L2ARC cache</strong> to accelerate read performance.</>}
+            </span>
+          </div>
 
-          {/* Non-data role hint */}
-          {role !== 'data' && (
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 14px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 'var(--radius)' }}>
-              <AlertTriangle size={13} style={{ color: 'var(--info)', marginTop: 1, flexShrink: 0 }} />
-              <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', lineHeight: 1.5 }}>
-                Adding a <strong>{ROLE_LABELS[role]}</strong> disk. Select at least <strong>1 disk</strong> — no vdev type restriction.
-              </span>
-            </div>
-          )}
+          {/* Disk label */}
+          <label style={S.modal.label}>Select disk</label>
 
-          {/* Disk slots (only shown when >1 needed) */}
-          {needed > 1 && (
-            <div>
-              <label style={S.modal.label}>Selected disks ({filled.length}/{needed})</label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {selectedDisks.map((disk, i) => (
-                  <div
-                    key={i}
-                    onClick={() => setActiveSlot(i)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
-                      background: activeSlot === i ? 'var(--accent-dim)' : 'var(--bg-elevated)',
-                      border: `1px solid ${activeSlot === i ? 'var(--accent-mid)' : 'var(--border)'}`,
-                      borderRadius: 'var(--radius)', cursor: 'pointer', transition: 'all 0.12s',
-                    }}
-                  >
-                    <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', minWidth: 40 }}>Disk {i + 1}</span>
-                    {disk ? (
-                      <>
-                        <HardDrive size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', flex: 1 }}>{disk}</span>
-                        <button
-                          onClick={e => { e.stopPropagation(); setSelectedDisks(prev => { const n = [...prev]; n[i] = ''; return n; }); setActiveSlot(i); }}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'flex' }}
-                        ><X size={12} /></button>
-                      </>
-                    ) : (
-                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', fontStyle: 'italic', flex: 1 }}>
-                        {activeSlot === i ? '← select from list below' : 'click to select'}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Single-disk label */}
-          {needed === 1 && (
-            <label style={S.modal.label}>Select disk to add</label>
-          )}
-
-          {/* Inline disk list */}
-          <InlineDiskPicker
-            selected={selectedDisks[activeSlot] || ''}
-            onSelect={handleDiskSelect}
-          />
+          {/* Inline disk picker */}
+          <InlineDiskPicker selected={disk} onSelect={setDisk} />
 
           {/* Command preview */}
           <div style={{ background: 'var(--bg-elevated)', borderRadius: 'var(--radius)', padding: '8px 12px', border: '1px solid var(--border)' }}>
@@ -812,7 +700,7 @@ function ExpandPoolModal({ poolName, onClose, onSuccess }: {
             <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
             <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleExpand} disabled={expanding || !ready}>
               {expanding ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Expand size={14} />}
-              {expanding ? 'Adding…' : `Add ${role !== 'data' ? ROLE_LABELS[role] : (needed > 1 ? vdevTypeLabel + ' Vdev' : 'Disk')}`}
+              {expanding ? 'Adding…' : (mode === 'extend' ? 'Extend Pool' : 'Add Cache')}
             </button>
           </div>
         </div>

@@ -302,33 +302,12 @@ fn format_size_human(bytes: u64) -> String {
     format!("{} B", bytes)
 }
 
-async fn list_enriched_disks(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    const CACHE_KEY: &str = "zfs:disks-enriched";
-
-    // Check 10-second Redis cache
-    if let Some(ref redis_conn) = state.redis {
-        let mut conn = redis_conn.clone();
-        let cached: redis::RedisResult<Option<String>> = conn.get(CACHE_KEY).await;
-        if let Ok(Some(hit)) = cached {
-            if let Ok(val) = serde_json::from_str::<Value>(&hit) {
-                return Ok(Json(val));
-            }
-        }
-    }
-
-    // One lsblk call for the full device tree (disk + partition children)
-    let lsblk_out = tokio::process::Command::new("lsblk")
-        .args(["-Jb", "-o", "NAME,SIZE,TYPE,MODEL"])
-        .output()
-        .await
-        .map_err(|e| ApiError::InternalError(e.to_string()))?;
-
-    let lsblk_json: Value = serde_json::from_slice(&lsblk_out.stdout)
-        .unwrap_or_else(|_| json!({"blockdevices": []}));
-
-    // Detect ZFS pool membership via zpool status
+async fn list_enriched_disks(State(_state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    // Build ZFS pool membership map — ZFS is the single source of truth for in_use.
+    // Using `zpool status -P` gives full /dev/... paths which we normalize to short
+    // kernel names (sda, loop10, nvme0n1) so they match lsblk output.
     let mut disk_pool_map: HashMap<String, String> = HashMap::new();
-    if let Ok(out) = tokio::process::Command::new("zpool").args(["status"]).output().await {
+    if let Ok(out) = tokio::process::Command::new("zpool").args(["status", "-P"]).output().await {
         let text = String::from_utf8_lossy(&out.stdout);
         let mut current_pool = String::new();
         let mut in_config = false;
@@ -341,16 +320,25 @@ async fn list_enriched_disks(State(state): State<AppState>) -> Result<Json<Value
                 in_config = true;
             } else if in_config && (line.starts_with('\t') || line.starts_with("  ")) {
                 let tok = trimmed.split_whitespace().next().unwrap_or("");
-                // Skip header, the pool root line, and virtual vdev keywords
                 if tok.is_empty() || tok == "NAME" || tok == current_pool
                     || ["logs", "cache", "spares", "special", "dedup", "errors:"].contains(&tok)
                 {
                     continue;
                 }
-                // Normalize: strip /dev/ prefix, then map both the full name and the base (no digits)
-                let short = tok.strip_prefix("/dev/").unwrap_or(tok);
+                // Resolve full path → short kernel name.
+                // canonicalize follows symlinks (handles /dev/disk/by-id/...).
+                // Falls back to stripping /dev/ for simple paths.
+                let short = if tok.starts_with('/') {
+                    std::fs::canonicalize(tok)
+                        .ok()
+                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                        .unwrap_or_else(|| tok.strip_prefix("/dev/").unwrap_or(tok).to_string())
+                } else {
+                    tok.to_string()
+                };
+                disk_pool_map.insert(short.clone(), current_pool.clone());
+                // Also map the base name without numeric suffix (e.g. "sda" from "sda1")
                 let base = short.trim_end_matches(|c: char| c.is_ascii_digit());
-                disk_pool_map.insert(short.to_string(), current_pool.clone());
                 if base.len() < short.len() {
                     disk_pool_map.insert(base.to_string(), current_pool.clone());
                 }
@@ -358,20 +346,31 @@ async fn list_enriched_disks(State(state): State<AppState>) -> Result<Json<Value
         }
     }
 
-    // Build enriched disk list
+    // Enumerate block devices with -d (no children/partitions in output — we don't need them).
+    // Include physical disks AND loop devices (used for testing / virtual environments).
+    let lsblk_out = tokio::process::Command::new("lsblk")
+        .args(["-Jbdo", "NAME,SIZE,TYPE,MODEL"])
+        .output()
+        .await
+        .map_err(|e| ApiError::InternalError(e.to_string()))?;
+
+    let lsblk_json: Value = serde_json::from_slice(&lsblk_out.stdout)
+        .unwrap_or_else(|_| json!({"blockdevices": []}));
+
     let mut disks: Vec<Value> = Vec::new();
     if let Some(blockdevices) = lsblk_json["blockdevices"].as_array() {
         for dev in blockdevices {
             let dev_type = dev["type"].as_str().unwrap_or("");
             let name = dev["name"].as_str().unwrap_or("");
-            // Only physical disks; skip loop, sr/rom, etc.
-            if dev_type != "disk" || name.starts_with("loop") || name.starts_with("sr") || name == "rom" {
+            // Accept physical disks and loop devices; skip optical/tape/other
+            if !matches!(dev_type, "disk" | "loop") || name.starts_with("sr") || name == "rom" {
                 continue;
             }
 
             let size_bytes = dev["size"].as_u64().unwrap_or(0);
+            if size_bytes == 0 { continue; }
 
-            // Model: lsblk value first, then sysfs fallback
+            // Model from lsblk, then sysfs fallback for physical disks
             let model_raw = dev["model"].as_str().unwrap_or("").trim().to_string();
             let model: Option<String> = if !model_raw.is_empty() {
                 Some(model_raw)
@@ -382,45 +381,28 @@ async fn list_enriched_disks(State(state): State<AppState>) -> Result<Json<Value
                     .filter(|s| !s.is_empty())
             };
 
-            // Serial: sysfs (no subprocess needed when running as root)
             let serial: Option<String> =
                 std::fs::read_to_string(format!("/sys/block/{}/device/serial", name))
                     .ok()
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty());
 
+            // in_use is determined solely by ZFS pool membership — no lsblk FSTYPE / partition detection
             let pool = disk_pool_map.get(name).cloned();
-
-            // Partitions: any children in lsblk tree
-            let has_partitions = dev["children"]
-                .as_array()
-                .map(|c| !c.is_empty())
-                .unwrap_or(false);
-
-            let in_use = pool.is_some() || has_partitions;
+            let in_use = pool.is_some();
 
             disks.push(json!({
-                "name": name,
+                "name":       name,
                 "size_bytes": size_bytes,
                 "size_human": format_size_human(size_bytes),
-                "in_use": in_use,
-                "pool": pool,
-                "partitions": has_partitions,
-                "model": model,
-                "serial": serial,
+                "in_use":     in_use,
+                "pool":       pool,
+                "partitions": false,  // kept for API compat; always false with ZFS-only detection
+                "model":      model,
+                "serial":     serial,
             }));
         }
     }
 
-    let result = json!({ "disks": disks });
-
-    // Cache for 10 seconds
-    if let Some(ref redis_conn) = state.redis {
-        let mut conn = redis_conn.clone();
-        if let Ok(s) = serde_json::to_string(&result) {
-            let _: redis::RedisResult<()> = conn.set_ex(CACHE_KEY, s, 10u64).await;
-        }
-    }
-
-    Ok(Json(result))
+    Ok(Json(json!({ "disks": disks })))
 }
