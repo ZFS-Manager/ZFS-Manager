@@ -13,6 +13,8 @@ interface SnapshotManagerProps {
   datasets: ZFSDataset[];
   pools?: ZFSPool[];
   onRefresh: () => void;
+  selectedPool?: string;
+  onSelectPool?: (name: string) => void;
 }
 
 /* ── Shared Modal ── */
@@ -74,6 +76,54 @@ function Toast({ msg, type }: { msg: string; type: 'success' | 'error' }) {
   );
 }
 
+/* ── Compact pool selector (inline use in header) ── */
+function PoolSelector({ pools, selected, onSelect }: { pools: ZFSPool[]; selected: string; onSelect: (name: string) => void }) {
+  if (pools.length <= 1) return null;
+  if (pools.length > 4) {
+    return (
+      <select
+        value={selected}
+        onChange={e => onSelect(e.target.value)}
+        style={{
+          height: 32, padding: '0 28px 0 10px',
+          background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)', fontSize: 12, fontFamily: 'var(--font-mono)',
+          fontWeight: 600, color: 'var(--accent)', cursor: 'pointer', outline: 'none',
+        }}
+      >
+        {pools.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
+      </select>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+      {pools.map(p => {
+        const active = selected === p.name;
+        const dot = p.health === 'ONLINE' ? 'var(--success)' : p.health === 'DEGRADED' ? 'var(--warning)' : 'var(--danger)';
+        return (
+          <button
+            key={p.name}
+            onClick={() => onSelect(p.name)}
+            style={{
+              height: 32, padding: '0 14px', border: 'none',
+              background: active ? 'var(--accent-dim)' : 'transparent',
+              color: active ? 'var(--accent)' : 'var(--text-muted)',
+              fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600, letterSpacing: '0.04em',
+              cursor: 'pointer', transition: 'all 0.12s',
+              borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+              borderRight: '1px solid var(--border)',
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            <span style={{ width: 5, height: 5, borderRadius: '50%', background: dot, display: 'inline-block', flexShrink: 0 }} />
+            {p.name}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function buildDefaultSnapName(dataset: string): string {
   const date = new Date();
   const y = date.getFullYear();
@@ -106,7 +156,7 @@ const inputStyle: React.CSSProperties = {
 };
 
 /* ── Main component ── */
-export default function SnapshotManager({ snapshots, datasets, pools = [], onRefresh }: SnapshotManagerProps) {
+export default function SnapshotManager({ snapshots, datasets, pools = [], onRefresh, selectedPool, onSelectPool }: SnapshotManagerProps) {
   const [search, setSearch]                   = useState('');
   const [showCreate, setShowCreate]           = useState(false);
   const [createDataset, setCreateDataset]     = useState('');
@@ -127,10 +177,19 @@ export default function SnapshotManager({ snapshots, datasets, pools = [], onRef
     setTimeout(() => setToast(null), 3500);
   };
 
-  const filtered = useMemo(() =>
-    snapshots.filter(s => s.name?.toLowerCase().includes(search.toLowerCase())),
-    [snapshots, search]
-  );
+  const multiPool = pools.length > 1;
+  const effectivePool = multiPool
+    ? (selectedPool && pools.some(p => p.name === selectedPool) ? selectedPool : pools[0]?.name || '')
+    : (pools[0]?.name || '');
+
+  const filtered = useMemo(() => {
+    const bySearch = snapshots.filter(s => s.name?.toLowerCase().includes(search.toLowerCase()));
+    if (!multiPool || !effectivePool) return bySearch;
+    return bySearch.filter(s => {
+      const ds = s.name?.split('@')[0] || '';
+      return ds === effectivePool || ds.startsWith(effectivePool + '/');
+    });
+  }, [snapshots, search, multiPool, effectivePool]);
 
   // Reset visible count when filters change
   useEffect(() => { setVisibleCount(15); }, [search]);
@@ -392,6 +451,9 @@ export default function SnapshotManager({ snapshots, datasets, pools = [], onRef
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {multiPool && onSelectPool && (
+            <PoolSelector pools={pools} selected={effectivePool} onSelect={onSelectPool} />
+          )}
           <div style={{ position: 'relative' }}>
             <Search size={13} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
             <input

@@ -6,6 +6,8 @@ import PageTransition from './PageTransition';
 interface SettingsProps {
   onPasswordChanged?: () => void;
   pools?: any[];
+  selectedPool?: string;
+  onSelectPool?: (name: string) => void;
 }
 
 interface ApiKeyRow {
@@ -487,14 +489,20 @@ function ApiKeys({ addToast }: { addToast: (msg: string, type: 'success' | 'erro
 }
 
 /* ── General section (Default Pool) ── */
-function General({ pools }: { pools: any[] }) {
+function General({ pools, selectedPool, onSelectPool }: { pools: any[]; selectedPool?: string; onSelectPool?: (name: string) => void }) {
   const [defaultPool, setDefaultPool] = useState(
-    () => localStorage.getItem('zfs_default_pool') || pools[0]?.name || ''
+    () => selectedPool || localStorage.getItem('zfs_default_pool') || pools[0]?.name || ''
   );
+
+  // Keep local state in sync when parent selectedPool changes
+  useEffect(() => {
+    if (selectedPool && selectedPool !== defaultPool) setDefaultPool(selectedPool);
+  }, [selectedPool]);
 
   const handleChange = (name: string) => {
     setDefaultPool(name);
     localStorage.setItem('zfs_default_pool', name);
+    onSelectPool?.(name); // propagate to App.tsx state immediately
   };
 
   if (pools.length <= 1) return null;
@@ -585,7 +593,7 @@ function Appearance() {
 }
 
 /* ── Main Settings page ── */
-export default function Settings({ onPasswordChanged, pools = [] }: SettingsProps) {
+export default function Settings({ onPasswordChanged, pools = [], selectedPool, onSelectPool }: SettingsProps) {
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
 
   const addToast = useCallback((msg: string, type: 'success' | 'error') => {
@@ -630,7 +638,7 @@ export default function Settings({ onPasswordChanged, pools = [] }: SettingsProp
                 General
               </span>
             </div>
-            <General pools={pools} />
+            <General pools={pools} selectedPool={selectedPool} onSelectPool={onSelectPool} />
           </div>
         )}
 

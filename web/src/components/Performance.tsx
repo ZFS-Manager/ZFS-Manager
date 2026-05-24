@@ -295,62 +295,68 @@ function SectionHeader({ label, badge }: { label: string; badge: string }) {
   );
 }
 
-/* ── Pool selector ── */
+/* ── Pool selector (compact — inline in toolbar) ── */
 function PoolSelector({ pools, selected, onSelect }: {
   pools: any[];
   selected: string;
   onSelect: (name: string) => void;
 }) {
   if (pools.length <= 1) return null;
+
+  if (pools.length > 4) {
+    return (
+      <select
+        value={selected}
+        onChange={e => onSelect(e.target.value)}
+        style={{
+          background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)', padding: '0 28px 0 10px',
+          fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 600,
+          color: 'var(--accent)', cursor: 'pointer', outline: 'none', height: 32,
+        }}
+      >
+        {pools.map((p: any) => (
+          <option key={p.name} value={p.name}>{p.name} [{p.health}]</option>
+        ))}
+      </select>
+    );
+  }
+
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20,
-      padding: '10px 16px',
-      background: 'var(--bg-surface)', border: '1px solid var(--border)',
-      borderRadius: 'var(--radius-lg)',
+      display: 'flex', background: 'var(--bg-elevated)',
+      border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+      overflow: 'hidden',
     }}>
-      <span style={{
-        fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 600,
-        color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em',
-        flexShrink: 0,
-      }}>
-        Pool:
-      </span>
-      <div style={{
-        display: 'flex', background: 'var(--bg-elevated)',
-        border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-        overflow: 'hidden',
-      }}>
-        {pools.map((p: any) => {
-          const active = selected === p.name;
-          const isOnline = p.health === 'ONLINE';
-          return (
-            <button
-              key={p.name}
-              onClick={() => onSelect(p.name)}
-              style={{
-                height: 30, padding: '0 16px',
-                fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
-                letterSpacing: '0.04em',
-                background: active ? 'var(--accent-dim)' : 'transparent',
-                color: active ? 'var(--accent)' : 'var(--text-muted)',
-                cursor: 'pointer', transition: 'all 0.12s',
-                border: 'none',
-                borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
-                display: 'flex', alignItems: 'center', gap: 6,
-                borderRight: '1px solid var(--border)',
-              }}
-            >
-              <span style={{
-                width: 5, height: 5, borderRadius: '50%',
-                background: isOnline ? 'var(--success)' : 'var(--danger)',
-                display: 'inline-block', flexShrink: 0,
-              }} />
-              {p.name}
-            </button>
-          );
-        })}
-      </div>
+      {pools.map((p: any) => {
+        const active = selected === p.name;
+        const isOnline = p.health === 'ONLINE';
+        return (
+          <button
+            key={p.name}
+            onClick={() => onSelect(p.name)}
+            style={{
+              height: 32, padding: '0 14px',
+              fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
+              letterSpacing: '0.04em',
+              background: active ? 'var(--accent-dim)' : 'transparent',
+              color: active ? 'var(--accent)' : 'var(--text-muted)',
+              cursor: 'pointer', transition: 'all 0.12s',
+              border: 'none',
+              borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+              display: 'flex', alignItems: 'center', gap: 6,
+              borderRight: '1px solid var(--border)',
+            }}
+          >
+            <span style={{
+              width: 5, height: 5, borderRadius: '50%',
+              background: isOnline ? 'var(--success)' : 'var(--danger)',
+              display: 'inline-block', flexShrink: 0,
+            }} />
+            {p.name}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -751,8 +757,13 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
               {!liveMode && (
                 <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
                   {windowedChartData.length} pts · {secPerPt}s/sample
-                  {multiPool && effectivePool && ` · ${effectivePool}`}
                 </span>
+              )}
+
+              {multiPool && onSelectPool && (
+                <div style={{ marginLeft: 'auto' }}>
+                  <PoolSelector pools={poolsProp || []} selected={effectivePool} onSelect={onSelectPool} />
+                </div>
               )}
             </div>
 
@@ -944,7 +955,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   return (
     <PageTransition>
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: multiPool ? 16 : 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.01em' }}>System Performance</h1>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-secondary" onClick={() => setEditMode(!editMode)}>
@@ -953,11 +964,6 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
           </button>
         </div>
       </div>
-
-      {/* Pool selector — only when multiple pools exist */}
-      {multiPool && onSelectPool && (
-        <PoolSelector pools={poolsProp || []} selected={effectivePool} onSelect={onSelectPool} />
-      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
         {widgets.filter(w => w.visible).map(w => (

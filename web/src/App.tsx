@@ -566,11 +566,11 @@ export default function App() {
                 <DatasetList datasets={datasets} volumes={volumes} pools={pools} onRefresh={fetchData} />
               } />
               <Route path="/snapshots" element={
-                <SnapshotManager snapshots={snapshots} datasets={datasets} pools={pools} onRefresh={fetchData} />
+                <SnapshotManager snapshots={snapshots} datasets={datasets} pools={pools} onRefresh={fetchData} selectedPool={selectedPool} onSelectPool={handleSelectPool} />
               } />
               <Route path="/logs" element={<SystemLogs logs={logs} pools={pools} />} />
               <Route path="/settings" element={
-                <Settings onPasswordChanged={() => setIsDefaultPassword(false)} pools={pools} />
+                <Settings onPasswordChanged={() => setIsDefaultPassword(false)} pools={pools} selectedPool={selectedPool} onSelectPool={handleSelectPool} />
               } />
               <Route path="/notifications" element={<Notifications />} />
               <Route path="/login" element={<Navigate to="/dashboard" replace />} />

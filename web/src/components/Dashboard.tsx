@@ -148,7 +148,7 @@ const GRID_PROPS  = { strokeDasharray: '1 6' as const, stroke: 'rgba(255,255,255
 const CHART_MARGIN = { top: 24, right: 8, left: 16, bottom: 8 };
 const MAX_TICKS    = 6;
 
-/* ── Pool selector ── */
+/* ── Pool selector (compact — for inline use in header rows) ── */
 function PoolSelector({ pools, selected, onSelect }: {
   pools: ZFSPool[];
   selected: string;
@@ -156,93 +156,70 @@ function PoolSelector({ pools, selected, onSelect }: {
 }) {
   if (pools.length <= 1) return null;
 
-  const wrapperStyle: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16,
-    padding: '10px 16px',
-    background: 'var(--bg-surface)', border: '1px solid var(--border)',
-    borderRadius: 'var(--radius-lg)',
-  };
-  const labelStyle: React.CSSProperties = {
-    fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 600,
-    color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em',
-    flexShrink: 0,
-  };
-
-  // Fallback dropdown for 5+ pools
+  // Dropdown for 5+ pools
   if (pools.length > 4) {
     const cur = pools.find(p => p.name === selected);
     const dotColor = cur?.health === 'ONLINE' ? 'var(--success)' : cur?.health === 'DEGRADED' ? 'var(--warning)' : 'var(--danger)';
     return (
-      <div style={wrapperStyle}>
-        <span style={labelStyle}>Pool:</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {cur && <span style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, flexShrink: 0, display: 'inline-block' }} />}
-          <select
-            value={selected}
-            onChange={e => onSelect(e.target.value)}
-            style={{
-              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-              borderRadius: 'var(--radius)', padding: '4px 28px 4px 10px',
-              fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 600,
-              color: 'var(--accent)', cursor: 'pointer', outline: 'none',
-            }}
-          >
-            {pools.map(p => (
-              <option key={p.name} value={p.name}>{p.name} [{p.health}]</option>
-            ))}
-          </select>
-        </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {cur && <span style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, flexShrink: 0, display: 'inline-block' }} />}
+        <select
+          value={selected}
+          onChange={e => onSelect(e.target.value)}
+          style={{
+            background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)', padding: '4px 28px 4px 10px',
+            fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 600,
+            color: 'var(--accent)', cursor: 'pointer', outline: 'none', height: 30,
+          }}
+        >
+          {pools.map(p => (
+            <option key={p.name} value={p.name}>{p.name} [{p.health}]</option>
+          ))}
+        </select>
       </div>
     );
   }
 
   // Pill buttons for 2–4 pools
   return (
-    <div style={wrapperStyle}>
-      <span style={labelStyle}>Pool:</span>
-      <div style={{
-        display: 'flex', background: 'var(--bg-elevated)',
-        border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-        overflow: 'hidden',
-      }}>
-        {pools.map(p => {
-          const active = selected === p.name;
-          const isOnline = p.health === 'ONLINE';
-          const isDegraded = p.health === 'DEGRADED';
-          const dotColor = isOnline ? 'var(--success)' : isDegraded ? 'var(--warning)' : 'var(--danger)';
-          return (
-            <button
-              key={p.name}
-              onClick={() => onSelect(p.name)}
-              style={{
-                height: 30, padding: '0 16px',
-                fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
-                letterSpacing: '0.04em',
-                background: active ? 'var(--accent-dim)' : 'transparent',
-                color: active ? 'var(--accent)' : 'var(--text-muted)',
-                cursor: 'pointer', transition: 'all 0.12s',
-                border: 'none',
-                borderBottomWidth: 2, borderBottomStyle: 'solid',
-                borderBottomColor: active ? 'var(--accent)' : 'transparent',
-                borderRight: '1px solid var(--border)',
-                display: 'flex', alignItems: 'center', gap: 6,
-              }}
-            >
-              <span style={{
-                width: 5, height: 5, borderRadius: '50%',
-                background: dotColor,
-                display: 'inline-block', flexShrink: 0,
-              }} />
-              {p.name}
-            </button>
-          );
-        })}
-      </div>
-      {selected && (
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', marginLeft: 'auto' }}>
-          {pools.find(p => p.name === selected)?.health || ''}
-        </span>
-      )}
+    <div style={{
+      display: 'flex', background: 'var(--bg-elevated)',
+      border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+      overflow: 'hidden',
+    }}>
+      {pools.map(p => {
+        const active = selected === p.name;
+        const isOnline = p.health === 'ONLINE';
+        const isDegraded = p.health === 'DEGRADED';
+        const dotColor = isOnline ? 'var(--success)' : isDegraded ? 'var(--warning)' : 'var(--danger)';
+        return (
+          <button
+            key={p.name}
+            onClick={() => onSelect(p.name)}
+            style={{
+              height: 30, padding: '0 14px',
+              fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
+              letterSpacing: '0.04em',
+              background: active ? 'var(--accent-dim)' : 'transparent',
+              color: active ? 'var(--accent)' : 'var(--text-muted)',
+              cursor: 'pointer', transition: 'all 0.12s',
+              border: 'none',
+              borderBottomWidth: 2, borderBottomStyle: 'solid',
+              borderBottomColor: active ? 'var(--accent)' : 'transparent',
+              borderRight: '1px solid var(--border)',
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            <span style={{
+              width: 5, height: 5, borderRadius: '50%',
+              background: dotColor,
+              display: 'inline-block', flexShrink: 0,
+            }} />
+            {p.name}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -1139,13 +1116,11 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* Pool selector — only when multiple pools exist */}
-      {multiPool && onSelectPool && (
-        <PoolSelector pools={pools} selected={effectivePoolName} onSelect={onSelectPool} />
-      )}
-
-      {/* Toolbar */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+      {/* Toolbar — pool selector (right) + Edit Layout button */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, marginBottom: 16 }}>
+        {multiPool && onSelectPool && (
+          <PoolSelector pools={pools} selected={effectivePoolName} onSelect={onSelectPool} />
+        )}
         <button
           onClick={() => setEditMode(m => !m)}
           className="btn btn-secondary"

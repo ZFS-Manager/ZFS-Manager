@@ -1438,7 +1438,26 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+  const postOpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const animEnabled = localStorage.getItem('page_animations') !== 'false';
+
+  // After any pool-modifying operation, poll aggressively for 30s so resilver/expand status shows up quickly
+  const startPostOpPoll = () => {
+    if (postOpPollRef.current) clearInterval(postOpPollRef.current);
+    let elapsed = 0;
+    postOpPollRef.current = setInterval(() => {
+      elapsed += 2000;
+      onRefresh();
+      if (elapsed >= 30000) {
+        clearInterval(postOpPollRef.current!);
+        postOpPollRef.current = null;
+      }
+    }, 2000);
+  };
+
+  useEffect(() => () => {
+    if (postOpPollRef.current) clearInterval(postOpPollRef.current);
+  }, []);
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     notify({ type, title: type === 'success' ? 'Success' : 'Error', message: msg });
@@ -1589,7 +1608,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
         <ExpandPoolModal
           poolName={expandTarget}
           onClose={() => setExpandTarget(null)}
-          onSuccess={() => { showToast(`Disk added to pool "${expandTarget}"`, 'success'); setExpandTarget(null); onRefresh(); }}
+          onSuccess={() => { showToast(`Disk added to pool "${expandTarget}"`, 'success'); setExpandTarget(null); onRefresh(); startPostOpPoll(); }}
         />
       )}
       {replaceTarget && (
@@ -1598,7 +1617,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           poolDisks={getPoolDisks(replaceTarget.pool)}
           preselectedDisk={replaceTarget.preselectedDisk}
           onClose={() => setReplaceTarget(null)}
-          onSuccess={() => { showToast('Disk replacement started', 'success'); setReplaceTarget(null); onRefresh(); }}
+          onSuccess={() => { showToast('Disk replacement started', 'success'); setReplaceTarget(null); onRefresh(); startPostOpPoll(); }}
         />
       )}
       {smartTarget && <SmartModal device={smartTarget} onClose={() => setSmartTarget(null)} />}
