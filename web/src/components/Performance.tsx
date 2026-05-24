@@ -615,6 +615,19 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   // Disk pools filtered by selected pool when multiPool
   const selDiskPools = multiPool && effectivePool ? [effectivePool] : diskPools;
 
+  // SMART: filter to disks belonging to the selected pool (matched by name from disk metrics)
+  const poolDiskNamesForSmart = useMemo(() => {
+    const src = multiPool && effectivePool ? (diskMetrics[effectivePool] || []) : diskPools.flatMap(p => diskMetrics[p] || []);
+    return new Set(src.map((d: any) => d.name as string));
+  }, [multiPool, effectivePool, diskMetrics, diskPools]);
+
+  const filteredSmartData = useMemo(() =>
+    poolDiskNamesForSmart.size === 0
+      ? smartData
+      : smartData.filter(d => poolDiskNamesForSmart.has(d.disk?.name)),
+    [smartData, poolDiskNamesForSmart]
+  );
+
   const handleDragStart = useCallback((id: string) => setDragFrom(id), []);
   const handleDragOver  = useCallback((id: string) => setDragOver(id), []);
   const handleDrop      = useCallback((toId: string) => {
@@ -757,13 +770,8 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
               {!liveMode && (
                 <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
                   {windowedChartData.length} pts · {secPerPt}s/sample
+                  {multiPool && effectivePool && ` · ${effectivePool}`}
                 </span>
-              )}
-
-              {multiPool && onSelectPool && (
-                <div style={{ marginLeft: 'auto' }}>
-                  <PoolSelector pools={poolsProp || []} selected={effectivePool} onSelect={onSelectPool} />
-                </div>
               )}
             </div>
 
@@ -915,11 +923,15 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
 
       case 'smart-health':
         return (
-          <Panel title="Disk SMART Status" sub="Physical health summary">
+          <Panel title="Disk SMART Status" sub={`Physical health summary${multiPool && effectivePool ? ` · ${effectivePool}` : ''}`}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
               {smartData.length === 0 ? (
                 [1, 2, 3].map(i => <Skeleton key={i} height={80} />)
-              ) : smartData.map((d, i) => {
+              ) : filteredSmartData.length === 0 ? (
+                <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: 12, fontFamily: 'var(--font-ui)' }}>
+                  No SMART data for disks in this pool
+                </div>
+              ) : filteredSmartData.map((d, i) => {
                 const passed = d.smart?.smart_status?.passed;
                 const temp   = d.smart?.temperature?.current;
                 const hours  = d.smart?.power_on_time?.hours;
@@ -957,7 +969,10 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.01em' }}>System Performance</h1>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {multiPool && onSelectPool && (
+            <PoolSelector pools={poolsProp || []} selected={effectivePool} onSelect={onSelectPool} />
+          )}
           <button className="btn btn-secondary" onClick={() => setEditMode(!editMode)}>
             {editMode ? <Check size={14} /> : <Edit2 size={14} />}
             {editMode ? 'Done' : 'Edit Layout'}

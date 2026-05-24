@@ -20,19 +20,18 @@ interface PhysicalDisksTableProps {
   diskMetrics: Record<string, any[]>;
 }
 
-// Fixed widths for numeric columns prevent layout shift when values change
 const NUM_CELL: React.CSSProperties = {
   padding: '8px 12px',
-  width: 100,
-  minWidth: 100,
+  width: 96,
   textAlign: 'right',
   fontVariantNumeric: 'tabular-nums',
+  overflow: 'hidden',
+  whiteSpace: 'nowrap',
 };
 
 const NUM_HEAD: React.CSSProperties = {
   padding: '6px 12px',
-  width: 100,
-  minWidth: 100,
+  width: 96,
   textAlign: 'right',
   fontSize: 10,
   fontWeight: 600,
@@ -59,8 +58,8 @@ export default function PhysicalDisksTable({ diskPools, diskMetrics }: PhysicalD
   }
 
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+    <div style={{ overflowX: 'auto', minHeight: 80 }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: 12, tableLayout: 'fixed' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid var(--border)' }}>
             <th style={{ padding: '6px 12px', textAlign: 'left', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Pool</th>

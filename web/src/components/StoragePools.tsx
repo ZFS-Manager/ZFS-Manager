@@ -1463,6 +1463,18 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
     notify({ type, title: type === 'success' ? 'Success' : 'Error', message: msg });
   };
 
+  // Invalidate and re-fetch vdevs for a pool so the disk list reflects new state immediately
+  const refreshPoolVdevs = (poolName: string) => {
+    setPoolVdevs(prev => {
+      const next = { ...prev };
+      delete next[poolName];
+      return next;
+    });
+    api.getPoolVdevs(poolName)
+      .then(res => setPoolVdevs(prev => ({ ...prev, [poolName]: res.vdevs || [] })))
+      .catch(() => {});
+  };
+
   useEffect(() => {
     pools.forEach(pool => {
       if (!poolVdevs[pool.name]) {
@@ -1608,7 +1620,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
         <ExpandPoolModal
           poolName={expandTarget}
           onClose={() => setExpandTarget(null)}
-          onSuccess={() => { showToast(`Disk added to pool "${expandTarget}"`, 'success'); setExpandTarget(null); onRefresh(); startPostOpPoll(); }}
+          onSuccess={() => { showToast(`Disk added to pool "${expandTarget}"`, 'success'); refreshPoolVdevs(expandTarget); setExpandTarget(null); onRefresh(); startPostOpPoll(); }}
         />
       )}
       {replaceTarget && (
@@ -1617,7 +1629,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           poolDisks={getPoolDisks(replaceTarget.pool)}
           preselectedDisk={replaceTarget.preselectedDisk}
           onClose={() => setReplaceTarget(null)}
-          onSuccess={() => { showToast('Disk replacement started', 'success'); setReplaceTarget(null); onRefresh(); startPostOpPoll(); }}
+          onSuccess={() => { showToast('Disk replacement started', 'success'); refreshPoolVdevs(replaceTarget.pool); setReplaceTarget(null); onRefresh(); startPostOpPoll(); }}
         />
       )}
       {smartTarget && <SmartModal device={smartTarget} onClose={() => setSmartTarget(null)} />}
