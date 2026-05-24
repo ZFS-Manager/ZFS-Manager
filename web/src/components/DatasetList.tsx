@@ -466,10 +466,14 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
     });
   }, [flatItems, search, sortField, sortDir]);
 
-  const parentOptions = useMemo(() => {
-    const poolNames    = pools.map(p => p.name);
-    const datasetNames = datasets.map(d => d.name);
-    return [...new Set([...poolNames, ...datasetNames])].sort();
+  const parentOptionsByPool = useMemo(() => {
+    return pools.map(p => ({
+      pool: p.name,
+      children: datasets
+        .map(d => d.name)
+        .filter(n => n.startsWith(p.name + '/'))
+        .sort(),
+    }));
   }, [pools, datasets]);
 
   const handleCreate = async () => {
@@ -553,8 +557,13 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
               <div>
                 <label style={fieldLabel}>Parent Pool / Dataset</label>
                 <select value={parentPool} onChange={e => setParentPool(e.target.value)} style={fieldSelect}>
-                  <option value="">Select parent...</option>
-                  {parentOptions.map(o => <option key={o} value={o}>{o}</option>)}
+                  <option value="">Select parent…</option>
+                  {parentOptionsByPool.map(({ pool, children }) => (
+                    <optgroup key={pool} label={`── ${pool} ──`}>
+                      <option value={pool}>{pool}  (pool root)</option>
+                      {children.map(n => <option key={n} value={n}>{n}</option>)}
+                    </optgroup>
+                  ))}
                 </select>
               </div>
               <div>

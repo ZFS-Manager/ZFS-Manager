@@ -155,20 +155,51 @@ function PoolSelector({ pools, selected, onSelect }: {
   onSelect: (name: string) => void;
 }) {
   if (pools.length <= 1) return null;
+
+  const wrapperStyle: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16,
+    padding: '10px 16px',
+    background: 'var(--bg-surface)', border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-lg)',
+  };
+  const labelStyle: React.CSSProperties = {
+    fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 600,
+    color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em',
+    flexShrink: 0,
+  };
+
+  // Fallback dropdown for 5+ pools
+  if (pools.length > 4) {
+    const cur = pools.find(p => p.name === selected);
+    const dotColor = cur?.health === 'ONLINE' ? 'var(--success)' : cur?.health === 'DEGRADED' ? 'var(--warning)' : 'var(--danger)';
+    return (
+      <div style={wrapperStyle}>
+        <span style={labelStyle}>Pool:</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {cur && <span style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, flexShrink: 0, display: 'inline-block' }} />}
+          <select
+            value={selected}
+            onChange={e => onSelect(e.target.value)}
+            style={{
+              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)', padding: '4px 28px 4px 10px',
+              fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 600,
+              color: 'var(--accent)', cursor: 'pointer', outline: 'none',
+            }}
+          >
+            {pools.map(p => (
+              <option key={p.name} value={p.name}>{p.name} [{p.health}]</option>
+            ))}
+          </select>
+        </div>
+      </div>
+    );
+  }
+
+  // Pill buttons for 2–4 pools
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16,
-      padding: '10px 16px',
-      background: 'var(--bg-surface)', border: '1px solid var(--border)',
-      borderRadius: 'var(--radius-lg)',
-    }}>
-      <span style={{
-        fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 600,
-        color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em',
-        flexShrink: 0,
-      }}>
-        Pool:
-      </span>
+    <div style={wrapperStyle}>
+      <span style={labelStyle}>Pool:</span>
       <div style={{
         display: 'flex', background: 'var(--bg-elevated)',
         border: '1px solid var(--border)', borderRadius: 'var(--radius)',
@@ -177,6 +208,8 @@ function PoolSelector({ pools, selected, onSelect }: {
         {pools.map(p => {
           const active = selected === p.name;
           const isOnline = p.health === 'ONLINE';
+          const isDegraded = p.health === 'DEGRADED';
+          const dotColor = isOnline ? 'var(--success)' : isDegraded ? 'var(--warning)' : 'var(--danger)';
           return (
             <button
               key={p.name}
@@ -187,18 +220,17 @@ function PoolSelector({ pools, selected, onSelect }: {
                 letterSpacing: '0.04em',
                 background: active ? 'var(--accent-dim)' : 'transparent',
                 color: active ? 'var(--accent)' : 'var(--text-muted)',
-                borderRight: '1px solid var(--border)',
-                borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
                 cursor: 'pointer', transition: 'all 0.12s',
                 border: 'none',
                 borderBottomWidth: 2, borderBottomStyle: 'solid',
                 borderBottomColor: active ? 'var(--accent)' : 'transparent',
+                borderRight: '1px solid var(--border)',
                 display: 'flex', alignItems: 'center', gap: 6,
               }}
             >
               <span style={{
                 width: 5, height: 5, borderRadius: '50%',
-                background: isOnline ? 'var(--success)' : 'var(--danger)',
+                background: dotColor,
                 display: 'inline-block', flexShrink: 0,
               }} />
               {p.name}
@@ -206,7 +238,7 @@ function PoolSelector({ pools, selected, onSelect }: {
           );
         })}
       </div>
-      {pools.length > 0 && selected && (
+      {selected && (
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', marginLeft: 'auto' }}>
           {pools.find(p => p.name === selected)?.health || ''}
         </span>

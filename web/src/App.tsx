@@ -280,6 +280,7 @@ export default function App() {
 
   const handleSelectPool = useCallback((name: string) => {
     setSelectedPool(name);
+    localStorage.setItem('zfs_default_pool', name);
   }, []);
 
   // ── Fetch server time once on login ──────────────────────────────────────
@@ -565,7 +566,7 @@ export default function App() {
                 <DatasetList datasets={datasets} volumes={volumes} pools={pools} onRefresh={fetchData} />
               } />
               <Route path="/snapshots" element={
-                <SnapshotManager snapshots={snapshots} datasets={datasets} onRefresh={fetchData} />
+                <SnapshotManager snapshots={snapshots} datasets={datasets} pools={pools} onRefresh={fetchData} />
               } />
               <Route path="/logs" element={<SystemLogs logs={logs} pools={pools} />} />
               <Route path="/settings" element={

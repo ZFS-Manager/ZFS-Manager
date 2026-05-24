@@ -5,12 +5,13 @@ import {
   Camera, Trash2, RotateCcw, Search, Clock, Plus,
   X, Loader2, CheckCircle, XCircle, AlertTriangle
 } from 'lucide-react';
-import { ZFSDataset } from '../types';
+import { ZFSDataset, ZFSPool } from '../types';
 import { api, formatUnixTimestamp, formatBytes } from '../api';
 
 interface SnapshotManagerProps {
   snapshots: any[];
   datasets: ZFSDataset[];
+  pools?: ZFSPool[];
   onRefresh: () => void;
 }
 
@@ -105,7 +106,7 @@ const inputStyle: React.CSSProperties = {
 };
 
 /* ── Main component ── */
-export default function SnapshotManager({ snapshots, datasets, onRefresh }: SnapshotManagerProps) {
+export default function SnapshotManager({ snapshots, datasets, pools = [], onRefresh }: SnapshotManagerProps) {
   const [search, setSearch]                   = useState('');
   const [showCreate, setShowCreate]           = useState(false);
   const [createDataset, setCreateDataset]     = useState('');
@@ -144,6 +145,15 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
     const fromDatasets  = datasets.map(d => d.name);
     return [...new Set([...fromDatasets, ...fromSnapshots])].sort();
   }, [snapshots, datasets]);
+
+  // Group dataset options by pool for display with dividers
+  const datasetOptionsByPool = useMemo(() => {
+    if (pools.length === 0) return null;
+    return pools.map(p => ({
+      pool: p.name,
+      children: datasetOptions.filter(n => n === p.name || n.startsWith(p.name + '/')),
+    })).filter(g => g.children.length > 0);
+  }, [pools, datasetOptions]);
 
   const openCreateFor = (dataset: string) => {
     setCreateDataset(dataset);
@@ -245,7 +255,15 @@ export default function SnapshotManager({ snapshots, datasets, onRefresh }: Snap
               <Field label="Dataset">
                 <select value={createDataset} onChange={e => { setCreateDataset(e.target.value); setCreateName(buildDefaultSnapName(e.target.value)); }} style={selectStyle}>
                   <option value="">Select dataset…</option>
-                  {datasetOptions.map(d => <option key={d} value={d}>{d}</option>)}
+                  {datasetOptionsByPool ? (
+                    datasetOptionsByPool.map(({ pool, children }) => (
+                      <optgroup key={pool} label={`── ${pool} ──`}>
+                        {children.map(d => <option key={d} value={d}>{d}</option>)}
+                      </optgroup>
+                    ))
+                  ) : (
+                    datasetOptions.map(d => <option key={d} value={d}>{d}</option>)
+                  )}
                 </select>
               </Field>
 

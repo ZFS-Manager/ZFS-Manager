@@ -164,9 +164,10 @@ function DiskStatusBadge({ disk }: { disk: EnrichedDisk }) {
   );
 }
 
-function DiskPicker({ onSelect, onClose }: {
+function DiskPicker({ onSelect, onClose, selected }: {
   onSelect: (path: string) => void;
   onClose: () => void;
+  selected?: string;
 }) {
   const [disks, setDisks]             = useState<EnrichedDisk[]>([]);
   const [loading, setLoading]         = useState(true);
@@ -228,18 +229,22 @@ function DiskPicker({ onSelect, onClose }: {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto' }}>
-            {disks.map((disk, i) => (
+            {disks.map((disk, i) => {
+              const path = `/dev/${disk.name}`;
+              const isSelected = selected === path;
+              return (
               <button
                 key={i}
                 onClick={() => handleClick(disk)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
-                  background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                  background: isSelected ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                  border: `1px solid ${isSelected ? 'var(--accent-mid)' : 'var(--border)'}`,
                   borderRadius: 'var(--radius)', cursor: 'pointer', textAlign: 'left',
-                  opacity: disk.in_use ? 0.65 : 1, transition: 'all 0.12s',
+                  opacity: disk.in_use && !isSelected ? 0.65 : 1, transition: 'all 0.12s',
                 }}
                 onMouseEnter={e => { if (!disk.in_use) (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = isSelected ? 'var(--accent-mid)' : 'var(--border)'; }}
               >
                 <HardDrive size={16} style={{ color: disk.in_use ? 'var(--text-muted)' : 'var(--info)', flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -257,10 +262,98 @@ function DiskPicker({ onSelect, onClose }: {
                   {disk.size_human}
                 </span>
               </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ── Inline Disk Picker (embedded in modal body, no overlay) ─────────────────── */
+function InlineDiskPicker({ selected, onSelect }: {
+  selected: string;
+  onSelect: (path: string) => void;
+}) {
+  const [disks, setDisks]             = useState<EnrichedDisk[]>([]);
+  const [loading, setLoading]         = useState(true);
+  const [confirmDisk, setConfirmDisk] = useState<EnrichedDisk | null>(null);
+
+  useEffect(() => {
+    api.getEnrichedDisks()
+      .then(res => setDisks(res.disks || []))
+      .catch(() => setDisks([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleClick = (disk: EnrichedDisk) => {
+    if (disk.in_use) { setConfirmDisk(disk); return; }
+    onSelect(`/dev/${disk.name}`);
+  };
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+      {confirmDisk && (
+        <div style={{ padding: '10px 12px', background: 'rgba(239,68,68,0.08)', borderBottom: '1px solid rgba(239,68,68,0.3)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <AlertTriangle size={13} style={{ color: 'var(--danger)', flexShrink: 0 }} />
+            <span style={{ fontSize: 12, color: 'var(--danger)', fontWeight: 600 }}>Disk is in use!</span>
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--text-secondary)', margin: '0 0 8px 0', lineHeight: 1.5 }}>
+            {confirmDisk.pool
+              ? `This disk belongs to pool "${confirmDisk.pool}". Using it may corrupt data.`
+              : 'This disk has partitions. Using it may destroy data.'}
+          </p>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button className="btn btn-secondary" style={{ flex: 1, fontSize: 11, padding: '4px 8px' }} onClick={() => setConfirmDisk(null)}>Cancel</button>
+            <button className="btn btn-primary" style={{ flex: 1, fontSize: 11, padding: '4px 8px', background: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={() => { onSelect(`/dev/${confirmDisk.name}`); setConfirmDisk(null); }}>Use Anyway</button>
+          </div>
+        </div>
+      )}
+      {loading ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '24px 0', justifyContent: 'center', color: 'var(--text-muted)' }}>
+          <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+          <span style={{ fontSize: 12, fontFamily: 'var(--font-ui)' }}>Scanning…</span>
+        </div>
+      ) : disks.length === 0 ? (
+        <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: '20px 0' }}>No block devices found</p>
+      ) : (
+        <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+          {disks.map((disk, i) => {
+            const path = `/dev/${disk.name}`;
+            const isSelected = selected === path;
+            return (
+              <button
+                key={i}
+                onClick={() => handleClick(disk)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px',
+                  background: isSelected ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                  border: 'none', borderBottom: '1px solid var(--border)',
+                  borderLeft: `3px solid ${isSelected ? 'var(--accent)' : 'transparent'}`,
+                  cursor: 'pointer', textAlign: 'left', width: '100%',
+                  opacity: disk.in_use && !isSelected ? 0.65 : 1,
+                }}
+              >
+                <HardDrive size={13} style={{ color: isSelected ? 'var(--accent)' : disk.in_use ? 'var(--text-muted)' : 'var(--info)', flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: isSelected ? 'var(--accent)' : 'var(--text-primary)', fontWeight: 600 }}>{path}</span>
+                    <DiskStatusBadge disk={disk} />
+                  </div>
+                  {(disk.model || disk.serial) && (
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1, fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {[disk.model, disk.serial].filter(Boolean).join(' · ')}
+                    </div>
+                  )}
+                </div>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{disk.size_human}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -331,22 +424,20 @@ function SmartModal({ device, onClose }: { device: string; onClose: () => void }
 }
 
 /* ── Replace Disk Modal ───────────────────────────────────────────────────────── */
-function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuccess, usedDisks = new Set<string>() }: {
+function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuccess }: {
   poolName: string; poolDisks: { path: string; state: string }[];
   preselectedDisk?: string; onClose: () => void; onSuccess: () => void;
-  usedDisks?: Set<string>;
 }) {
   const [selectedOld, setSelectedOld] = useState(preselectedDisk || '');
   const [newDisk, setNewDisk]         = useState('');
   const [force, setForce]             = useState(false);
   const [replacing, setReplacing]     = useState(false);
   const [error, setError]             = useState('');
-  const [showPicker, setShowPicker]   = useState(false);
   const [step, setStep]               = useState<1 | 2>(preselectedDisk ? 2 : 1);
 
   const handleReplace = async () => {
     if (!selectedOld) { setError('Select the disk to replace'); return; }
-    if (!newDisk.trim()) { setError('New device path is required'); return; }
+    if (!newDisk.trim()) { setError('Select a replacement disk'); return; }
     setReplacing(true); setError('');
     try { await api.replaceDisk(poolName, selectedOld, newDisk.trim(), force); onSuccess(); }
     catch (err: any) { setError(err.message || 'Replace failed'); }
@@ -354,90 +445,85 @@ function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuc
   };
 
   return (
-    <>
-      {showPicker && <DevicePicker onSelect={p => { setNewDisk(p); setShowPicker(false); }} onClose={() => setShowPicker(false)} usedDisks={usedDisks} />}
-      <div style={S.modal.overlay} onClick={onClose}>
-        <div style={S.modal.box} onClick={e => e.stopPropagation()}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
-            <div>
-              <h3 style={S.modal.title}>Replace Disk</h3>
-              <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>
-                zpool replace {poolName} · Step {step}/2
-              </p>
-            </div>
-            <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
+    <div style={S.modal.overlay} onClick={onClose}>
+      <div style={{ ...S.modal.box, maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+          <div>
+            <h3 style={S.modal.title}>Replace Disk</h3>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>
+              zpool replace {poolName} · Step {step}/2
+            </p>
           </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
+        </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-            {step === 1 ? (
-              <>
-                <label style={S.modal.label}>Step 1 — Select disk to replace</label>
-                {poolDisks.length === 0 ? (
-                  <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>No disks found in pool</p>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {poolDisks.map((d, i) => (
-                      <button key={i} onClick={() => setSelectedOld(d.path)} style={{
-                        display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
-                        background: selectedOld === d.path ? 'var(--warning-dim)' : 'var(--bg-elevated)',
-                        border: `1px solid ${selectedOld === d.path ? 'rgba(245,158,11,0.3)' : 'var(--border)'}`,
-                        borderRadius: 'var(--radius)', cursor: 'pointer', textAlign: 'left', transition: 'all 0.12s',
-                      }}>
-                        <HardDrive size={14} style={{ color: selectedOld === d.path ? 'var(--warning)' : 'var(--text-muted)', flexShrink: 0 }} />
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{d.path}</div>
-                          <div style={{ fontSize: 10, color: d.state === 'ONLINE' ? 'var(--success)' : 'var(--danger)', textTransform: 'uppercase', marginTop: 2 }}>{d.state}</div>
-                        </div>
-                        {selectedOld === d.path && <CheckCircle size={13} style={{ color: 'var(--warning)' }} />}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
-                  <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={() => setStep(2)} disabled={!selectedOld}>
-                    <ChevronRight size={14} /> Next
-                  </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          {step === 1 ? (
+            <>
+              <label style={S.modal.label}>Step 1 — Select disk to replace</label>
+              {poolDisks.length === 0 ? (
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>No disks found in pool</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {poolDisks.map((d, i) => (
+                    <button key={i} onClick={() => setSelectedOld(d.path)} style={{
+                      display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
+                      background: selectedOld === d.path ? 'var(--warning-dim)' : 'var(--bg-elevated)',
+                      border: `1px solid ${selectedOld === d.path ? 'rgba(245,158,11,0.3)' : 'var(--border)'}`,
+                      borderRadius: 'var(--radius)', cursor: 'pointer', textAlign: 'left', transition: 'all 0.12s',
+                    }}>
+                      <HardDrive size={14} style={{ color: selectedOld === d.path ? 'var(--warning)' : 'var(--text-muted)', flexShrink: 0 }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{d.path}</div>
+                        <div style={{ fontSize: 10, color: d.state === 'ONLINE' ? 'var(--success)' : 'var(--danger)', textTransform: 'uppercase', marginTop: 2 }}>{d.state}</div>
+                      </div>
+                      {selectedOld === d.path && <CheckCircle size={13} style={{ color: 'var(--warning)' }} />}
+                    </button>
+                  ))}
                 </div>
-              </>
-            ) : (
-              <>
-                <div style={{ background: 'var(--warning-dim)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 'var(--radius)', padding: '10px 14px' }}>
-                  <div style={{ fontSize: 10, color: 'var(--warning)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Replacing</div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)' }}>{selectedOld}</div>
+              )}
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
+                <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={() => setStep(2)} disabled={!selectedOld}>
+                  <ChevronRight size={14} /> Next
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ background: 'var(--warning-dim)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 'var(--radius)', padding: '10px 14px' }}>
+                <div style={{ fontSize: 10, color: 'var(--warning)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Replacing</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)' }}>{selectedOld}</div>
+              </div>
+              <label style={S.modal.label}>Step 2 — Select replacement disk</label>
+              {/* Inline DiskPicker - no overlay popup */}
+              <InlineDiskPicker selected={newDisk} onSelect={setNewDisk} />
+              <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+                <div onClick={() => setForce(v => !v)} style={{ width: 36, height: 20, borderRadius: 10, background: force ? 'var(--warning)' : 'var(--bg-elevated)', border: '1px solid var(--border)', position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}>
+                  <div style={{ position: 'absolute', top: 2, left: force ? 17 : 2, width: 14, height: 14, borderRadius: 7, background: '#fff', transition: 'left 0.2s' }} />
                 </div>
-                <label style={S.modal.label}>Step 2 — Select replacement disk</label>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input style={{ ...S.modal.input, flex: 1 }} type="text" placeholder="/dev/sdb" value={newDisk} onChange={e => setNewDisk(e.target.value)} />
-                  <button className="btn btn-secondary" onClick={() => setShowPicker(true)} title="Browse devices"><HardDrive size={14} /></button>
+                <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)' }}>Force replace (-f)</span>
+              </label>
+              {error && (
+                <div style={{ display: 'flex', gap: 10, padding: '10px 14px', background: 'var(--danger-dim)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)' }}>
+                  <XCircle size={14} style={{ color: 'var(--danger)', flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</span>
                 </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
-                  <div onClick={() => setForce(v => !v)} style={{ width: 36, height: 20, borderRadius: 10, background: force ? 'var(--warning)' : 'var(--bg-elevated)', border: '1px solid var(--border)', position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}>
-                    <div style={{ position: 'absolute', top: 2, left: force ? 17 : 2, width: 14, height: 14, borderRadius: 7, background: '#fff', transition: 'left 0.2s' }} />
-                  </div>
-                  <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)' }}>Force replace (-f)</span>
-                </label>
-                {error && (
-                  <div style={{ display: 'flex', gap: 10, padding: '10px 14px', background: 'var(--danger-dim)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)' }}>
-                    <XCircle size={14} style={{ color: 'var(--danger)', flexShrink: 0 }} />
-                    <span style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</span>
-                  </div>
-                )}
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button className="btn btn-secondary" onClick={() => setStep(1)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <ChevronDown size={13} style={{ transform: 'rotate(90deg)' }} /> Back
-                  </button>
-                  <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleReplace} disabled={replacing || !newDisk.trim()}>
-                    {replacing ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <ArrowLeftRight size={14} />}
-                    {replacing ? 'Replacing…' : 'Replace'}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+              )}
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button className="btn btn-secondary" onClick={() => setStep(1)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <ChevronDown size={13} style={{ transform: 'rotate(90deg)' }} /> Back
+                </button>
+                <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleReplace} disabled={replacing || !newDisk.trim()}>
+                  {replacing ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <ArrowLeftRight size={14} />}
+                  {replacing ? 'Replacing…' : 'Replace'}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -526,66 +612,155 @@ function ExpandPoolModal({ poolName, onClose, onSuccess }: {
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const [selected, setSelected]   = useState('');
-  const [expanding, setExpanding] = useState(false);
-  const [error, setError]         = useState('');
-  const [showPicker, setShowPicker] = useState(false);
+  const [expanding, setExpanding]     = useState(false);
+  const [error, setError]             = useState('');
+  const [vdevInfo, setVdevInfo]       = useState<{ type: string; diskCount: number } | null>(null);
+  const [selectedDisks, setSelectedDisks] = useState<string[]>(['']);
+  const [activeSlot, setActiveSlot]   = useState(0);
+
+  useEffect(() => {
+    api.getPoolVdevs(poolName).then(res => {
+      const vdevs = res.vdevs || [];
+      if (vdevs.length === 0) { setVdevInfo({ type: 'stripe', diskCount: 1 }); return; }
+      const first = vdevs[0];
+      const t = first.type || 'stripe';
+      const n = t === 'stripe' ? 1 : ((first.disks || []).length || 1);
+      setVdevInfo({ type: t, diskCount: n });
+      setSelectedDisks(Array(n).fill(''));
+    }).catch(() => setVdevInfo({ type: 'stripe', diskCount: 1 }));
+  }, [poolName]);
+
+  const handleDiskSelect = (path: string) => {
+    setSelectedDisks(prev => {
+      const next = [...prev];
+      next[activeSlot] = path;
+      // Auto-advance to next empty slot
+      const nextEmpty = next.findIndex((d, i) => i > activeSlot && !d);
+      if (nextEmpty >= 0) setTimeout(() => setActiveSlot(nextEmpty), 0);
+      return next;
+    });
+  };
+
+  const filled = selectedDisks.filter(Boolean);
+  const needed = vdevInfo?.diskCount ?? 1;
+  const ready  = filled.length >= needed && !filled.some(d => !d);
+
+  const vdevTypeLabel = (() => {
+    const t = vdevInfo?.type;
+    if (!t || t === 'stripe') return null;
+    if (t === 'mirror')  return 'Mirror';
+    if (t === 'raidz1')  return 'RAIDZ-1';
+    if (t === 'raidz2')  return 'RAIDZ-2';
+    if (t === 'raidz3')  return 'RAIDZ-3';
+    return t.toUpperCase();
+  })();
+
+  const cmdPreview = (() => {
+    const t = vdevInfo?.type;
+    const disks = selectedDisks.map(d => d || '<disk>');
+    if (!t || t === 'stripe') return `zpool add ${poolName} ${disks[0]}`;
+    return `zpool add ${poolName} ${t} ${disks.join(' ')}`;
+  })();
 
   const handleExpand = async () => {
-    if (!selected) { setError('Select a disk to add'); return; }
+    if (!ready) { setError(`Select ${needed} disk${needed > 1 ? 's' : ''} to continue`); return; }
     setExpanding(true); setError('');
-    try { await api.expandPool(poolName, selected); onSuccess(); }
+    try {
+      await api.expandPool(poolName, selectedDisks, vdevInfo?.type !== 'stripe' ? vdevInfo?.type : undefined);
+      onSuccess();
+    }
     catch (err: any) { setError(err.message || 'Expand failed'); }
     finally { setExpanding(false); }
   };
 
   return (
-    <>
-      {showPicker && (
-        <DiskPicker
-          onSelect={path => { setSelected(path); setShowPicker(false); }}
-          onClose={() => setShowPicker(false)}
-        />
-      )}
-      <div style={S.modal.overlay} onClick={onClose}>
-        <div style={S.modal.box} onClick={e => e.stopPropagation()}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
-            <div>
-              <h3 style={S.modal.title}>Add Disk to Pool</h3>
-              <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>zpool add {poolName}</p>
-            </div>
-            <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
+    <div style={S.modal.overlay} onClick={onClose}>
+      <div style={{ ...S.modal.box, maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+          <div>
+            <h3 style={S.modal.title}>Add Vdev to Pool</h3>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>zpool add {poolName}</p>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <label style={S.modal.label}>Disk to add</label>
-            {selected ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--accent-dim)', border: '1px solid var(--accent-mid)', borderRadius: 'var(--radius)' }}>
-                  <HardDrive size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{selected}</span>
-                  <CheckCircle size={13} style={{ color: 'var(--accent)', marginLeft: 'auto' }} />
-                </div>
-                <button className="btn btn-secondary" onClick={() => { setSelected(''); setShowPicker(true); }} style={{ whiteSpace: 'nowrap', fontSize: 11 }}>
-                  Change
-                </button>
-              </div>
-            ) : (
-              <button className="btn btn-secondary" onClick={() => setShowPicker(true)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                <HardDrive size={13} /> Browse Disks
-              </button>
-            )}
-            {error && <div style={{ padding: '10px 14px', background: 'var(--danger-dim)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
-              <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleExpand} disabled={expanding || !selected}>
-                {expanding ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Expand size={14} />}
-                {expanding ? 'Adding…' : 'Add Disk'}
-              </button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Vdev type hint */}
+          {vdevTypeLabel && (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 14px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 'var(--radius)' }}>
+              <AlertTriangle size={13} style={{ color: 'var(--info)', marginTop: 1, flexShrink: 0 }} />
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', lineHeight: 1.5 }}>
+                This pool uses <strong>{vdevTypeLabel}</strong>. You must select <strong>{needed} disk{needed > 1 ? 's' : ''}</strong> to form a new {vdevTypeLabel} vdev.
+              </span>
             </div>
+          )}
+
+          {/* Disk slots */}
+          {needed > 1 && (
+            <div>
+              <label style={S.modal.label}>Selected disks ({filled.length}/{needed})</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {selectedDisks.map((disk, i) => (
+                  <div
+                    key={i}
+                    onClick={() => setActiveSlot(i)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+                      background: activeSlot === i ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                      border: `1px solid ${activeSlot === i ? 'var(--accent-mid)' : 'var(--border)'}`,
+                      borderRadius: 'var(--radius)', cursor: 'pointer', transition: 'all 0.12s',
+                    }}
+                  >
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', minWidth: 40 }}>Disk {i + 1}</span>
+                    {disk ? (
+                      <>
+                        <HardDrive size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', flex: 1 }}>{disk}</span>
+                        <button
+                          onClick={e => { e.stopPropagation(); setSelectedDisks(prev => { const n = [...prev]; n[i] = ''; return n; }); setActiveSlot(i); }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'flex' }}
+                        ><X size={12} /></button>
+                      </>
+                    ) : (
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', fontStyle: 'italic', flex: 1 }}>
+                        {activeSlot === i ? '← select from list below' : 'click to select'}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Single-disk label */}
+          {needed === 1 && (
+            <label style={S.modal.label}>Select disk to add</label>
+          )}
+
+          {/* Inline disk list */}
+          <InlineDiskPicker
+            selected={selectedDisks[activeSlot] || ''}
+            onSelect={handleDiskSelect}
+          />
+
+          {/* Command preview */}
+          <div style={{ background: 'var(--bg-elevated)', borderRadius: 'var(--radius)', padding: '8px 12px', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Command preview</div>
+            <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--info)', wordBreak: 'break-all' }}>{cmdPreview}</code>
+          </div>
+
+          {error && <div style={{ padding: '10px 14px', background: 'var(--danger-dim)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
+
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleExpand} disabled={expanding || !ready}>
+              {expanding ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Expand size={14} />}
+              {expanding ? 'Adding…' : `Add ${needed > 1 ? vdevTypeLabel + ' Vdev' : 'Disk'}`}
+            </button>
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -641,6 +816,7 @@ function CreatePoolModal({ onClose, onSuccess, usedDisks = new Set<string>() }: 
         <DiskPicker
           onSelect={path => { handlePickerSelect(path); setShowPicker(false); }}
           onClose={() => setShowPicker(false)}
+          selected={pickerTarget !== null ? devices[pickerTarget] : undefined}
         />
       )}
       <div style={S.modal.overlay} onClick={onClose}>
@@ -930,12 +1106,15 @@ function SettingsPopout({
   onSaved: () => void;
 }) {
   const { notify } = useNotifications();
-  const [visible, setVisible] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [saving,  setSaving]  = useState(false);
-  const [props,   setProps]   = useState<Record<string, string>>({});
-  const [edits,   setEdits]   = useState<Record<string, string>>({});
-  const [error,   setError]   = useState<string | null>(null);
+  const [visible,           setVisible]           = useState(false);
+  const [loading,           setLoading]           = useState(true);
+  const [saving,            setSaving]            = useState(false);
+  const [props,             setProps]             = useState<Record<string, string>>({});
+  const [edits,             setEdits]             = useState<Record<string, string>>({});
+  const [error,             setError]             = useState<string | null>(null);
+  const [showDestroyDialog, setShowDestroyDialog] = useState(false);
+  const [destroyInput,      setDestroyInput]      = useState('');
+  const [destroying,        setDestroying]        = useState(false);
 
   useEffect(() => { requestAnimationFrame(() => setVisible(true)); }, []);
 
@@ -1119,30 +1298,58 @@ function SettingsPopout({
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', marginBottom: 12, lineHeight: 1.5 }}>
                       Permanently destroys this pool and all data within it. This cannot be undone.
                     </div>
-                    <button
-                      className="btn"
-                      style={{ height: 30, padding: '0 14px', fontSize: 11, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--danger)', cursor: 'pointer', borderRadius: 'var(--radius)', display: 'flex', alignItems: 'center', gap: 6 }}
-                      onClick={() => {
-                        setConfirmState({
-                          open: true,
-                          title: 'Destroy Pool',
-                          message: `Permanently destroy pool "${poolName}" and all its data? This CANNOT be undone.`,
-                          confirmLabel: 'Destroy Pool',
-                          tone: 'danger',
-                          onConfirm: async () => {
-                            try {
-                              await api.destroyPool(poolName);
-                              onSaved();
-                              close();
-                            } catch (err: any) {
-                              notify({ type: 'error', title: 'Destroy Failed', message: err.message });
-                            }
-                          },
-                        });
-                      }}
-                    >
-                      <Trash2 size={11} /> Destroy Pool
-                    </button>
+                    {!showDestroyDialog ? (
+                      <button
+                        className="btn"
+                        style={{ height: 30, padding: '0 14px', fontSize: 11, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--danger)', cursor: 'pointer', borderRadius: 'var(--radius)', display: 'flex', alignItems: 'center', gap: 6 }}
+                        onClick={() => { setShowDestroyDialog(true); setDestroyInput(''); }}
+                      >
+                        <Trash2 size={11} /> Destroy Pool
+                      </button>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ fontSize: 11, color: 'var(--danger)', fontFamily: 'var(--font-ui)' }}>
+                          Type <strong>{poolName}</strong> to confirm:
+                        </div>
+                        <input
+                          type="text"
+                          value={destroyInput}
+                          onChange={e => setDestroyInput(e.target.value)}
+                          placeholder={poolName}
+                          style={{ ...S.modal.input, fontSize: 12, padding: '6px 10px', borderColor: 'rgba(239,68,68,0.4)' }}
+                          autoFocus
+                        />
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button
+                            className="btn btn-secondary"
+                            style={{ flex: 1, fontSize: 11, padding: '5px 10px' }}
+                            onClick={() => { setShowDestroyDialog(false); setDestroyInput(''); }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            className="btn"
+                            disabled={destroyInput !== poolName || destroying}
+                            style={{ flex: 1, fontSize: 11, padding: '5px 10px', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: 'var(--danger)', cursor: destroyInput !== poolName ? 'not-allowed' : 'pointer', borderRadius: 'var(--radius)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, opacity: destroyInput !== poolName ? 0.5 : 1 }}
+                            onClick={async () => {
+                              if (destroyInput !== poolName) return;
+                              setDestroying(true);
+                              try {
+                                await api.destroyPool(poolName);
+                                onSaved();
+                                close();
+                              } catch (err: any) {
+                                notify({ type: 'error', title: 'Destroy Failed', message: err.message || 'Destroy failed' });
+                                setDestroying(false);
+                              }
+                            }}
+                          >
+                            {destroying ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> : <Trash2 size={11} />}
+                            {destroying ? 'Destroying…' : 'Confirm Destroy'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1443,7 +1650,6 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           preselectedDisk={replaceTarget.preselectedDisk}
           onClose={() => setReplaceTarget(null)}
           onSuccess={() => { showToast('Disk replacement started', 'success'); setReplaceTarget(null); onRefresh(); }}
-          usedDisks={usedDisksSet}
         />
       )}
       {smartTarget && <SmartModal device={smartTarget} onClose={() => setSmartTarget(null)} />}

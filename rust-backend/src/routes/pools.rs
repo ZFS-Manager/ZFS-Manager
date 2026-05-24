@@ -47,7 +47,11 @@ pub struct CreatePoolBody {
 }
 
 #[derive(Deserialize)]
-pub struct ExpandBody { pub disk: String }
+pub struct ExpandBody {
+    pub disk:      Option<String>,
+    pub disks:     Option<Vec<String>>,
+    pub vdev_type: Option<String>,
+}
 
 #[derive(Deserialize)]
 pub struct ReplaceBody {
@@ -529,11 +533,35 @@ async fn expand_pool(
     Json(body): Json<ExpandBody>,
 ) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "pool")?;
-    if body.disk.is_empty() {
-        return Err(ApiError::BadRequest("'disk' is required".into()));
+
+    // Collect all disks from disk (legacy) and disks fields
+    let mut all_disks: Vec<String> = Vec::new();
+    if let Some(d) = &body.disk { if !d.is_empty() { all_disks.push(d.clone()); } }
+    if let Some(ds) = &body.disks { all_disks.extend(ds.iter().filter(|d| !d.is_empty()).cloned()); }
+    // Deduplicate while preserving order
+    let mut seen = std::collections::HashSet::new();
+    all_disks.retain(|d| seen.insert(d.clone()));
+
+    if all_disks.is_empty() {
+        return Err(ApiError::BadRequest("'disk' or 'disks' is required".into()));
     }
-    executor::zpool(&["add", &name, &body.disk]).await?;
-    Ok(Json(json!({ "message": format!("Disk '{}' added to pool '{name}'", body.disk) })))
+
+    let mut args = vec!["add".to_string(), name.clone()];
+    if let Some(vt) = &body.vdev_type {
+        let vt = vt.trim();
+        if !vt.is_empty() && vt != "stripe" {
+            // Validate vdev type
+            if !["mirror", "raidz", "raidz1", "raidz2", "raidz3"].contains(&vt) {
+                return Err(ApiError::BadRequest(format!("Invalid vdev_type: {vt}")));
+            }
+            args.push(vt.to_string());
+        }
+    }
+    args.extend(all_disks.clone());
+
+    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    executor::zpool(&refs).await?;
+    Ok(Json(json!({ "message": format!("{} disk(s) added to pool '{name}'", all_disks.len()) })))
 }
 
 async fn replace_disk(
