@@ -2,6 +2,9 @@ use std::sync::atomic::Ordering;
 use redis::AsyncCommands;
 use tokio::time::{interval, Duration, Instant, MissedTickBehavior};
 use tracing::{info, warn};
+use cron::Schedule;
+use chrono::Utc;
+use std::str::FromStr;
 
 use crate::state::DiskMetric;
 
@@ -962,6 +965,55 @@ async fn run_notifications_loop(state: crate::state::AppState) {
     }
 }
 
+/// Periodically evaluates scrub schedules and triggers zpool scrub if needed.
+async fn run_scrub_scheduler_loop() {
+    let mut ticker = interval(Duration::from_secs(60));
+    loop {
+        ticker.tick().await;
+        let now = Utc::now();
+        let pools = get_pool_names().await;
+        
+        for pool in pools {
+            let output = tokio::process::Command::new("zfs")
+                .args(["get", "-H", "-o", "value", "zfsmanager:scrub_schedule", &pool])
+                .output()
+                .await;
+                
+            let mut schedule_val = match output {
+                Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
+                _ => continue,
+            };
+
+            if schedule_val.is_empty() || schedule_val == "-" {
+                schedule_val = r#"{"enabled":true,"type":"monthly","cron":"0 0 0 1 * * *"}"#.to_string();
+            } else if schedule_val == "off" {
+                continue;
+            }
+
+            let parsed: Result<serde_json::Value, _> = serde_json::from_str(&schedule_val);
+            if let Ok(json) = parsed {
+                if let Some(true) = json.get("enabled").and_then(|v| v.as_bool()) {
+                    if let Some(cron_str) = json.get("cron").and_then(|v| v.as_str()) {
+                        if let Ok(schedule) = Schedule::from_str(cron_str) {
+                            let one_min_ago = now - chrono::Duration::minutes(1);
+                            if let Some(next_run) = schedule.after(&one_min_ago).next() {
+                                let diff = now.signed_duration_since(next_run).num_seconds();
+                                if diff >= 0 && diff < 60 {
+                                    info!("Triggering scheduled scrub for pool: {}", pool);
+                                    let _ = tokio::process::Command::new("zpool")
+                                        .args(["scrub", &pool])
+                                        .output()
+                                        .await;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub async fn run_metrics_worker(state: crate::state::AppState) {
     let state_live   = state.clone();
     let state_slow   = state.clone();
@@ -971,6 +1023,7 @@ pub async fn run_metrics_worker(state: crate::state::AppState) {
         run_live_loop(state_live),
         run_slow_loop(state_slow),
         run_notifications_loop(state_notify),
+        run_scrub_scheduler_loop(),
     );
 }
 
