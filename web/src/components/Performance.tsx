@@ -394,7 +394,6 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
 
   const [diskMetrics, setDiskMetrics]   = useState<Record<string, any[]>>({});
   const [diskPools, setDiskPools]       = useState<string[]>([]);
-  const [poolVdevs, setPoolVdevs]       = useState<Record<string, any[]>>({});
 
   const multiPool = (poolsProp || []).length > 1;
   const effectivePool = multiPool
@@ -517,22 +516,6 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     return () => clearInterval(id);
   }, [(poolsProp || []).map((p: any) => p.name).join(',')]);
 
-  // Fetch vdev topology for disk health status
-  useEffect(() => {
-    const names = (poolsProp || []).map((p: any) => p.name).filter(Boolean);
-    if (names.length === 0) return;
-    const fetchVdevs = () => {
-      names.forEach((name: string) => {
-        api.getPoolVdevs(name)
-          .then(res => setPoolVdevs(prev => ({ ...prev, [name]: res.vdevs || [] })))
-          .catch(() => {});
-      });
-    };
-    fetchVdevs();
-    const id = setInterval(fetchVdevs, 10_000);
-    return () => clearInterval(id);
-  }, [(poolsProp || []).map((p: any) => p.name).join(',')]);
-
   const toggle = useCallback((key: string) => {
     setHidden(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
   }, []);
@@ -604,8 +587,15 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const livePeakR = liveStats.reduce((m, d) => Math.max(m, d.read  || 0), 0);
   const livePeakW = liveStats.reduce((m, d) => Math.max(m, d.write || 0), 0);
 
-  const totalReadGB  = (liveMetrics?.total_read_mb  ?? 0) / 1024;
-  const totalWriteGB = (liveMetrics?.total_write_mb ?? 0) / 1024;
+  // When multiPool, sum per-disk cumulative totals for the selected pool so they reset on switch
+  const poolTotalReadGB  = selDiskRows.reduce((s: number, d: any) => s + (d.total_read_gb  || 0), 0);
+  const poolTotalWriteGB = selDiskRows.reduce((s: number, d: any) => s + (d.total_write_gb || 0), 0);
+  const totalReadGB  = multiPool && selDiskRows.length > 0
+    ? poolTotalReadGB
+    : (liveMetrics?.total_read_mb  ?? 0) / 1024;
+  const totalWriteGB = multiPool && selDiskRows.length > 0
+    ? poolTotalWriteGB
+    : (liveMetrics?.total_write_mb ?? 0) / 1024;
 
   const nowMs = Date.now();
   const histXDomain: [number, number] = [nowMs - INTERVAL_MS[interval], nowMs];
@@ -718,7 +708,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
       case 'disk-io':
         return (
           <Panel title="Physical Disks" sub={`Per-disk I/O · 1 s refresh${multiPool ? ` · ${effectivePool}` : ''}`}>
-            <PhysicalDisksTable diskPools={selDiskPools} diskMetrics={diskMetrics} poolVdevs={poolVdevs} />
+            <PhysicalDisksTable diskPools={selDiskPools} diskMetrics={diskMetrics} />
           </Panel>
         );
 

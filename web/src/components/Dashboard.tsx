@@ -662,7 +662,6 @@ export default function Dashboard({
   const [scrubLive,  setScrubLive]  = useState<Record<string, {inProgress: boolean; progress: number; timeRemaining: string}>>({});
   const [diskMetrics, setDiskMetrics] = useState<Record<string, any[]>>({});
   const [diskPools,   setDiskPools]   = useState<string[]>([]);
-  const [poolVdevs,   setPoolVdevs]   = useState<Record<string, any[]>>({});
   const [ioShowRead,  setIoShowRead]  = useState(true);
   const [ioShowWrite, setIoShowWrite] = useState(true);
 
@@ -786,22 +785,6 @@ export default function Dashboard({
     return () => clearInterval(id);
   }, [pools.map(p => p.name).join(',')]);
 
-  // Fetch vdev topology for disk health status (every 10s is enough)
-  useEffect(() => {
-    const names = pools.map(p => p.name).filter(Boolean);
-    if (names.length === 0) return;
-    const fetchVdevs = () => {
-      names.forEach(name => {
-        api.getPoolVdevs(name)
-          .then(res => setPoolVdevs(prev => ({ ...prev, [name]: res.vdevs || [] })))
-          .catch(() => {});
-      });
-    };
-    fetchVdevs();
-    const id = setInterval(fetchVdevs, 10_000);
-    return () => clearInterval(id);
-  }, [pools.map(p => p.name).join(',')]);
-
   const ioData = histData1d.length > 2 ? histData1d : historicalStats;
 
   // Capacity banners — filter to selected pool when multiPool
@@ -886,7 +869,7 @@ export default function Dashboard({
       case 'disk-io':
         return (
           <Panel title="Physical Disks" sub={`Per-disk I/O · 1 s refresh${multiPool ? ` · ${effectivePoolName}` : ''}`}>
-            <PhysicalDisksTable diskPools={selDiskPools} diskMetrics={diskMetrics} poolVdevs={poolVdevs} />
+            <PhysicalDisksTable diskPools={selDiskPools} diskMetrics={diskMetrics} />
           </Panel>
         );
 
