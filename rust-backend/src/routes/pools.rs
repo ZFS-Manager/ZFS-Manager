@@ -1,14 +1,15 @@
 use axum::{
-    extract::{Path, Query},
+    extract::{Path, Query, State},
     routing::{get, post},
     Json, Router,
 };
+use redis::AsyncCommands;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::{error::ApiError, executor};
+use crate::{error::ApiError, executor, state::AppState};
 
-pub fn router() -> Router {
+pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/v1/pools", get(list_pools).post(create_pool))
         // Static routes BEFORE dynamic ones
@@ -28,6 +29,7 @@ pub fn router() -> Router {
         .route("/api/v1/pools/:name/replace",      post(replace_disk))
         .route("/api/v1/pools/:name/events",       get(pool_events))
         .route("/api/v1/pools/:name/settings",     get(get_pool_settings).put(set_pool_setting))
+        .with_state(state)
 }
 
 // ── Bodies ────────────────────────────────────────────────────────────────────
@@ -313,9 +315,19 @@ async fn get_pool(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     })))
 }
 
-async fn destroy_pool(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
+async fn destroy_pool(
+    Path(name): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "pool")?;
     executor::zpool(&["destroy", &name]).await?;
+
+    // Bust caches so disks immediately appear free and the pool list is stale
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        let _: redis::RedisResult<()> = conn.del(&["zfs:disks-enriched", "zfs:system-stats"][..]).await;
+    }
+
     Ok(Json(json!({ "message": format!("Pool '{name}' destroyed") })))
 }
 
