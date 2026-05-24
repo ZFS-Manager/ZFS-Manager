@@ -66,10 +66,11 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ${{ matrix.context }}
-          # Pusht bei jedem Push. Bei PRs wird standardmäßig nur gebaut. 
+          # Pusht bei jedem Push. Bei PRs wird standardmäßig nur gebaut.
           # Wenn du PRs AUCH pushen willst, ändere das zu: push: true
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
           build-args: |
             VITE_API_KEY=admin123
