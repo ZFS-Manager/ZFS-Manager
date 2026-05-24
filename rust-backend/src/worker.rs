@@ -569,12 +569,15 @@ async fn run_scrub_scheduler_loop() {
                 .output()
                 .await;
                 
-            let schedule_val = match output {
+            let mut schedule_val = match output {
                 Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
                 _ => continue,
             };
 
-            if schedule_val.is_empty() || schedule_val == "-" || schedule_val == "off" {
+            if schedule_val.is_empty() || schedule_val == "-" {
+                // Default to enabled, monthly on the 1st
+                schedule_val = r#"{"enabled":true,"type":"monthly","cron":"0 0 0 1 * * *"}"#.to_string();
+            } else if schedule_val == "off" {
                 continue;
             }
 

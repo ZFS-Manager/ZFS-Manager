@@ -686,7 +686,8 @@ function ScrubScheduleSettings({
   value: string; onChange: (v: string) => void;
 }) {
   const parsed = (() => {
-    if (!value || value === 'off') return { enabled: false, type: 'monthly', cron: '0 0 0 1 * * *' };
+    if (value === 'off') return { enabled: false, type: 'monthly', cron: '0 0 0 1 * * *' };
+    if (!value || value === '-') return { enabled: true, type: 'monthly', cron: '0 0 0 1 * * *' };
     try { return JSON.parse(value); } catch { return { enabled: true, type: 'custom', cron: value }; }
   })();
 
