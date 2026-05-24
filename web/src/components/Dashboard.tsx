@@ -29,6 +29,8 @@ interface DashboardProps {
   logs?: ZFSLog[];
   loading?: boolean;
   historicalStats?: any[];
+  selectedPool?: string;
+  onSelectPool?: (name: string) => void;
 }
 
 /* ── Animated counter ── */
@@ -105,7 +107,6 @@ function useFillPrediction() {
     loaded.current = true;
     api.getFillPrediction('auto').then(res => {
       if (res.predictions.length > 0) {
-        // Find the pool that will fill up soonest
         const earliest = res.predictions.reduce((min, pred) => {
           if (pred.fill_date === '–') return min;
           if (!min || pred.fill_date < min.fill_date) return pred;
@@ -146,6 +147,82 @@ const AXIS_TICK   = { fill: '#52525b', fontSize: 10 };
 const GRID_PROPS  = { strokeDasharray: '1 6' as const, stroke: 'rgba(255,255,255,0.04)', vertical: false };
 const CHART_MARGIN = { top: 24, right: 8, left: 16, bottom: 8 };
 const MAX_TICKS    = 6;
+
+/* ── Pool selector (compact — for inline use in header rows) ── */
+function PoolSelector({ pools, selected, onSelect }: {
+  pools: ZFSPool[];
+  selected: string;
+  onSelect: (name: string) => void;
+}) {
+  if (pools.length <= 1) return null;
+
+  // Dropdown for 5+ pools
+  if (pools.length > 4) {
+    const cur = pools.find(p => p.name === selected);
+    const dotColor = cur?.health === 'ONLINE' ? 'var(--success)' : cur?.health === 'DEGRADED' ? 'var(--warning)' : 'var(--danger)';
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {cur && <span style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, flexShrink: 0, display: 'inline-block' }} />}
+        <select
+          value={selected}
+          onChange={e => onSelect(e.target.value)}
+          style={{
+            background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)', padding: '4px 28px 4px 10px',
+            fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 600,
+            color: 'var(--accent)', cursor: 'pointer', outline: 'none', height: 30,
+          }}
+        >
+          {pools.map(p => (
+            <option key={p.name} value={p.name}>{p.name} [{p.health}]</option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
+  // Pill buttons for 2–4 pools
+  return (
+    <div style={{
+      display: 'flex', background: 'var(--bg-elevated)',
+      border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+      overflow: 'hidden',
+    }}>
+      {pools.map(p => {
+        const active = selected === p.name;
+        const isOnline = p.health === 'ONLINE';
+        const isDegraded = p.health === 'DEGRADED';
+        const dotColor = isOnline ? 'var(--success)' : isDegraded ? 'var(--warning)' : 'var(--danger)';
+        return (
+          <button
+            key={p.name}
+            onClick={() => onSelect(p.name)}
+            style={{
+              height: 30, padding: '0 14px',
+              fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
+              letterSpacing: '0.04em',
+              background: active ? 'var(--accent-dim)' : 'transparent',
+              color: active ? 'var(--accent)' : 'var(--text-muted)',
+              cursor: 'pointer', transition: 'all 0.12s',
+              border: 'none',
+              borderBottomWidth: 2, borderBottomStyle: 'solid',
+              borderBottomColor: active ? 'var(--accent)' : 'transparent',
+              borderRight: '1px solid var(--border)',
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            <span style={{
+              width: 5, height: 5, borderRadius: '50%',
+              background: dotColor,
+              display: 'inline-block', flexShrink: 0,
+            }} />
+            {p.name}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /* ── Capacity warning banner ── */
 function CapacityBanner({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: number | null }) {
@@ -381,7 +458,6 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
         </div>
       </div>
 
-      {/* Time-until-full prediction */}
       {daysUntilFull !== null && (
         <div style={{
           fontSize: 11, fontFamily: 'var(--font-ui)', marginBottom: 14,
@@ -391,12 +467,11 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
         </div>
       )}
 
-      {/* Scrub Progress */}
       {scrubState === 'running' && (
         <div style={{ marginBottom: 16, padding: '10px 14px', background: 'rgba(245,158,11,0.04)', borderRadius: 'var(--radius)', border: '1px solid rgba(245,158,11,0.2)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
             <span style={{ fontSize: 11, color: 'var(--warning)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> Scrubbing
+              <div style={{ width: 10, height: 10, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.2)', borderTopColor: 'var(--warning)', animation: 'spin 0.7s linear infinite' }} /> Scrubbing
             </span>
             <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
               {scrubProg.timeRemaining && <span style={{ color: 'var(--text-muted)' }}>{scrubProg.timeRemaining} rem</span>}
@@ -410,7 +485,6 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
       )}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 14, borderTop: '1px solid var(--border)', position: 'relative' }}>
-        {/* Scrub button */}
         <button
           className="btn btn-secondary"
           style={{ height: 26, padding: '0 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, opacity: scrubState === 'running' ? 0.65 : 1 }}
@@ -423,7 +497,6 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
           {scrubState === 'running' ? 'Scrubbing…' : scrubState === 'success' ? 'Done ✓' : 'Scrub'}
         </button>
 
-        {/* Snapshot button + popover */}
         <div style={{ position: 'relative' }} ref={popRef}>
           <button
             className="btn btn-secondary"
@@ -481,7 +554,6 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
         </div>
       </div>
 
-      {/* Fancy Confirmation Modal */}
       {confirmState && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, backdropFilter: 'blur(4px)', animation: 'fadeIn 0.2s ease-out' }}>
           <div style={{ background: 'var(--bg-surface)', padding: 24, borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)', maxWidth: 400, width: '100%', boxShadow: '0 20px 50px rgba(0,0,0,0.6)' }}>
@@ -561,37 +633,6 @@ function Skeleton({ height = 120 }: { height?: number }) {
   return <div className="skeleton" style={{ height, borderRadius: 'var(--radius-lg)' }} />;
 }
 
-/* ── Widget tray ── */
-function WidgetTray({ allWidgets, onAdd }: { allWidgets: Array<{ id: string; label: string; visible: boolean }>; onAdd: (id: string) => void }) {
-  const hidden = allWidgets.filter(w => !w.visible);
-  return (
-    <div style={{ position: 'fixed', right: 24, top: 100, width: 220, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: hidden.length ? 12 : 16, zIndex: 50, boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
-      {hidden.length === 0 ? (
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textAlign: 'center' }}>All widgets visible</div>
-      ) : (
-        <>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
-            Hidden widgets
-          </div>
-          {hidden.map(w => (
-            <button key={w.id} onClick={() => onAdd(w.id)} style={{
-              display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', marginBottom: 4,
-              background: 'transparent', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-              cursor: 'pointer', color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', fontSize: 12, transition: 'all 0.12s',
-            }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; }}
-            >
-              <Plus size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-              {w.label}
-            </button>
-          ))}
-        </>
-      )}
-    </div>
-  );
-}
-
 /* ── Widget label map ── */
 const WIDGET_LABELS: Record<string, string> = {
   'stats-row':        'Stats Row',
@@ -608,6 +649,8 @@ export default function Dashboard({
   totalCapacity, totalUsedStorage, totalRawCapacity = 0, totalRawUsed = 0,
   currentStats, liveMetrics, systemStats, logs = [], loading,
   historicalStats = [],
+  selectedPool,
+  onSelectPool,
 }: DashboardProps) {
   const { widgets, loaded, setVisible, reorder, toast } = useLayout('dashboard');
   const [editMode, setEditMode] = useState(false);
@@ -622,7 +665,22 @@ export default function Dashboard({
   const [ioShowRead,  setIoShowRead]  = useState(true);
   const [ioShowWrite, setIoShowWrite] = useState(true);
 
-  const usagePct = totalCapacity > 0 ? (totalUsedStorage / totalCapacity) * 100 : 0;
+  // Multi-pool: resolve the effective selected pool
+  const multiPool = pools.length > 1;
+  const effectivePoolName = multiPool
+    ? (selectedPool && pools.some(p => p.name === selectedPool) ? selectedPool : pools[0]?.name || '')
+    : (pools[0]?.name || '');
+  const selPool = pools.find(p => p.name === effectivePoolName) || pools[0] || null;
+
+  // Per-pool derived values — when multiPool, show selected pool's stats
+  const selCapacity    = multiPool && selPool ? (selPool.used_bytes + selPool.available_bytes) : totalCapacity;
+  const selUsedStorage = multiPool && selPool ? selPool.used_bytes : totalUsedStorage;
+  const selAvailBytes  = multiPool && selPool ? selPool.available_bytes : pools.reduce((s, p) => s + (p.available_bytes || 0), 0);
+  const selUsedBytes   = multiPool && selPool ? selPool.used_bytes : pools.reduce((s, p) => s + (p.used_bytes || 0), 0);
+  const selRawCap      = multiPool && selPool ? (Number((selPool as any)._raw?.size)  || 0) : totalRawCapacity;
+  const selRawUsed     = multiPool && selPool ? (Number((selPool as any)._raw?.alloc) || 0) : totalRawUsed;
+
+  const usagePct = selCapacity > 0 ? (selUsedStorage / selCapacity) * 100 : 0;
   const animPct  = useCounter(usagePct);
   const cpuLoad  = systemStats?.cpu_load?.[0] ?? currentStats.cpu ?? 0;
   const cpuPct   = typeof cpuLoad === 'number' && cpuLoad <= 1 ? cpuLoad * 100 : cpuLoad;
@@ -631,19 +689,36 @@ export default function Dashboard({
   const memUsed  = systemStats?.memory?.used ?? 0;
   const memPct   = memTotal > 0 ? (memUsed / memTotal) * 100 : 0;
   const uptime   = systemStats?.uptime ?? '—';
-  const allOnline = pools.length > 0 && pools.every(p => p.health === 'ONLINE');
-  const freeBytes = totalCapacity - totalUsedStorage;
 
-  // Usable free space: ZFS-reported available bytes, percentage against available+alloc
-  const totalAvailableBytes = pools.reduce((s, p) => s + (p.available_bytes || 0), 0);
-  const totalUsedBytes      = pools.reduce((s, p) => s + (p.used_bytes      || 0), 0);
-  const pctFree = totalAvailableBytes > 0
-    ? (totalAvailableBytes / (totalAvailableBytes + totalUsedBytes)) * 100
+  // Health for selected pool (or aggregate)
+  const selAllOnline = multiPool && selPool ? selPool.health === 'ONLINE' : (pools.length > 0 && pools.every(p => p.health === 'ONLINE'));
+  const selHealthLabel = multiPool && selPool
+    ? (selPool.health === 'ONLINE' ? 'Healthy' : selPool.health)
+    : (pools.length === 0 ? 'No pools' : selAllOnline ? 'Healthy' : 'Degraded');
+  const selHealthSub = multiPool && selPool
+    ? (selPool.health === 'ONLINE' ? 'ONLINE' : `${selPool.health}`)
+    : (pools.length === 0 ? 'Add a pool to get started' : selAllOnline ? `${pools.length}/${pools.length} online` : `${pools.filter(p => p.health !== 'ONLINE').length} need attention`);
+  const selHealthColor = multiPool && selPool
+    ? (selPool.health === 'ONLINE' ? 'var(--success)' : 'var(--danger)')
+    : (pools.length === 0 ? 'var(--text-muted)' : selAllOnline ? 'var(--success)' : 'var(--danger)');
+
+  // Dataset count filtered by pool
+  const selDatasets = multiPool && effectivePoolName
+    ? datasets.filter(d => d.id === effectivePoolName || d.id.startsWith(effectivePoolName + '/'))
+    : datasets;
+  const selSnapshots = multiPool && effectivePoolName
+    ? snapshots.filter(s => (s.name || '').startsWith(effectivePoolName + '/') || (s.name || '').startsWith(effectivePoolName + '@'))
+    : snapshots;
+
+  const pctFree = selAvailBytes > 0
+    ? (selAvailBytes / (selAvailBytes + selUsedBytes)) * 100
     : 0;
+
+  const rawPct = selRawCap > 0 ? (selRawUsed / selRawCap) * 100 : 0;
 
   // Fill prediction from shared backend endpoint
   const fillPrediction = useFillPrediction();
-  const daysUntilFull  = null; // legacy, kept for capacity banner only
+  const daysUntilFull  = null;
 
   useEffect(() => {
     const fetchChartData = () => {
@@ -693,7 +768,6 @@ export default function Dashboard({
     return () => clearInterval(id);
   }, [pools.length]);
 
-  // Per-disk metrics every 1s — uses pools prop so no duplicate getPools call
   useEffect(() => {
     const names = pools.map(p => p.name).filter(Boolean);
     if (names.length === 0) { setDiskMetrics({}); setDiskPools([]); return; }
@@ -711,8 +785,25 @@ export default function Dashboard({
     return () => clearInterval(id);
   }, [pools.map(p => p.name).join(',')]);
 
-  const ioData      = histData1d.length > 2 ? histData1d : historicalStats;
-  const bannerPools = [...pools].filter(p => p.cap >= 80).sort((a, b) => b.cap - a.cap);
+  const ioData = histData1d.length > 2 ? histData1d : historicalStats;
+
+  // Capacity banners — filter to selected pool when multiPool
+  const bannerPools = multiPool && selPool
+    ? [selPool].filter(p => p.cap >= 80)
+    : [...pools].filter(p => p.cap >= 80).sort((a, b) => b.cap - a.cap);
+
+  // Pool cards to show
+  const displayPools = multiPool && selPool ? [selPool] : pools;
+
+  // Disk pools to show in Physical Disks table
+  const selDiskPools = multiPool && effectivePoolName ? [effectivePoolName] : diskPools;
+
+  // Per-pool live I/O from disk metrics for the selected pool
+  const poolDiskRows = diskMetrics[effectivePoolName] || [];
+  const poolLiveRead     = multiPool ? poolDiskRows.reduce((s: number, d: any) => s + (d.read_bw_mb  || 0), 0) : currentStats.read;
+  const poolLiveWrite    = multiPool ? poolDiskRows.reduce((s: number, d: any) => s + (d.write_bw_mb || 0), 0) : currentStats.write;
+  const poolLiveReadIops = multiPool ? poolDiskRows.reduce((s: number, d: any) => s + (d.read_iops   || 0), 0) : (currentStats.readIops ?? 0);
+  const poolLiveWriteIops = multiPool ? poolDiskRows.reduce((s: number, d: any) => s + (d.write_iops || 0), 0) : (currentStats.writeIops ?? 0);
 
   const handleDragStart = useCallback((id: string) => setDragFrom(id), []);
   const handleDragOver  = useCallback((id: string) => setDragOver(id), []);
@@ -731,42 +822,39 @@ export default function Dashboard({
   const renderWidget = (id: string) => {
     switch (id) {
       case 'stats-row':
-        const rawPct = totalRawCapacity > 0 ? (totalRawUsed / totalRawCapacity) * 100 : 0;
         return (
           <div className="stats-row-5">
             <StatCard
               label="Total Storage"
-              value={formatBytes(totalCapacity, 2)}
-              sub={`${formatBytes(totalUsedStorage, 2)} used · ${rawPct.toFixed(2)}% raw`}
+              value={formatBytes(selCapacity, 2)}
+              sub={`${formatBytes(selUsedStorage, 2)} used · ${rawPct.toFixed(2)}% raw`}
               icon={HardDrive}
               color={usagePct > 90 ? 'var(--danger)' : usagePct > 80 ? 'var(--warning)' : 'var(--accent)'}
             />
             <StatCard
               label="Pool Health"
-              value={pools.length === 0 ? 'No pools' : allOnline ? 'Healthy' : 'Degraded'}
-              sub={pools.length === 0 ? 'Add a pool to get started'
-                : allOnline ? `${pools.length}/${pools.length} online`
-                : `${pools.filter(p => p.health !== 'ONLINE').length} need attention`}
+              value={selHealthLabel}
+              sub={selHealthSub}
               icon={ShieldCheck}
-              color={pools.length === 0 ? 'var(--text-muted)' : allOnline ? 'var(--success)' : 'var(--danger)'}
+              color={selHealthColor}
             />
             <StatCard
               label="Datasets"
-              value={String(datasets.length)}
-              sub={`${snapshots.length} snapshot${snapshots.length !== 1 ? 's' : ''}`}
+              value={String(selDatasets.length)}
+              sub={`${selSnapshots.length} snapshot${selSnapshots.length !== 1 ? 's' : ''}`}
               icon={Layers}
               color="var(--info)"
             />
             <StatCard
               label="Used Storage"
-              value={formatBytes(totalUsedBytes, 2)}
-              sub={`Raw (incl. parity): ${formatBytes(totalRawUsed, 2)}`}
+              value={formatBytes(selUsedBytes, 2)}
+              sub={`Raw (incl. parity): ${formatBytes(selRawUsed, 2)}`}
               icon={Database}
               color={usagePct > 90 ? 'var(--danger)' : usagePct > 80 ? 'var(--warning)' : 'var(--accent)'}
             />
             <StatCard
               label="Available Space"
-              value={fmtUsableSpace(totalAvailableBytes)}
+              value={fmtUsableSpace(selAvailBytes)}
               sub={`${pctFree.toFixed(2)}% free`}
               icon={TrendingUp}
               minHeight={160}
@@ -780,8 +868,8 @@ export default function Dashboard({
 
       case 'disk-io':
         return (
-          <Panel title="Physical Disks" sub="Per-disk I/O · 1 s refresh">
-            <PhysicalDisksTable diskPools={diskPools} diskMetrics={diskMetrics} />
+          <Panel title="Physical Disks" sub={`Per-disk I/O · 1 s refresh${multiPool ? ` · ${effectivePoolName}` : ''}`}>
+            <PhysicalDisksTable diskPools={selDiskPools} diskMetrics={diskMetrics} />
           </Panel>
         );
 
@@ -834,7 +922,7 @@ export default function Dashboard({
                         <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK}
                           tickFormatter={v => {
                             const maxV = ioData.reduce((m: number, d: any) => Math.max(m, d.read || 0, d.write || 0), 0);
-                            return maxV >= 1000 ? `${(v/1000).toFixed(1)}\u00A0GB/s` : `${v.toFixed(0)}\u00A0MB/s`;
+                            return maxV >= 1000 ? `${(v/1000).toFixed(1)} GB/s` : `${v.toFixed(0)} MB/s`;
                           }}
                           tickCount={MAX_TICKS}
                           width={85}
@@ -854,13 +942,13 @@ export default function Dashboard({
                     const totalW = ioData.reduce((s, d) => s + (d.write || 0), 0) * secsPerPoint;
                     const peakW  = ioData.reduce((m, d) => Math.max(m, d.write || 0), 0);
                     const fmtData = (v: number) => v >= 1024 ? `${(v/1024).toFixed(1)} TB` : `${v.toFixed(1)} GB`;
-                    const fmtBw   = (v: number) => v >= 1000 ? `${(v/1000).toFixed(2)} GB/s` : `${v.toFixed(0)} MB/s`;
+                    const fmtBwLocal = (v: number) => v >= 1000 ? `${(v/1000).toFixed(2)} GB/s` : `${v.toFixed(0)} MB/s`;
                     return (
                       <div style={{ display: 'flex', gap: 32, marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
                         {[
                           { label: '↑ Read total',  value: fmtData(totalR / 1024), color: '#38bdf8' },
                           { label: '↓ Write total', value: fmtData(totalW / 1024), color: '#818cf8' },
-                          { label: 'Peak write',    value: fmtBw(peakW),           color: 'var(--text-muted)' },
+                          { label: 'Peak write',    value: fmtBwLocal(peakW),       color: 'var(--text-muted)' },
                         ].map(({ label, value, color }) => (
                           <div key={label}>
                             <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 3 }}>{label}</div>
@@ -870,7 +958,6 @@ export default function Dashboard({
                       </div>
                     );
                   })()}
-                  {/* Disk full forecast below chart */}
                   <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Forecast:</span>
                     {fillPrediction && fillPrediction.text !== '–' && fillPrediction.timeText ? (
@@ -892,13 +979,13 @@ export default function Dashboard({
         );
 
       case 'pool-cards':
-        return pools.length > 0 ? (
+        return displayPools.length > 0 ? (
           <div>
             <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>
               Storage Pools
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
-              {pools.map((pool, i) => <PoolCard key={i} pool={pool} daysUntilFull={daysUntilFull} />)}
+              {displayPools.map((pool, i) => <PoolCard key={i} pool={pool} daysUntilFull={daysUntilFull} />)}
             </div>
           </div>
         ) : null;
@@ -906,13 +993,13 @@ export default function Dashboard({
       case 'system-resources':
         return (
           <div className="two-col">
-            <Panel title="Live I/O" sub="Current throughput · 1s refresh">
+            <Panel title="Live I/O" sub={multiPool ? `Pool: ${effectivePoolName} · 1s refresh` : 'Current throughput · 1s refresh'}>
               <div style={{ display: 'flex' }}>
                 {[
-                  { label: '↑ Read',       value: fmtBw(currentStats.read),  color: '#38bdf8' },
-                  { label: '↓ Write',      value: fmtBw(currentStats.write), color: '#818cf8' },
-                  { label: '↑ Read IOPS',  value: `${(currentStats.readIops ?? 0).toFixed(0)} ops/s`,  color: '#38bdf8' },
-                  { label: '↓ Write IOPS', value: `${(currentStats.writeIops ?? 0).toFixed(0)} ops/s`, color: '#818cf8' },
+                  { label: '↑ Read',       value: fmtBw(poolLiveRead),      color: '#38bdf8' },
+                  { label: '↓ Write',      value: fmtBw(poolLiveWrite),     color: '#818cf8' },
+                  { label: '↑ Read IOPS',  value: `${poolLiveReadIops.toFixed(0)} ops/s`,  color: '#38bdf8' },
+                  { label: '↓ Write IOPS', value: `${poolLiveWriteIops.toFixed(0)} ops/s`, color: '#818cf8' },
                 ].map(({ label, value, color }, i, arr) => (
                   <div key={label} style={{ flex: 1, padding: '16px 18px', borderRight: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
@@ -923,9 +1010,7 @@ export default function Dashboard({
                   </div>
                 ))}
               </div>
-              
             </Panel>
-
 
             <Panel title="System Resources">
               <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -943,7 +1028,6 @@ export default function Dashboard({
                   </div>
                 ))}
 
-                {/* ARC Detailed Breakdown */}
                 {systemStats?.arc_size > 0 && (
                   <div style={{ marginTop: 8, paddingTop: 12, borderTop: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -953,14 +1037,8 @@ export default function Dashboard({
                       </span>
                     </div>
                     <div className="progress-track" style={{ display: 'flex', overflow: 'hidden' }}>
-                      <div style={{
-                        width: `${(systemStats.arc_data / systemStats.arc_target) * 100}%`,
-                        height: '100%', background: '#3b82f6', transition: 'width 0.3s ease'
-                      }} title="Data" />
-                      <div style={{
-                        width: `${(systemStats.arc_metadata / systemStats.arc_target) * 100}%`,
-                        height: '100%', background: '#a855f7', transition: 'width 0.3s ease'
-                      }} title="Metadata" />
+                      <div style={{ width: `${(systemStats.arc_data / systemStats.arc_target) * 100}%`, height: '100%', background: '#3b82f6', transition: 'width 0.3s ease' }} title="Data" />
+                      <div style={{ width: `${(systemStats.arc_metadata / systemStats.arc_target) * 100}%`, height: '100%', background: '#a855f7', transition: 'width 0.3s ease' }} title="Metadata" />
                     </div>
                     <div style={{ display: 'flex', gap: 12, marginTop: 6 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -1038,8 +1116,11 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* Toolbar */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+      {/* Toolbar — pool selector (right) + Edit Layout button */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, marginBottom: 16 }}>
+        {multiPool && onSelectPool && (
+          <PoolSelector pools={pools} selected={effectivePoolName} onSelect={onSelectPool} />
+        )}
         <button
           onClick={() => setEditMode(m => !m)}
           className="btn btn-secondary"

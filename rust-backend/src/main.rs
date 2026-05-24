@@ -455,7 +455,7 @@ async fn main() {
         .merge(routes::health::router())
         .merge(routes::auth::router(app_state.clone()))
         .merge(routes::settings::router(app_state.clone()))
-        .merge(routes::pools::router())
+        .merge(routes::pools::router(app_state.clone()))
         .merge(routes::datasets::router(app_state.clone()))
         .merge(routes::snapshots::router())
         .merge(routes::stats::router(app_state.clone()))

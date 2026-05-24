@@ -40,11 +40,22 @@ export default function PhysicalDisksTable({ diskPools, diskMetrics }: PhysicalD
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+        <colgroup>
+          <col /><col />
+          <col style={{ minWidth: 90 }} /><col style={{ minWidth: 90 }} />
+          <col style={{ minWidth: 80 }} /><col style={{ minWidth: 80 }} />
+          <col style={{ minWidth: 90 }} /><col style={{ minWidth: 90 }} />
+        </colgroup>
         <thead>
           <tr style={{ borderBottom: '1px solid var(--border)' }}>
-            {['Pool', 'Disk', 'Read', 'Write', 'Read IOPS', 'Write IOPS', 'Total Read', 'Total Written'].map(h => (
-              <th key={h} style={{ padding: '6px 12px', textAlign: 'left', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
-            ))}
+            <th style={{ padding: '6px 12px', textAlign: 'left',  fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Pool</th>
+            <th style={{ padding: '6px 12px', textAlign: 'left',  fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Disk</th>
+            <th style={{ padding: '6px 12px', textAlign: 'right', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', minWidth: 90 }}>Read</th>
+            <th style={{ padding: '6px 12px', textAlign: 'right', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', minWidth: 90 }}>Write</th>
+            <th style={{ padding: '6px 12px', textAlign: 'right', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', minWidth: 80 }}>Read IOPS</th>
+            <th style={{ padding: '6px 12px', textAlign: 'right', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', minWidth: 80 }}>Write IOPS</th>
+            <th style={{ padding: '6px 12px', textAlign: 'right', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', minWidth: 90 }}>Total Read</th>
+            <th style={{ padding: '6px 12px', textAlign: 'right', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', minWidth: 90 }}>Total Written</th>
           </tr>
         </thead>
         <tbody>
@@ -58,12 +69,12 @@ export default function PhysicalDisksTable({ diskPools, diskMetrics }: PhysicalD
             >
               <td style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>{d.pool}</td>
               <td style={{ padding: '8px 12px', color: 'var(--text-primary)', fontWeight: 600 }}>{d.name}</td>
-              <td style={{ padding: '8px 12px', color: C.read }}>{fmtBw(d.read_bw_mb ?? 0)}</td>
-              <td style={{ padding: '8px 12px', color: C.write }}>{fmtBw(d.write_bw_mb ?? 0)}</td>
-              <td style={{ padding: '8px 12px', color: C.read }}>{(d.read_iops ?? 0).toFixed(0)}</td>
-              <td style={{ padding: '8px 12px', color: C.write }}>{(d.write_iops ?? 0).toFixed(0)}</td>
-              <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{fmtGB(d.total_read_gb ?? 0)}</td>
-              <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{fmtGB(d.total_write_gb ?? 0)}</td>
+              <td style={{ padding: '8px 12px', color: C.read,                 textAlign: 'right', fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{fmtBw(d.read_bw_mb ?? 0)}</td>
+              <td style={{ padding: '8px 12px', color: C.write,                textAlign: 'right', fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{fmtBw(d.write_bw_mb ?? 0)}</td>
+              <td style={{ padding: '8px 12px', color: C.read,                 textAlign: 'right', fontVariantNumeric: 'tabular-nums', minWidth: 80 }}>{(d.read_iops ?? 0).toFixed(0)}</td>
+              <td style={{ padding: '8px 12px', color: C.write,                textAlign: 'right', fontVariantNumeric: 'tabular-nums', minWidth: 80 }}>{(d.write_iops ?? 0).toFixed(0)}</td>
+              <td style={{ padding: '8px 12px', color: 'var(--text-secondary)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{fmtGB(d.total_read_gb ?? 0)}</td>
+              <td style={{ padding: '8px 12px', color: 'var(--text-secondary)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{fmtGB(d.total_write_gb ?? 0)}</td>
             </motion.tr>
           ))}
         </tbody>

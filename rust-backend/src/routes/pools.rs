@@ -1,14 +1,15 @@
 use axum::{
-    extract::{Path, Query},
+    extract::{Path, Query, State},
     routing::{get, post},
     Json, Router,
 };
+use redis::AsyncCommands;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::{error::ApiError, executor};
+use crate::{error::ApiError, executor, state::AppState};
 
-pub fn router() -> Router {
+pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/v1/pools", get(list_pools).post(create_pool))
         // Static routes BEFORE dynamic ones
@@ -28,6 +29,7 @@ pub fn router() -> Router {
         .route("/api/v1/pools/:name/replace",      post(replace_disk))
         .route("/api/v1/pools/:name/events",       get(pool_events))
         .route("/api/v1/pools/:name/settings",     get(get_pool_settings).put(set_pool_setting))
+        .with_state(state)
 }
 
 // ── Bodies ────────────────────────────────────────────────────────────────────
@@ -47,7 +49,13 @@ pub struct CreatePoolBody {
 }
 
 #[derive(Deserialize)]
-pub struct ExpandBody { pub disk: String }
+pub struct ExpandBody {
+    pub disk:      Option<String>,
+    pub disks:     Option<Vec<String>>,
+    pub vdev_type: Option<String>,
+    #[serde(default)]
+    pub force:     bool,
+}
 
 #[derive(Deserialize)]
 pub struct ReplaceBody {
@@ -309,9 +317,48 @@ async fn get_pool(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     })))
 }
 
-async fn destroy_pool(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
+async fn destroy_pool(
+    Path(name): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "pool")?;
+
+    // Collect disk paths before destroy so we can wipe ZFS labels afterward
+    let disk_paths: Vec<String> = if let Ok(status) = executor::zpool(&["status", "-P", &name]).await {
+        parse_vdev_config(&status)
+            .into_iter()
+            .flat_map(|v| {
+                v["disks"].as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|d| d["path"].as_str().map(|s| s.to_string()))
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+
     executor::zpool(&["destroy", &name]).await?;
+
+    // Wipe all ZFS labels AND partition signatures so disks appear free immediately.
+    // labelclear removes ZFS super-blocks; wipefs clears the GPT/MBR table that
+    // OpenZFS creates on whole-disk vdevs — otherwise lsblk still shows children
+    // and list_enriched_disks returns in_use:true.
+    for disk in &disk_paths {
+        let _ = executor::zpool(&["labelclear", "-f", disk]).await;
+        let _ = tokio::process::Command::new("wipefs")
+            .args(["-a", disk])
+            .output()
+            .await;
+    }
+
+    // Bust caches so disks immediately appear free and the pool list is stale
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        let _: redis::RedisResult<()> = conn.del(&["zfs:disks-enriched", "zfs:system-stats"][..]).await;
+    }
+
     Ok(Json(json!({ "message": format!("Pool '{name}' destroyed") })))
 }
 
@@ -529,11 +576,37 @@ async fn expand_pool(
     Json(body): Json<ExpandBody>,
 ) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "pool")?;
-    if body.disk.is_empty() {
-        return Err(ApiError::BadRequest("'disk' is required".into()));
+
+    // Collect all disks from disk (legacy) and disks fields
+    let mut all_disks: Vec<String> = Vec::new();
+    if let Some(d) = &body.disk { if !d.is_empty() { all_disks.push(d.clone()); } }
+    if let Some(ds) = &body.disks { all_disks.extend(ds.iter().filter(|d| !d.is_empty()).cloned()); }
+    // Deduplicate while preserving order
+    let mut seen = std::collections::HashSet::new();
+    all_disks.retain(|d| seen.insert(d.clone()));
+
+    if all_disks.is_empty() {
+        return Err(ApiError::BadRequest("'disk' or 'disks' is required".into()));
     }
-    executor::zpool(&["online", "-e", &name, &body.disk]).await?;
-    Ok(Json(json!({ "message": format!("Pool '{name}' expanded on '{}'", body.disk) })))
+
+    let mut args = vec!["add".to_string()];
+    if body.force { args.push("-f".to_string()); }
+    args.push(name.clone());
+    if let Some(vt) = &body.vdev_type {
+        let vt = vt.trim();
+        if !vt.is_empty() && vt != "stripe" {
+            // Validate vdev type
+            if !["mirror", "raidz", "raidz1", "raidz2", "raidz3", "spare", "log", "cache"].contains(&vt) {
+                return Err(ApiError::BadRequest(format!("Invalid vdev_type: {vt}")));
+            }
+            args.push(vt.to_string());
+        }
+    }
+    args.extend(all_disks.clone());
+
+    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    executor::zpool(&refs).await?;
+    Ok(Json(json!({ "message": format!("{} disk(s) added to pool '{name}'", all_disks.len()) })))
 }
 
 async fn replace_disk(
