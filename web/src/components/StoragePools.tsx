@@ -688,6 +688,111 @@ const POOL_PROP_DEFS: PropDef[] = [
   { name: 'snapdir', label: 'Snapshot Dir', desc: 'Controls whether .zfs/snapshot is browsable by regular users', group: 'Visibility', scope: 'dataset', type: 'select', options: ['hidden', 'visible'] },
 ];
 
+/* ── Scrub Schedule Settings UI ─────────────────────────────────────────────── */
+function ScrubScheduleSettings({
+  value, onChange
+}: {
+  value: string; onChange: (v: string) => void;
+}) {
+  const parsed = (() => {
+    if (value === 'off') return { enabled: false, type: 'monthly', cron: '0 0 0 1 * * *' };
+    if (!value || value === '-') return { enabled: true, type: 'monthly', cron: '0 0 0 1 * * *' };
+    try { return JSON.parse(value); } catch { return { enabled: true, type: 'custom', cron: value }; }
+  })();
+
+  const enabled = parsed.enabled || false;
+  const type = parsed.type || 'monthly';
+  const cron = parsed.cron || '0 0 0 1 * * *';
+
+  const update = (updates: any) => {
+    onChange(JSON.stringify({ ...parsed, ...updates }));
+  };
+
+  const handleToggle = () => {
+    if (enabled) {
+      onChange('off');
+    } else {
+      update({ enabled: true });
+    }
+  };
+
+  const setType = (newType: string) => {
+    let newCron = cron;
+    if (newType === 'daily') newCron = '0 0 0 * * * *';
+    else if (newType === 'weekly') newCron = '0 0 0 * * 1 *';
+    else if (newType === 'monthly') newCron = '0 0 0 1 * * *';
+    update({ type: newType, cron: newCron });
+  };
+
+  return (
+    <div style={{ paddingBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: enabled ? 'var(--accent)' : 'var(--text-primary)', fontFamily: 'var(--font-ui)' }}>
+            Automated Scrub Schedule
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', marginTop: 2 }}>
+            Periodically verify pool data integrity
+          </div>
+        </div>
+        <button
+          onClick={handleToggle}
+          style={{
+            width: 44, height: 22, borderRadius: 11, flexShrink: 0,
+            background: enabled ? 'var(--success)' : 'var(--bg-elevated)',
+            border: `1px solid ${enabled ? 'var(--success)' : 'var(--border)'}`,
+            position: 'relative', cursor: 'pointer', transition: 'all 0.2s',
+          }}
+        >
+          <div style={{
+            position: 'absolute', top: 2,
+            left: enabled ? 22 : 2,
+            width: 16, height: 16, borderRadius: 8,
+            background: '#fff', transition: 'left 0.2s',
+          }} />
+        </button>
+      </div>
+
+      <AnimatePresence>
+        {enabled && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            style={{ overflow: 'hidden' }}
+          >
+            <div style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '12px 16px', marginTop: 8 }}>
+              <label style={S.modal.label}>Frequency</label>
+              <select style={{ ...S.modal.select, marginBottom: 12 }} value={type} onChange={e => setType(e.target.value)}>
+                <option value="daily">Every Day</option>
+                <option value="weekly">Every Week (Monday)</option>
+                <option value="monthly">Every Month (1st)</option>
+                <option value="custom">Custom (Cron Expression)</option>
+              </select>
+
+              {type === 'custom' && (
+                <div>
+                  <label style={S.modal.label}>Cron Expression (Sec Min Hour Day Month DoW Year)</label>
+                  <input
+                    type="text"
+                    style={{ ...S.modal.input, fontFamily: 'var(--font-mono)' }}
+                    value={cron}
+                    onChange={e => update({ cron: e.target.value })}
+                    placeholder="0 0 0 1 * * *"
+                  />
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6, fontFamily: 'var(--font-mono)' }}>
+                    Requires 6 or 7 fields (Seconds Minutes Hours DayOfMonth Month DayOfWeek [Year])
+                  </div>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 /* ── Settings Popout (slide-in from right) ──────────────────────────────────── */
 function SettingsPopout({
   poolName,
@@ -831,6 +936,15 @@ function SettingsPopout({
             </div>
           ) : (
             <>
+              <div style={{ paddingTop: 16, paddingBottom: 4 }}>
+                {sectionHeader('Scrub Schedule')}
+                <div style={{ marginTop: 12 }}>
+                  <ScrubScheduleSettings
+                    value={edits['zfsmanager:scrub_schedule'] ?? props['zfsmanager:scrub_schedule'] ?? 'off'}
+                    onChange={v => setEdits(e => ({ ...e, 'zfsmanager:scrub_schedule': v }))}
+                  />
+                </div>
+              </div>
               {/* Pool Property Groups */}
               <div style={{ paddingTop: 8 }}>
                 {poolPropGroups.map(group => (
