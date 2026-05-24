@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Menu } from 'lucide-react';
 import Sidebar, { Breakpoint } from './components/Sidebar';
@@ -221,6 +221,10 @@ export default function App() {
   const [showNotifPopup, setShowNotifPopup] = useState(false);
   const [loading, setLoading]       = useState(true);
   const [globalError, setGlobalError] = useState<string | null>(null);
+  const [selectedPool, setSelectedPool] = useState<string>(
+    () => localStorage.getItem('zfs_default_pool') || ''
+  );
+  const poolsInitializedRef = useRef(false);
 
   const breakpoint = useBreakpoint();
 
@@ -261,6 +265,22 @@ export default function App() {
     setIsDefaultPassword(res.is_default_password);
     setIsAuthenticated(true);
   };
+
+  // ── Sync selectedPool when pools first load ──────────────────────────────
+  useEffect(() => {
+    if (pools.length === 0) return;
+    const names = pools.map(p => p.name);
+    if (!poolsInitializedRef.current || !names.includes(selectedPool)) {
+      poolsInitializedRef.current = true;
+      const saved = localStorage.getItem('zfs_default_pool') || '';
+      const resolved = names.find(n => n === saved) || names[0];
+      setSelectedPool(resolved);
+    }
+  }, [pools]);
+
+  const handleSelectPool = useCallback((name: string) => {
+    setSelectedPool(name);
+  }, []);
 
   // ── Fetch server time once on login ──────────────────────────────────────
   useEffect(() => {
@@ -528,9 +548,16 @@ export default function App() {
                   totalRawCapacity={totalRawCapacity} totalRawUsed={totalRawUsed}
                   currentStats={currentStats} liveMetrics={liveMetrics}
                   systemStats={systemStats} logs={logs} loading={loading} historicalStats={stats}
+                  selectedPool={selectedPool} onSelectPool={handleSelectPool}
                 />
               } />
-              <Route path="/stats" element={<Performance stats={stats} liveMetrics={liveMetrics} serverTimeOffsetMs={serverTimeOffsetMs} pools={pools} />} />
+              <Route path="/stats" element={
+                <Performance
+                  stats={stats} liveMetrics={liveMetrics}
+                  serverTimeOffsetMs={serverTimeOffsetMs} pools={pools}
+                  selectedPool={selectedPool} onSelectPool={handleSelectPool}
+                />
+              } />
               <Route path="/pools" element={
                 <StoragePools pools={pools} onRefresh={fetchData} zfsVersion={systemStats?.zfs_version} />
               } />
@@ -542,7 +569,7 @@ export default function App() {
               } />
               <Route path="/logs" element={<SystemLogs logs={logs} pools={pools} />} />
               <Route path="/settings" element={
-                <Settings onPasswordChanged={() => setIsDefaultPassword(false)} />
+                <Settings onPasswordChanged={() => setIsDefaultPassword(false)} pools={pools} />
               } />
               <Route path="/notifications" element={<Notifications />} />
               <Route path="/login" element={<Navigate to="/dashboard" replace />} />

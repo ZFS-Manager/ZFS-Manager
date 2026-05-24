@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Key, Lock, Plus, Trash2, Eye, EyeOff, CheckCircle, XCircle, Copy, AlertTriangle, Monitor } from 'lucide-react';
+import { Key, Lock, Plus, Trash2, Eye, EyeOff, CheckCircle, XCircle, Copy, AlertTriangle, Monitor, Database } from 'lucide-react';
 import { api } from '../api';
 import PageTransition from './PageTransition';
 
 interface SettingsProps {
   onPasswordChanged?: () => void;
+  pools?: any[];
 }
 
 interface ApiKeyRow {
@@ -53,7 +54,7 @@ function ToastContainer({ toasts, onClose }: { toasts: ToastEntry[]; onClose: (i
   return (
     <>
       <style>{`@keyframes toastSlideIn { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }`}</style>
-      <div style={{ position: 'fixed', top: 16, right: 16, zIndex: 9999, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ position: 'fixed', top: 70, right: 16, zIndex: 9999, display: 'flex', flexDirection: 'column', gap: 8 }}>
         {toasts.map(t => (
           <ToastItem key={t.id} entry={t} onClose={() => onClose(t.id)} />
         ))}
@@ -485,6 +486,53 @@ function ApiKeys({ addToast }: { addToast: (msg: string, type: 'success' | 'erro
   );
 }
 
+/* ── General section (Default Pool) ── */
+function General({ pools }: { pools: any[] }) {
+  const [defaultPool, setDefaultPool] = useState(
+    () => localStorage.getItem('zfs_default_pool') || pools[0]?.name || ''
+  );
+
+  const handleChange = (name: string) => {
+    setDefaultPool(name);
+    localStorage.setItem('zfs_default_pool', name);
+  };
+
+  if (pools.length <= 1) return null;
+
+  const selectStyle: React.CSSProperties = {
+    height: 40, padding: '0 12px',
+    background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+    borderRadius: 'var(--radius)', color: 'var(--text-primary)',
+    fontFamily: 'var(--font-ui)', fontSize: 14, cursor: 'pointer',
+    minWidth: 200,
+  };
+
+  return (
+    <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 28 }}>
+      <SectionHeader title="General" sub="Application-wide preferences." />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+        <div>
+          <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
+            Default Pool
+          </div>
+          <div style={{ fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
+            Pre-selected pool on Dashboard and Performance tab
+          </div>
+        </div>
+        <select
+          value={defaultPool}
+          onChange={e => handleChange(e.target.value)}
+          style={selectStyle}
+        >
+          {pools.map(p => (
+            <option key={p.name} value={p.name}>{p.name}</option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
+
 /* ── Appearance section ── */
 function Appearance() {
   const [animEnabled, setAnimEnabled] = useState(
@@ -537,7 +585,7 @@ function Appearance() {
 }
 
 /* ── Main Settings page ── */
-export default function Settings({ onPasswordChanged }: SettingsProps) {
+export default function Settings({ onPasswordChanged, pools = [] }: SettingsProps) {
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
 
   const addToast = useCallback((msg: string, type: 'success' | 'error') => {
@@ -573,6 +621,19 @@ export default function Settings({ onPasswordChanged }: SettingsProps) {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+        {/* General section — only when multiple pools exist */}
+        {pools.length > 1 && (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <Database size={15} style={{ color: 'var(--accent)' }} />
+              <span style={{ fontFamily: 'var(--font-ui)', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                General
+              </span>
+            </div>
+            <General pools={pools} />
+          </div>
+        )}
+
         {/* Appearance section */}
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>

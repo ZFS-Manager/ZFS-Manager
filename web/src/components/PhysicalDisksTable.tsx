@@ -20,6 +20,27 @@ interface PhysicalDisksTableProps {
   diskMetrics: Record<string, any[]>;
 }
 
+// Fixed widths for numeric columns prevent layout shift when values change
+const NUM_CELL: React.CSSProperties = {
+  padding: '8px 12px',
+  width: 100,
+  minWidth: 100,
+  textAlign: 'right',
+  fontVariantNumeric: 'tabular-nums',
+};
+
+const NUM_HEAD: React.CSSProperties = {
+  padding: '6px 12px',
+  width: 100,
+  minWidth: 100,
+  textAlign: 'right',
+  fontSize: 10,
+  fontWeight: 600,
+  color: 'var(--text-muted)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.06em',
+};
+
 export default function PhysicalDisksTable({ diskPools, diskMetrics }: PhysicalDisksTableProps) {
   const animEnabled = localStorage.getItem('page_animations') !== 'false';
   const allDisks = diskPools.flatMap(pool =>
@@ -42,9 +63,14 @@ export default function PhysicalDisksTable({ diskPools, diskMetrics }: PhysicalD
       <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
         <thead>
           <tr style={{ borderBottom: '1px solid var(--border)' }}>
-            {['Pool', 'Disk', 'Read', 'Write', 'Read IOPS', 'Write IOPS', 'Total Read', 'Total Written'].map(h => (
-              <th key={h} style={{ padding: '6px 12px', textAlign: 'left', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
-            ))}
+            <th style={{ padding: '6px 12px', textAlign: 'left', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Pool</th>
+            <th style={{ padding: '6px 12px', textAlign: 'left', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Disk</th>
+            <th style={NUM_HEAD}>Read</th>
+            <th style={NUM_HEAD}>Write</th>
+            <th style={NUM_HEAD}>Read IOPS</th>
+            <th style={NUM_HEAD}>Write IOPS</th>
+            <th style={NUM_HEAD}>Total Read</th>
+            <th style={NUM_HEAD}>Total Written</th>
           </tr>
         </thead>
         <tbody>
@@ -58,12 +84,12 @@ export default function PhysicalDisksTable({ diskPools, diskMetrics }: PhysicalD
             >
               <td style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>{d.pool}</td>
               <td style={{ padding: '8px 12px', color: 'var(--text-primary)', fontWeight: 600 }}>{d.name}</td>
-              <td style={{ padding: '8px 12px', color: C.read }}>{fmtBw(d.read_bw_mb ?? 0)}</td>
-              <td style={{ padding: '8px 12px', color: C.write }}>{fmtBw(d.write_bw_mb ?? 0)}</td>
-              <td style={{ padding: '8px 12px', color: C.read }}>{(d.read_iops ?? 0).toFixed(0)}</td>
-              <td style={{ padding: '8px 12px', color: C.write }}>{(d.write_iops ?? 0).toFixed(0)}</td>
-              <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{fmtGB(d.total_read_gb ?? 0)}</td>
-              <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{fmtGB(d.total_write_gb ?? 0)}</td>
+              <td style={{ ...NUM_CELL, color: C.read }}>{fmtBw(d.read_bw_mb ?? 0)}</td>
+              <td style={{ ...NUM_CELL, color: C.write }}>{fmtBw(d.write_bw_mb ?? 0)}</td>
+              <td style={{ ...NUM_CELL, color: C.read }}>{(d.read_iops ?? 0).toFixed(0)}</td>
+              <td style={{ ...NUM_CELL, color: C.write }}>{(d.write_iops ?? 0).toFixed(0)}</td>
+              <td style={{ ...NUM_CELL, color: 'var(--text-secondary)' }}>{fmtGB(d.total_read_gb ?? 0)}</td>
+              <td style={{ ...NUM_CELL, color: 'var(--text-secondary)' }}>{fmtGB(d.total_write_gb ?? 0)}</td>
             </motion.tr>
           ))}
         </tbody>

@@ -24,6 +24,8 @@ interface PerformanceProps {
   } | null;
   serverTimeOffsetMs?: number;
   pools?: any[];
+  selectedPool?: string;
+  onSelectPool?: (name: string) => void;
 }
 
 type Interval = '1h' | '6h' | '1d' | '7d' | '1m' | '1y';
@@ -36,7 +38,6 @@ const INTERVALS: { key: Interval; label: string; api: string }[] = [
   { key: '1m',  label: '1M',  api: '1m'  },
   { key: '1y',  label: '1Y',  api: '1y'  },
 ];
-
 
 const SECONDS_PER_POINT: Record<Interval, number> = {
   '1h': 60, '6h': 300, '1d': 300, '7d': 1800, '1m': 7200, '1y': 86400,
@@ -93,14 +94,14 @@ const AXIS_TICK  = { fill: '#52525b', fontSize: 10 };
 const GRID_PROPS = { strokeDasharray: '3 6' as const, stroke: 'rgba(255,255,255,0.15)', vertical: false };
 
 function getBwScale(maxMB: number): { unit: string; fmt: (v: number) => string } {
-  if (maxMB >= 1000) return { unit: 'GB/s', fmt: v => `${(v / 1000).toFixed(1)}\u00A0GB/s` };
-  if (maxMB >= 1)    return { unit: 'MB/s', fmt: v => `${v.toFixed(0)}\u00A0MB/s` };
-  return { unit: 'KB/s', fmt: v => `${(v * 1024).toFixed(0)}\u00A0KB/s` };
+  if (maxMB >= 1000) return { unit: 'GB/s', fmt: v => `${(v / 1000).toFixed(1)} GB/s` };
+  if (maxMB >= 1)    return { unit: 'MB/s', fmt: v => `${v.toFixed(0)} MB/s` };
+  return { unit: 'KB/s', fmt: v => `${(v * 1024).toFixed(0)} KB/s` };
 }
 
 function getGbScale(maxGB: number): { unit: string; fmt: (v: number) => string } {
-  if (maxGB >= 1000) return { unit: 'TB', fmt: v => `${(v / 1000).toFixed(1)}\u00A0TB` };
-  return { unit: 'GB', fmt: v => `${v.toFixed(0)}\u00A0GB` };
+  if (maxGB >= 1000) return { unit: 'TB', fmt: v => `${(v / 1000).toFixed(1)} TB` };
+  return { unit: 'GB', fmt: v => `${v.toFixed(0)} GB` };
 }
 
 function fmtBw(v: number) {
@@ -136,9 +137,14 @@ function rollingAverage(data: any[], keys: string[], window: number): any[] {
   });
 }
 
-function transformHistory(metrics: any[], interval: Interval): any[] {
+function transformHistory(metrics: any[], interval: Interval, poolFilter?: string): any[] {
+  // Client-side per-pool filter using pool_name field from backend
+  const filtered = poolFilter
+    ? metrics.filter((m: any) => m.pool_name === poolFilter)
+    : metrics;
+
   const seen = new Map<string, any>();
-  for (const m of metrics) {
+  for (const m of filtered) {
     const key = m.collected_at;
     if (seen.has(key)) {
       const g = seen.get(key)!;
@@ -155,14 +161,18 @@ function transformHistory(metrics: any[], interval: Interval): any[] {
       });
     }
   }
-  return Array.from(seen.values()).map(g => ({
-    timestamp: g.ts, tsMs: g.tsMs, read: g.read, write: g.write, iops: g.iops,
-    alloc: g.alloc, free: g.free, cpu: g.cpu / g.n, arcHit: g.arc / g.n,
-  })).sort((a, b) => a.tsMs - b.tsMs);
+  return Array.from(seen.values())
+    .map(g => ({
+      timestamp: g.ts, tsMs: g.tsMs,
+      read:  isNaN(g.read)  ? 0 : g.read,
+      write: isNaN(g.write) ? 0 : g.write,
+      iops: g.iops, alloc: g.alloc, free: g.free,
+      cpu: g.cpu / g.n, arcHit: g.arc / g.n,
+    }))
+    .filter(d => !isNaN(d.tsMs) && d.tsMs > 0)
+    .sort((a, b) => a.tsMs - b.tsMs);
 }
 
-
-// Human-readable "in ~X" countdown from free space and daily write rate
 function fmtTimeRemaining(freeGb: number, rateGbDay: string): string {
   const rate = parseFloat(rateGbDay);
   if (!rate || rate <= 0) return '–';
@@ -188,7 +198,6 @@ function fmtGrowthRate(diffGb: number, timeSec: number): string {
   return `${sign}${abs.toFixed(0)} B/s`;
 }
 
-// Format a write rate in GB/day to a human-readable string
 function fmtRateGbDay(gbPerDay: number): string {
   if (gbPerDay >= 1000) return `${(gbPerDay / 1024).toFixed(1)} TB/day`;
   if (gbPerDay >= 1)    return `${gbPerDay.toFixed(2)} GB/day`;
@@ -286,6 +295,66 @@ function SectionHeader({ label, badge }: { label: string; badge: string }) {
   );
 }
 
+/* ── Pool selector ── */
+function PoolSelector({ pools, selected, onSelect }: {
+  pools: any[];
+  selected: string;
+  onSelect: (name: string) => void;
+}) {
+  if (pools.length <= 1) return null;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20,
+      padding: '10px 16px',
+      background: 'var(--bg-surface)', border: '1px solid var(--border)',
+      borderRadius: 'var(--radius-lg)',
+    }}>
+      <span style={{
+        fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 600,
+        color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em',
+        flexShrink: 0,
+      }}>
+        Pool:
+      </span>
+      <div style={{
+        display: 'flex', background: 'var(--bg-elevated)',
+        border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+        overflow: 'hidden',
+      }}>
+        {pools.map((p: any) => {
+          const active = selected === p.name;
+          const isOnline = p.health === 'ONLINE';
+          return (
+            <button
+              key={p.name}
+              onClick={() => onSelect(p.name)}
+              style={{
+                height: 30, padding: '0 16px',
+                fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
+                letterSpacing: '0.04em',
+                background: active ? 'var(--accent-dim)' : 'transparent',
+                color: active ? 'var(--accent)' : 'var(--text-muted)',
+                cursor: 'pointer', transition: 'all 0.12s',
+                border: 'none',
+                borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+                display: 'flex', alignItems: 'center', gap: 6,
+                borderRight: '1px solid var(--border)',
+              }}
+            >
+              <span style={{
+                width: 5, height: 5, borderRadius: '50%',
+                background: isOnline ? 'var(--success)' : 'var(--danger)',
+                display: 'inline-block', flexShrink: 0,
+              }} />
+              {p.name}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 const WIDGET_LABELS: Record<string, string> = {
   'live-gauges':     'Live I/O Gauges',
   'disk-io':         'Physical Disks',
@@ -294,7 +363,7 @@ const WIDGET_LABELS: Record<string, string> = {
   'smart-health':    'SMART / Disk Health',
 };
 
-export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0, pools: poolsProp }: PerformanceProps) {
+export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0, pools: poolsProp, selectedPool, onSelectPool }: PerformanceProps) {
   const { widgets, loaded, setVisible, reorder, toast } = useLayout('performance');
   const [editMode, setEditMode]         = useState(false);
   const [dragFrom, setDragFrom]         = useState<string | null>(null);
@@ -309,6 +378,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     _setInterval(iv);
   }, []);
   const [capacityData, setCapacityData] = useState<any[]>([]);
+  const [rawMetrics, setRawMetrics]     = useState<any[]>([]);
   const [loadingCapacity, setLoadingCapacity] = useState(false);
   const [liveMode, setLiveMode]         = useState(() => localStorage.getItem('perf_live') === 'true');
   const [historyData, setHistoryData]   = useState<any[]>([]);
@@ -316,18 +386,20 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const [hidden, setHidden]             = useState<Set<string>>(new Set());
   const [smartData, setSmartData]       = useState<any[]>([]);
 
-  // Per-disk metrics: poolName → disk rows; refreshed every 1 s
   const [diskMetrics, setDiskMetrics]   = useState<Record<string, any[]>>({});
   const [diskPools, setDiskPools]       = useState<string[]>([]);
 
-  const animEnabled = localStorage.getItem('page_animations') !== 'false';
+  const multiPool = (poolsProp || []).length > 1;
+  const effectivePool = multiPool
+    ? (selectedPool && (poolsProp || []).some((p: any) => p.name === selectedPool) ? selectedPool : (poolsProp || [])[0]?.name || '')
+    : '';
+
   const liveStats = stats;
   const livePoint = liveStats.length > 0 ? liveStats[liveStats.length - 1] : null;
 
   const chartData = historyData;
   const secPerPt  = SECONDS_PER_POINT[interval];
 
-  // Live timestamps based on server time; stats are now updated every 1s
   const liveDataWithTimestamps = useMemo(() => {
     const now = Date.now() + serverTimeOffsetMs;
     const n   = liveStats.length;
@@ -345,7 +417,6 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     });
   }, [liveStats, serverTimeOffsetMs]);
 
-  // Smooth live data with 3-point rolling average
   const smoothedLiveData = useMemo(() =>
     rollingAverage(liveDataWithTimestamps, ['read', 'write', 'iops'], 3),
     [liveDataWithTimestamps]
@@ -356,26 +427,55 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     return smoothedLiveData;
   }, [liveMode, chartData, smoothedLiveData]);
 
-  // Single history fetch shared by IO chart and capacity widget; poll every 10s.
-  // When liveMode=true the IO chart uses live stream data, but capacity still needs history.
+  // Fetch history — filter client-side by pool when multiPool, then restrict to window
   useEffect(() => {
     setCapacityData([]);
+    setRawMetrics([]);
     setLoadingCapacity(true);
     if (!liveMode) { setHistoryData([]); setLoadingHistory(true); }
     const apiInterval = INTERVALS.find(i => i.key === interval)?.api ?? interval;
     const fetchHistory = () =>
       api.getMetricsHistory(apiInterval)
         .then(res => {
-          const data = transformHistory(res.metrics, interval);
-          setCapacityData(data);
-          if (!liveMode) setHistoryData(data);
+          const allMetrics: any[] = res.metrics || [];
+
+          // Log debug info for 1h to help diagnose total calculation issues
+          if (apiInterval === '1h') {
+            const cutoffMs = Date.now() - INTERVAL_MS['1h'];
+            const inWindow = allMetrics.filter((m: any) => new Date(m.collected_at).getTime() >= cutoffMs);
+            console.debug('[1h debug] raw points:', allMetrics.length, '/ in-window:', inWindow.length,
+              '/ time range:', allMetrics.length > 0 ? `${allMetrics[0].collected_at} → ${allMetrics[allMetrics.length-1].collected_at}` : 'empty');
+          }
+
+          // Pool filter applied client-side using pool_name from backend
+          const poolFilter = multiPool && effectivePool ? effectivePool : undefined;
+          const windowCutoff = Date.now() - INTERVAL_MS[interval];
+
+          // transformHistory with optional pool filter
+          const all = transformHistory(allMetrics, interval, poolFilter);
+
+          // For capacity (Pool Capacity chart), also transform without pool filter to get all-pool data
+          // but we keep it filtered by pool when multiPool
+          const capAll = transformHistory(allMetrics, interval, poolFilter);
+
+          // Restrict to the selected time window to prevent stale/out-of-window points
+          const windowed = all.filter(d => d.tsMs >= windowCutoff);
+          const capWindowed = capAll.filter(d => d.tsMs >= windowCutoff);
+
+          setRawMetrics(allMetrics);
+          setCapacityData(capWindowed);
+          if (!liveMode) setHistoryData(windowed);
         })
-        .catch(() => { setCapacityData([]); if (!liveMode) setHistoryData([]); })
+        .catch(() => {
+          setCapacityData([]);
+          setRawMetrics([]);
+          if (!liveMode) setHistoryData([]);
+        })
         .finally(() => { setLoadingCapacity(false); setLoadingHistory(false); });
     fetchHistory();
     const id = setInterval(fetchHistory, 30_000);
     return () => clearInterval(id);
-  }, [interval, liveMode]);
+  }, [interval, liveMode, multiPool, effectivePool]);
 
   useEffect(() => {
     api.getDisks().then(async res => {
@@ -393,7 +493,6 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     }).catch(() => {});
   }, []);
 
-  // Per-disk metrics every 1s; uses pool names from the prop to avoid a duplicate getPools call
   useEffect(() => {
     const names = (poolsProp || []).map((p: any) => p.name).filter(Boolean);
     if (names.length === 0) { setDiskMetrics({}); setDiskPools([]); return; }
@@ -416,58 +515,75 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   }, []);
   const vis = (key: string) => !hidden.has(key);
 
-  // Stats from chart data
-  const dispAvgR   = chartData.length ? chartData.reduce((s, d) => s + (d.read  || 0), 0) / chartData.length : 0;
-  const dispAvgW   = chartData.length ? chartData.reduce((s, d) => s + (d.write || 0), 0) / chartData.length : 0;
-  const dispTotalR = chartData.reduce((s, d) => s + (d.read  || 0) * secPerPt / 1024, 0);
-  const dispTotalW = chartData.reduce((s, d) => s + (d.write || 0) * secPerPt / 1024, 0);
+  // Windowed totals: only count points within the selected time window
+  const windowCutoffMs = Date.now() - INTERVAL_MS[interval];
+  const windowedChartData = useMemo(
+    () => chartData.filter(d => d.tsMs >= windowCutoffMs),
+    [chartData, windowCutoffMs]
+  );
 
-  const displayData   = liveMode ? smoothedLiveData : chartData;
+  const dispAvgR   = windowedChartData.length ? windowedChartData.reduce((s, d) => s + (d.read  || 0), 0) / windowedChartData.length : 0;
+  const dispAvgW   = windowedChartData.length ? windowedChartData.reduce((s, d) => s + (d.write || 0), 0) / windowedChartData.length : 0;
+  const dispTotalR = windowedChartData.reduce((s, d) => s + (d.read  || 0) * secPerPt / 1024, 0);
+  const dispTotalW = windowedChartData.reduce((s, d) => s + (d.write || 0) * secPerPt / 1024, 0);
+
+  const displayData   = liveMode ? smoothedLiveData : windowedChartData;
   const displaySecPt  = liveMode ? 5 : secPerPt;
   const dispLiveAvgR  = displayData.length ? displayData.reduce((s, d) => s + (d.read  || 0), 0) / displayData.length : 0;
   const dispLiveAvgW  = displayData.length ? displayData.reduce((s, d) => s + (d.write || 0), 0) / displayData.length : 0;
   const dispLiveTotalR = displayData.reduce((s, d) => s + (d.read  || 0) * displaySecPt / 1024, 0);
   const dispLiveTotalW = displayData.reduce((s, d) => s + (d.write || 0) * displaySecPt / 1024, 0);
 
-  // Pool Capacity chart: use exactly the same fields Dashboard uses.
-  // Dashboard "Used Storage"    → pools[].used_bytes      (from `zfs get used`,      via /api/v1/pools)
-  // Dashboard "Available Space" → pools[].available_bytes (from `zfs get available`, via /api/v1/pools)
-  // The zfs_metrics table stores raw zpool physical alloc/free which can differ significantly
-  // (e.g. RAIDZ physical alloc 28 TB vs logical used 8 TB). Reading from pools prop ensures
-  // Pool Capacity shows the same values as Dashboard with no additional API calls.
+  // Pool Capacity chart: per-pool when multiPool, otherwise aggregate
+  const selPoolProp = multiPool && effectivePool
+    ? (poolsProp || []).find((p: any) => p.name === effectivePool)
+    : null;
+
   const correctedCapacityData = useMemo(() => {
-    const totalUsedGb  = (poolsProp || []).reduce((s: number, p: any) => s + (p.used_bytes      || 0), 0) / 1_073_741_824;
-    const totalAvailGb = (poolsProp || []).reduce((s: number, p: any) => s + (p.available_bytes || 0), 0) / 1_073_741_824;
+    const totalUsedGb  = selPoolProp
+      ? (selPoolProp.used_bytes      || 0) / 1_073_741_824
+      : (poolsProp || []).reduce((s: number, p: any) => s + (p.used_bytes      || 0), 0) / 1_073_741_824;
+    const totalAvailGb = selPoolProp
+      ? (selPoolProp.available_bytes || 0) / 1_073_741_824
+      : (poolsProp || []).reduce((s: number, p: any) => s + (p.available_bytes || 0), 0) / 1_073_741_824;
     if ((totalUsedGb <= 0 && totalAvailGb <= 0) || capacityData.length === 0) return capacityData;
     return capacityData.map((d: any) => ({
       ...d,
-      alloc: totalUsedGb,   // pools[].used_bytes      — Dashboard "Used Storage"
-      free:  totalAvailGb,  // pools[].available_bytes — Dashboard "Available Space"
+      alloc: totalUsedGb,
+      free:  totalAvailGb,
     }));
-  }, [capacityData, (poolsProp || []).map((p: any) => `${p.available_bytes},${p.used_bytes}`).join('|')]);
+  }, [capacityData, selPoolProp?.available_bytes, selPoolProp?.used_bytes,
+      (poolsProp || []).map((p: any) => `${p.available_bytes},${p.used_bytes}`).join('|')]);
 
-  // Compute scales for charts
   const ioMaxMB = ioDisplayData.reduce((m, d) => Math.max(m, d.read || 0, d.write || 0), 0.01);
   const bwScale = getBwScale(ioMaxMB);
-  const storageMaxGB = chartData.reduce((m, d) => Math.max(m, d.alloc || 0, d.free || 0), 0.01);
+  const storageMaxGB = capacityData.reduce((m, d) => Math.max(m, d.alloc || 0, d.free || 0), 0.01);
   const gbScale = getGbScale(storageMaxGB);
 
-  // Live values: use last smoothed live point to match chart in live mode
   const lastLivePoint = smoothedLiveData.length > 0 ? smoothedLiveData[smoothedLiveData.length - 1] : null;
-  const ioReadBw  = liveMode && lastLivePoint ? lastLivePoint.read  : (liveMetrics?.read_bw_mb  ?? livePoint?.read  ?? 0);
-  const ioWriteBw = liveMode && lastLivePoint ? lastLivePoint.write : (liveMetrics?.write_bw_mb ?? livePoint?.write ?? 0);
-  const ioReadIops  = liveMetrics?.read_iops  ?? livePoint?.readIops  ?? 0;
-  const ioWriteIops = liveMetrics?.write_iops ?? livePoint?.writeIops ?? 0;
 
-  // Peak from session data
+  // Per-pool live metrics from disk sums; fall back to system-wide liveMetrics
+  const selDiskRows = multiPool && effectivePool ? (diskMetrics[effectivePool] || []) : [];
+  const poolDiskReadBw  = selDiskRows.reduce((s: number, d: any) => s + (d.read_bw_mb  || 0), 0);
+  const poolDiskWriteBw = selDiskRows.reduce((s: number, d: any) => s + (d.write_bw_mb || 0), 0);
+  const poolDiskReadIops  = selDiskRows.reduce((s: number, d: any) => s + (d.read_iops  || 0), 0);
+  const poolDiskWriteIops = selDiskRows.reduce((s: number, d: any) => s + (d.write_iops || 0), 0);
+
+  const ioReadBw  = multiPool && selDiskRows.length > 0
+    ? poolDiskReadBw
+    : (liveMode && lastLivePoint ? lastLivePoint.read  : (liveMetrics?.read_bw_mb  ?? livePoint?.read  ?? 0));
+  const ioWriteBw = multiPool && selDiskRows.length > 0
+    ? poolDiskWriteBw
+    : (liveMode && lastLivePoint ? lastLivePoint.write : (liveMetrics?.write_bw_mb ?? livePoint?.write ?? 0));
+  const ioReadIops  = multiPool && selDiskRows.length > 0 ? poolDiskReadIops  : (liveMetrics?.read_iops  ?? livePoint?.readIops  ?? 0);
+  const ioWriteIops = multiPool && selDiskRows.length > 0 ? poolDiskWriteIops : (liveMetrics?.write_iops ?? livePoint?.writeIops ?? 0);
+
   const livePeakR = liveStats.reduce((m, d) => Math.max(m, d.read  || 0), 0);
   const livePeakW = liveStats.reduce((m, d) => Math.max(m, d.write || 0), 0);
 
-  // DB totals: backend returns cumulative MB counters, convert to GB
   const totalReadGB  = (liveMetrics?.total_read_mb  ?? 0) / 1024;
   const totalWriteGB = (liveMetrics?.total_write_mb ?? 0) / 1024;
 
-  // XAxis config
   const nowMs = Date.now();
   const histXDomain: [number, number] = [nowMs - INTERVAL_MS[interval], nowMs];
   const histXTicks = getXTicks(interval, nowMs);
@@ -490,6 +606,9 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     axisLine: false, tickLine: false, tick: AXIS_TICK, minTickGap: 30,
   };
 
+  // Disk pools filtered by selected pool when multiPool
+  const selDiskPools = multiPool && effectivePool ? [effectivePool] : diskPools;
+
   const handleDragStart = useCallback((id: string) => setDragFrom(id), []);
   const handleDragOver  = useCallback((id: string) => setDragOver(id), []);
   const handleDrop      = useCallback((toId: string) => {
@@ -503,7 +622,6 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const renderWidget = (id: string): React.ReactNode => {
     switch (id) {
       case 'live-gauges': {
-        // Format DB totals
         const fmtTotal = (gb: number) => {
           if (gb >= 1000) return { value: (gb / 1024).toFixed(2), unit: 'TB' };
           if (gb >= 1)    return { value: gb.toFixed(2),          unit: 'GB' };
@@ -514,7 +632,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         const totalWrite = fmtTotal(totalWriteGB);
         return (
           <div>
-            <SectionHeader label="Live I/O" badge="1 s" />
+            <SectionHeader label={multiPool ? `Live I/O · ${effectivePool}` : 'Live I/O'} badge="1 s" />
             <div className="perf-stats-grid">
               <GaugeCard
                 label="↑ Read Speed"
@@ -563,21 +681,21 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
 
       case 'disk-io':
         return (
-          <Panel title="Physical Disks" sub="Per-disk I/O · 1 s refresh">
-            <PhysicalDisksTable diskPools={diskPools} diskMetrics={diskMetrics} />
+          <Panel title="Physical Disks" sub={`Per-disk I/O · 1 s refresh${multiPool ? ` · ${effectivePool}` : ''}`}>
+            <PhysicalDisksTable diskPools={selDiskPools} diskMetrics={diskMetrics} />
           </Panel>
         );
 
       case 'io-chart': {
         const ioNowMs = Date.now();
         const ioChartData = (() => {
-          if (liveMode || chartData.length === 0) return ioDisplayData;
-          const last = chartData[chartData.length - 1];
+          if (liveMode || windowedChartData.length === 0) return ioDisplayData;
+          const last = windowedChartData[windowedChartData.length - 1];
           const ageSec = (ioNowMs - (last.tsMs || 0)) / 1000;
           if (ageSec > 60) {
-            return [...chartData, { ...last, tsMs: ioNowMs }];
+            return [...windowedChartData, { ...last, tsMs: ioNowMs }];
           }
-          return chartData;
+          return windowedChartData;
         })();
         return (
           <div>
@@ -632,7 +750,8 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
 
               {!liveMode && (
                 <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                  {chartData.length} pts · {secPerPt}s/sample
+                  {windowedChartData.length} pts · {secPerPt}s/sample
+                  {multiPool && effectivePool && ` · ${effectivePool}`}
                 </span>
               )}
             </div>
@@ -647,7 +766,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
             ) : (
               <Panel
                 title="Read / Write Throughput"
-                sub={liveMode ? 'Real-time · live session' : `${ioDisplayData.length} of ${chartData.length} samples`}
+                sub={liveMode ? 'Real-time · live session' : `${windowedChartData.length} samples · ${getIntervalLabel(interval)}`}
                 right={
                   <div style={{ display: 'flex', gap: 6 }}>
                     <Toggle color={C.read}  label="↑ Read"  active={vis('read')}  onClick={() => toggle('read')}  />
@@ -671,13 +790,13 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
-                {/* Stats below chart */}
+                {/* Windowed totals below chart — only counts data within the selected time window */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginTop: 12, padding: '12px 0', borderTop: '1px solid var(--border-subtle)' }}>
                   {[
-                    { label: 'Avg Read',   value: fmtBw(liveMode ? dispLiveAvgR  : dispAvgR)  },
-                    { label: 'Avg Write',  value: fmtBw(liveMode ? dispLiveAvgW  : dispAvgW)  },
-                    { label: 'Total Read',  value: fmtGB(liveMode ? dispLiveTotalR : dispTotalR) },
-                    { label: 'Total Write', value: fmtGB(liveMode ? dispLiveTotalW : dispTotalW) },
+                    { label: 'Avg Read',    value: fmtBw(liveMode ? dispLiveAvgR  : dispAvgR)  },
+                    { label: 'Avg Write',   value: fmtBw(liveMode ? dispLiveAvgW  : dispAvgW)  },
+                    { label: `Total Read`,  value: fmtGB(liveMode ? dispLiveTotalR : dispTotalR) },
+                    { label: `Total Write`, value: fmtGB(liveMode ? dispLiveTotalW : dispTotalW) },
                   ].map(s => (
                     <div key={s.label}>
                       <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>{s.label}</div>
@@ -695,9 +814,6 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         const capNowMs = Date.now();
         const capWindowStart = capNowMs - INTERVAL_MS[interval];
 
-        // Build display data: extend the lines flat to "now" so the chart always fills
-        // the full time window. If the last real point is >60s old, append a synthetic
-        // point at tsMs=now with the last known alloc/free values.
         const capDisplayData = (() => {
           if (correctedCapacityData.length === 0) return correctedCapacityData;
           const last = correctedCapacityData[correctedCapacityData.length - 1];
@@ -720,8 +836,6 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
           axisLine: false, tickLine: false, tick: AXIS_TICK, minTickGap: 30,
         };
 
-        // Compute forecast from capacity data for the selected interval:
-        // avgWriteMbPerSec → GB/day → daysUntilFull = freeGb / gbPerDay
         const lastFreeGb = correctedCapacityData.length > 0 ? (correctedCapacityData[correctedCapacityData.length - 1].free || 0) : 0;
         const avgWriteMbPerSec = capacityData.length > 0
           ? capacityData.reduce((s, d) => s + (d.write || 0), 0) / capacityData.length
@@ -746,7 +860,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         return (
           <Panel
             title="Pool Capacity"
-            sub={`Allocation trends · ${getIntervalLabel(interval)}`}
+            sub={`Allocation trends · ${getIntervalLabel(interval)}${multiPool && effectivePool ? ` · ${effectivePool}` : ''}`}
             right={
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <Toggle color={C.alloc} label="Used" active={vis('alloc')} onClick={() => toggle('alloc')} />
@@ -769,7 +883,6 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
               )}
             </div>
 
-            {/* Forecast line pinned to bottom of card */}
             <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
               <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Forecast:</span>
               {forecastDateStr && forecastTimeStr ? (
@@ -831,7 +944,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   return (
     <PageTransition>
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: multiPool ? 16 : 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.01em' }}>System Performance</h1>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-secondary" onClick={() => setEditMode(!editMode)}>
@@ -840,6 +953,11 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
           </button>
         </div>
       </div>
+
+      {/* Pool selector — only when multiple pools exist */}
+      {multiPool && onSelectPool && (
+        <PoolSelector pools={poolsProp || []} selected={effectivePool} onSelect={onSelectPool} />
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
         {widgets.filter(w => w.visible).map(w => (
