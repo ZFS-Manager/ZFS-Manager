@@ -1393,6 +1393,10 @@ function SettingsPopout({
                               setDestroying(true);
                               try {
                                 await api.destroyPool(poolName);
+                                // Pre-warm the disk cache: backend already ran labelclear+wipefs
+                                // and busted the Redis key; this call re-populates it with
+                                // clean state so any picker that opens next gets in_use:false.
+                                api.getEnrichedDisks().catch(() => {});
                                 onSaved();
                                 close();
                               } catch (err: any) {

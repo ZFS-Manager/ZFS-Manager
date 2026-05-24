@@ -339,9 +339,16 @@ async fn destroy_pool(
 
     executor::zpool(&["destroy", &name]).await?;
 
-    // Wipe ZFS labels so disks appear free immediately in the next enumeration
+    // Wipe all ZFS labels AND partition signatures so disks appear free immediately.
+    // labelclear removes ZFS super-blocks; wipefs clears the GPT/MBR table that
+    // OpenZFS creates on whole-disk vdevs — otherwise lsblk still shows children
+    // and list_enriched_disks returns in_use:true.
     for disk in &disk_paths {
         let _ = executor::zpool(&["labelclear", "-f", disk]).await;
+        let _ = tokio::process::Command::new("wipefs")
+            .args(["-a", disk])
+            .output()
+            .await;
     }
 
     // Bust caches so disks immediately appear free and the pool list is stale
