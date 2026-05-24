@@ -394,6 +394,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
 
   const [diskMetrics, setDiskMetrics]   = useState<Record<string, any[]>>({});
   const [diskPools, setDiskPools]       = useState<string[]>([]);
+  const [poolVdevs, setPoolVdevs]       = useState<Record<string, any[]>>({});
 
   const multiPool = (poolsProp || []).length > 1;
   const effectivePool = multiPool
@@ -513,6 +514,22 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     };
     fetchDisks();
     const id = setInterval(fetchDisks, 1_000);
+    return () => clearInterval(id);
+  }, [(poolsProp || []).map((p: any) => p.name).join(',')]);
+
+  // Fetch vdev topology for disk health status
+  useEffect(() => {
+    const names = (poolsProp || []).map((p: any) => p.name).filter(Boolean);
+    if (names.length === 0) return;
+    const fetchVdevs = () => {
+      names.forEach((name: string) => {
+        api.getPoolVdevs(name)
+          .then(res => setPoolVdevs(prev => ({ ...prev, [name]: res.vdevs || [] })))
+          .catch(() => {});
+      });
+    };
+    fetchVdevs();
+    const id = setInterval(fetchVdevs, 10_000);
     return () => clearInterval(id);
   }, [(poolsProp || []).map((p: any) => p.name).join(',')]);
 
@@ -701,7 +718,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
       case 'disk-io':
         return (
           <Panel title="Physical Disks" sub={`Per-disk I/O · 1 s refresh${multiPool ? ` · ${effectivePool}` : ''}`}>
-            <PhysicalDisksTable diskPools={selDiskPools} diskMetrics={diskMetrics} />
+            <PhysicalDisksTable diskPools={selDiskPools} diskMetrics={diskMetrics} poolVdevs={poolVdevs} />
           </Panel>
         );
 
