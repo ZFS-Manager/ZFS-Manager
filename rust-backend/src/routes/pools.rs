@@ -528,6 +528,7 @@ const ZPOOL_PROPS: &[&str] = &["autoreplace", "autotrim", "autoexpand", "failmod
 const ZFS_PROPS:   &[&str] = &[
     "compression", "atime", "relatime", "dedup", "recordsize",
     "xattr", "quota", "reservation", "snapdir", "sync",
+    "zfsmanager:scrub_schedule",
 ];
 
 fn validate_pool_setting(prop: &str, value: &str) -> Result<(), ApiError> {
@@ -581,6 +582,11 @@ fn validate_pool_setting(prop: &str, value: &str) -> Result<(), ApiError> {
             }
         }
         "comment" => {} // free text, no validation needed
+        "zfsmanager:scrub_schedule" => {
+            if value != "off" && serde_json::from_str::<serde_json::Value>(value).is_err() {
+                return Err(ApiError::BadRequest("zfsmanager:scrub_schedule must be valid JSON or 'off'".into()));
+            }
+        }
         _ => return Err(ApiError::BadRequest(format!("Unknown property: {prop}"))),
     }
     Ok(())
@@ -592,7 +598,7 @@ async fn get_pool_settings(Path(name): Path<String>) -> Result<Json<Value>, ApiE
     let pool_props_raw = executor::zpool(&["get", "-H", "autoreplace,autotrim,autoexpand,failmode,comment", &name])
         .await
         .unwrap_or_default();
-    let ds_props_raw = executor::zfs(&["get", "-H", "compression,atime,relatime,dedup,recordsize,xattr,quota,reservation,snapdir,sync", &name])
+    let ds_props_raw = executor::zfs(&["get", "-H", "compression,atime,relatime,dedup,recordsize,xattr,quota,reservation,snapdir,sync,zfsmanager:scrub_schedule", &name])
         .await
         .unwrap_or_default();
 
