@@ -629,57 +629,63 @@ async fn expand_pool(
             let parsed_vdevs = parse_vdev_config(&raw_status);
             
             if let Some(target) = target_vdev_opt {
-                // Perform expansion on user-specified target vdev (RAIDZ or Mirror attach)
-                for disk in &all_disks {
-                    let mut args = vec!["attach".to_string()];
-                    if body.force { args.push("-f".to_string()); }
-                    args.push(name.clone());
-                    args.push(target.to_string());
-                    args.push(disk.clone());
-                    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-                    executor::zpool(&refs).await?;
-                }
-                return Ok(Json(json!({ "message": format!("{} disk(s) attached to vdev '{}' in pool '{}'", all_disks.len(), target, name) })));
-            }
-            
-            // Filter out cache, log, spare, etc. Just get data vdevs
-            let data_vdevs: Vec<&Value> = parsed_vdevs.iter().filter(|v| {
-                if let Some(t) = v["type"].as_str() {
-                    !["log", "cache", "spare"].contains(&t)
+                if target == "STRIPE_NEW" {
+                    // User explicitly requested to create a new vdev. Skip auto-detect and let it fall through to zpool add.
                 } else {
-                    false
+                    // Perform expansion on user-specified target vdev (RAIDZ or Mirror attach)
+                    for disk in &all_disks {
+                        let mut args = vec!["attach".to_string()];
+                        if body.force { args.push("-f".to_string()); }
+                        args.push(name.clone());
+                        args.push(target.to_string());
+                        args.push(disk.clone());
+                        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                        executor::zpool(&refs).await?;
+                    }
+                    return Ok(Json(json!({ "message": format!("{} disk(s) attached to vdev '{}' in pool '{}'", all_disks.len(), target, name) })));
                 }
-            }).collect();
+            } else {
+                // Filter out cache, log, spare, etc. Just get data vdevs
+                let data_vdevs: Vec<&Value> = parsed_vdevs.iter().filter(|v| {
+                    if let Some(t) = v["type"].as_str() {
+                        !["log", "cache", "spare"].contains(&t)
+                    } else {
+                        false
+                    }
+                }).collect();
 
-            // Check if there is EXACTLY ONE data vdev and it's a raidz
-            if data_vdevs.len() == 1 {
-                let vdev = data_vdevs[0];
-                if let Some(vtype) = vdev["type"].as_str() {
-                    if vtype.starts_with("raidz") {
-                        if let Some(vdev_name) = vdev["name"].as_str() {
-                            if !vdev_name.is_empty() {
-                                // Perform RAIDZ expansion using zpool attach
-                                for disk in &all_disks {
-                                    let mut args = vec!["attach".to_string()];
-                                    if body.force { args.push("-f".to_string()); }
-                                    args.push(name.clone());
-                                    args.push(vdev_name.to_string());
-                                    args.push(disk.clone());
-                                    
-                                    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-                                    executor::zpool(&refs).await?;
+                // Check if there is EXACTLY ONE data vdev and it's a raidz
+                if data_vdevs.len() == 1 {
+                    let vdev = data_vdevs[0];
+                    if let Some(vtype) = vdev["type"].as_str() {
+                        if vtype.starts_with("raidz") {
+                            if let Some(vdev_name) = vdev["name"].as_str() {
+                                if !vdev_name.is_empty() {
+                                    // Perform RAIDZ expansion using zpool attach
+                                    for disk in &all_disks {
+                                        let mut args = vec!["attach".to_string()];
+                                        if body.force { args.push("-f".to_string()); }
+                                        args.push(name.clone());
+                                        args.push(vdev_name.to_string());
+                                        args.push(disk.clone());
+                                        
+                                        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                                        executor::zpool(&refs).await?;
+                                    }
+                                    return Ok(Json(json!({ "message": format!("{} disk(s) attached to RAIDZ vdev '{}' in pool '{}'", all_disks.len(), vdev_name, name) })));
                                 }
-                                return Ok(Json(json!({ "message": format!("{} disk(s) attached to RAIDZ vdev '{}' in pool '{}'", all_disks.len(), vdev_name, name) })));
                             }
                         }
                     }
+                } else if data_vdevs.iter().any(|v| v["type"].as_str().unwrap_or("").starts_with("raidz")) {
+                    // There are multiple vdevs and at least one is raidz. Refuse automatic expansion to prevent mistakes.
+                    return Err(ApiError::BadRequest(
+                        "Multiple data vdevs detected including RAIDZ. Automatic expansion requires exactly one RAIDZ vdev. Please specify target vdev manually (not yet supported via UI).".into()
+                    ));
                 }
-            } else if data_vdevs.iter().any(|v| v["type"].as_str().unwrap_or("").starts_with("raidz")) {
-                // There are multiple vdevs and at least one is raidz. Refuse automatic expansion to prevent mistakes.
-                return Err(ApiError::BadRequest(
-                    "Multiple data vdevs detected including RAIDZ. Automatic expansion requires exactly one RAIDZ vdev. Please specify target vdev manually (not yet supported via UI).".into()
-                ));
             }
+
+
         }
     }
 

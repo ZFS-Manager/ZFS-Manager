@@ -619,13 +619,12 @@ function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
   const [disk, setDisk]           = useState('');
   
   const dataVdevs = poolVdevs.filter((v: any) => !['log', 'cache', 'spare'].includes(v.type));
-  // If there's exactly one data vdev, we can just leave it empty (backend auto-detects) or explicitly set it.
-  // We'll provide a dropdown if dataVdevs.length > 0.
-  const [targetVdev, setTargetVdev] = useState('');
+  const [expandMode, setExpandMode] = useState<'new' | 'attach'>(dataVdevs.length > 0 ? 'attach' : 'new');
+  const [targetVdev, setTargetVdev] = useState(dataVdevs.length > 0 ? (dataVdevs[0].name || '') : '');
 
   const ready = disk.trim() !== '';
 
-  const isAttach = mode === 'extend' && targetVdev !== '';
+  const isAttach = mode === 'extend' && expandMode === 'attach' && targetVdev !== '';
 
   const cmdPreview = mode === 'cache'
     ? `zpool add ${poolName} cache ${disk || '<disk>'}`
@@ -640,7 +639,8 @@ function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
       if (mode === 'cache') {
         await api.expandPool(poolName, [disk], 'cache', false);
       } else {
-        await api.expandPool(poolName, [disk], undefined, true, targetVdev);
+        const actualTarget = (expandMode === 'attach' && targetVdev) ? targetVdev : 'STRIPE_NEW';
+        await api.expandPool(poolName, [disk], undefined, true, actualTarget);
       }
       onSuccess();
     }
@@ -693,20 +693,43 @@ function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
           </div>
 
           {mode === 'extend' && dataVdevs.length > 0 && (
-            <div>
-              <label style={S.modal.label}>Target VDEV</label>
-              <select 
-                style={S.modal.select} 
-                value={targetVdev} 
-                onChange={e => setTargetVdev(e.target.value)}
-              >
-                <option value="">Auto-detect / Add as new VDEV</option>
-                {dataVdevs.map(v => (
-                  <option key={v.name || v.type} value={v.name}>
-                    Attach to {v.name || v.type} ({v.type})
-                  </option>
-                ))}
-              </select>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <label style={S.modal.label}>Extend Strategy for {poolName}</label>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input type="radio" name="expandMode" checked={expandMode === 'new'} onChange={() => { setExpandMode('new'); }} style={{ margin: 0 }} />
+                  <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>Create new VDEV</span>
+                </label>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', paddingLeft: 21 }}>
+                  Adds the disk as a new, standalone Stripe VDEV to the pool using <code style={{ fontFamily: 'var(--font-mono)' }}>zpool add</code>.
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input type="radio" name="expandMode" checked={expandMode === 'attach'} onChange={() => { setExpandMode('attach'); if(!targetVdev) setTargetVdev(dataVdevs[0].name || ''); }} style={{ margin: 0 }} />
+                  <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>Expand existing VDEV (Attach)</span>
+                </label>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', paddingLeft: 21, marginBottom: expandMode === 'attach' ? 6 : 0 }}>
+                  Expands the capacity of an existing RAIDZ VDEV by attaching the disk to it using <code style={{ fontFamily: 'var(--font-mono)' }}>zpool attach</code>.
+                </div>
+                {expandMode === 'attach' && (
+                  <div style={{ paddingLeft: 21 }}>
+                    <select 
+                      style={{ ...S.modal.select, width: '100%' }} 
+                      value={targetVdev} 
+                      onChange={e => setTargetVdev(e.target.value)}
+                    >
+                      {dataVdevs.map(v => (
+                        <option key={v.name || v.type} value={v.name}>
+                          {v.name || v.type} ({v.type})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
