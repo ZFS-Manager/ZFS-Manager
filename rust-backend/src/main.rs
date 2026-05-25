@@ -270,6 +270,32 @@ async fn seed_admin_user(client: &tokio_postgres::Client, api_key: &str) {
     }
 }
 
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    info!("Received termination signal, starting graceful shutdown...");
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::registry()
@@ -482,5 +508,8 @@ async fn main() {
         info!("API Key is NOT set. API is accessible to everyone.");
     }
 
-    axum::serve(listener, app).await.expect("Server error");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .expect("Server error");
 }

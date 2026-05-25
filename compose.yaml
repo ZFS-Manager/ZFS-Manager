@@ -33,6 +33,7 @@ services:
     image: ghcr.io/zfs-manager/zfs-manager-backend
     container_name: zfs-backend
     restart: unless-stopped
+    stop_signal: SIGINT
     ports:
       - "${ZFS_BACKEND_PORT:-3000}:3000"
     environment:
@@ -62,6 +63,7 @@ services:
     restart: unless-stopped
     ports:
       - "${ZFS_WEB_PORT:-8080}:80"
+    stop_signal: SIGQUIT
     command: >
       sh -c "
         echo '🚀 Starting Web Container Diagnostic...' &&
@@ -69,7 +71,7 @@ services:
         sed -i 's/admin123/${ZFS_API_KEY:-admin123}/g' /usr/share/nginx/html/assets/*.js &&
         echo '  ✅ Injection: API Key replacement finished' &&
         echo '🏁 Web Diagnostic finished. Starting Nginx...' &&
-        nginx -g 'daemon off;'
+        exec nginx -g 'daemon off;'
       "
     depends_on:
       - zfs-backend
