@@ -168,23 +168,38 @@ fn parse_human_size(s: &str) -> f64 {
 }
 
 fn parse_scan_progress(detail: &str) -> f64 {
+    // Try to find "% done" (e.g., "0.00% done" or "14.5% done")
+    if let Some(idx) = detail.find("% done") {
+        let before = &detail[..idx];
+        let num_str = before.split_whitespace().last().unwrap_or("0");
+        if let Ok(val) = num_str.parse::<f64>() {
+            return val;
+        }
+    }
+    
+    // Fallback to older ZFS format "scanned out of"
     if let Some(oo_idx) = detail.find("scanned out of") {
         let scanned = detail[..oo_idx].split_whitespace().last().unwrap_or("0");
         let rest    = &detail[oo_idx + "scanned out of".len()..];
         let total   = rest.split_whitespace().next().unwrap_or("0");
         let s = parse_human_size(scanned);
         let t = parse_human_size(total);
-        if t > 0.0 { (s / t * 100.0).min(99.5) } else { 0.0 }
-    } else { 0.0 }
+        if t > 0.0 { return (s / t * 100.0).min(99.5); }
+    }
+    
+    0.0
 }
 
 fn extract_time_remaining(detail: &str) -> String {
-    detail.find(" to go")
-        .map(|idx| {
-            let before = &detail[..idx];
-            before.rsplit(", ").next().unwrap_or("").to_string()
-        })
-        .unwrap_or_default()
+    // Looks for " to go" in the entire raw output, e.g., "1 days 00:25:45 to go"
+    if let Some(idx) = detail.find(" to go") {
+        let before = &detail[..idx];
+        // before ends with something like "0B repaired, 0.00% done, 1 days 00:25:45"
+        if let Some(time_part) = before.rsplit(", ").next() {
+            return time_part.to_string();
+        }
+    }
+    String::new()
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -440,9 +455,17 @@ async fn scrub_status(Path(name): Path<String>) -> Result<Json<Value>, ApiError>
     for (i, line) in lines.iter().enumerate() {
         if line.trim_start().starts_with("scan:") {
             scan_line = line.trim().to_string();
-            if let Some(next) = lines.get(i + 1) {
+            let mut j = i + 1;
+            while j < lines.len() {
+                let next = lines[j];
                 if next.starts_with('\t') || next.starts_with("  ") {
-                    scan_detail = next.trim().to_string();
+                    if !scan_detail.is_empty() {
+                        scan_detail.push_str(" ");
+                    }
+                    scan_detail.push_str(next.trim());
+                    j += 1;
+                } else {
+                    break;
                 }
             }
             break;
