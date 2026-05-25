@@ -92,6 +92,7 @@ fn parse_vdev_config(status_output: &str) -> Vec<Value> {
 
     let mut vdevs: Vec<Value> = Vec::new();
     let mut cur_type  = String::new();
+    let mut cur_name  = String::new();
     let mut cur_disks: Vec<Value> = Vec::new();
     let mut in_vdev   = false;
     let mut past_pool = false;
@@ -120,17 +121,19 @@ fn parse_vdev_config(status_output: &str) -> Vec<Value> {
             2 => {
                 // Flush previous vdev group
                 if in_vdev && !cur_disks.is_empty() {
-                    vdevs.push(json!({ "type": cur_type, "disks": cur_disks.clone() }));
+                    vdevs.push(json!({ "name": cur_name, "type": cur_type, "disks": cur_disks.clone() }));
                 }
                 cur_disks = Vec::new();
 
                 let vtype = classify_vdev(name);
                 if vtype == "stripe" {
-                    vdevs.push(json!({ "type": "stripe", "disks": [{"path": name, "state": state}] }));
+                    vdevs.push(json!({ "name": name, "type": "stripe", "disks": [{"path": name, "state": state}] }));
                     in_vdev    = false;
                     cur_type   = String::new();
+                    cur_name   = String::new();
                 } else {
                     cur_type = vtype.to_string();
+                    cur_name = name.to_string();
                     in_vdev  = true;
                 }
             }
@@ -141,7 +144,7 @@ fn parse_vdev_config(status_output: &str) -> Vec<Value> {
         }
     }
     if in_vdev && !cur_disks.is_empty() {
-        vdevs.push(json!({ "type": cur_type, "disks": cur_disks }));
+        vdevs.push(json!({ "name": cur_name, "type": cur_type, "disks": cur_disks }));
     }
     vdevs
 }
@@ -610,6 +613,57 @@ async fn expand_pool(
 
     if all_disks.is_empty() {
         return Err(ApiError::BadRequest("'disk' or 'disks' is required".into()));
+    }
+
+    let is_capacity_expansion = match &body.vdev_type {
+        Some(vt) => vt.trim().is_empty() || vt.trim() == "stripe",
+        None => true,
+    };
+
+    if is_capacity_expansion {
+        // We are doing capacity expansion. Check pool topology for RAIDZ.
+        if let Ok(raw_status) = executor::zpool(&["status", "-v", &name]).await {
+            let parsed_vdevs = parse_vdev_config(&raw_status);
+            
+            // Filter out cache, log, spare, etc. Just get data vdevs
+            let data_vdevs: Vec<&Value> = parsed_vdevs.iter().filter(|v| {
+                if let Some(t) = v["type"].as_str() {
+                    !["log", "cache", "spare"].contains(&t)
+                } else {
+                    false
+                }
+            }).collect();
+
+            // Check if there is EXACTLY ONE data vdev and it's a raidz
+            if data_vdevs.len() == 1 {
+                let vdev = data_vdevs[0];
+                if let Some(vtype) = vdev["type"].as_str() {
+                    if vtype.starts_with("raidz") {
+                        if let Some(vdev_name) = vdev["name"].as_str() {
+                            if !vdev_name.is_empty() {
+                                // Perform RAIDZ expansion using zpool attach
+                                for disk in &all_disks {
+                                    let mut args = vec!["attach".to_string()];
+                                    if body.force { args.push("-f".to_string()); }
+                                    args.push(name.clone());
+                                    args.push(vdev_name.to_string());
+                                    args.push(disk.clone());
+                                    
+                                    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                                    executor::zpool(&refs).await?;
+                                }
+                                return Ok(Json(json!({ "message": format!("{} disk(s) attached to RAIDZ vdev '{}' in pool '{}'", all_disks.len(), vdev_name, name) })));
+                            }
+                        }
+                    }
+                }
+            } else if data_vdevs.iter().any(|v| v["type"].as_str().unwrap_or("").starts_with("raidz")) {
+                // There are multiple vdevs and at least one is raidz. Refuse automatic expansion to prevent mistakes.
+                return Err(ApiError::BadRequest(
+                    "Multiple data vdevs detected including RAIDZ. Automatic expansion requires exactly one RAIDZ vdev. Please specify target vdev manually (not yet supported via UI).".into()
+                ));
+            }
+        }
     }
 
     let mut args = vec!["add".to_string()];
