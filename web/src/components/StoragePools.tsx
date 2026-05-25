@@ -607,8 +607,9 @@ function ImportPoolModal({ onClose, onSuccess }: { onClose: () => void; onSucces
 }
 
 /* ── Expand Pool Modal ────────────────────────────────────────────────────────── */
-function ExpandPoolModal({ poolName, onClose, onSuccess }: {
+function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
   poolName: string;
+  poolVdevs: any[];
   onClose: () => void;
   onSuccess: () => void;
 }) {
@@ -616,12 +617,21 @@ function ExpandPoolModal({ poolName, onClose, onSuccess }: {
   const [error, setError]         = useState('');
   const [mode, setMode]           = useState<'extend' | 'cache'>('extend');
   const [disk, setDisk]           = useState('');
+  
+  const dataVdevs = poolVdevs.filter((v: any) => !['log', 'cache', 'spare'].includes(v.type));
+  // If there's exactly one data vdev, we can just leave it empty (backend auto-detects) or explicitly set it.
+  // We'll provide a dropdown if dataVdevs.length > 0.
+  const [targetVdev, setTargetVdev] = useState('');
 
   const ready = disk.trim() !== '';
 
+  const isAttach = mode === 'extend' && targetVdev !== '';
+
   const cmdPreview = mode === 'cache'
     ? `zpool add ${poolName} cache ${disk || '<disk>'}`
-    : `zpool add -f ${poolName} ${disk || '<disk>'}`;
+    : isAttach
+      ? `zpool attach -f ${poolName} ${targetVdev} ${disk || '<disk>'}`
+      : `zpool add -f ${poolName} ${disk || '<disk>'}`;
 
   const handleExpand = async () => {
     if (!ready) { setError('Select a disk to continue'); return; }
@@ -630,7 +640,7 @@ function ExpandPoolModal({ poolName, onClose, onSuccess }: {
       if (mode === 'cache') {
         await api.expandPool(poolName, [disk], 'cache', false);
       } else {
-        await api.expandPool(poolName, [disk], undefined, true);
+        await api.expandPool(poolName, [disk], undefined, true, targetVdev);
       }
       onSuccess();
     }
@@ -677,10 +687,28 @@ function ExpandPoolModal({ poolName, onClose, onSuccess }: {
             <AlertTriangle size={13} style={{ color: 'var(--info)', marginTop: 1, flexShrink: 0 }} />
             <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', lineHeight: 1.5 }}>
               {mode === 'extend'
-                ? <>Adds one disk as a new vdev using <code style={{ fontFamily: 'var(--font-mono)' }}>zpool add -f</code>. Mix sizes with caution.</>
+                ? <>Expand your pool by adding a new vdev or attaching to an existing one (e.g. RAIDZ Expansion).</>
                 : <>Adds one disk as an <strong>L2ARC cache</strong> to accelerate read performance.</>}
             </span>
           </div>
+
+          {mode === 'extend' && dataVdevs.length > 0 && (
+            <div>
+              <label style={S.modal.label}>Target VDEV</label>
+              <select 
+                style={S.modal.select} 
+                value={targetVdev} 
+                onChange={e => setTargetVdev(e.target.value)}
+              >
+                <option value="">Auto-detect / Add as new VDEV</option>
+                {dataVdevs.map(v => (
+                  <option key={v.name || v.type} value={v.name}>
+                    Attach to {v.name || v.type} ({v.type})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Disk label */}
           <label style={S.modal.label}>Select disk</label>
@@ -1619,6 +1647,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
       {expandTarget && (
         <ExpandPoolModal
           poolName={expandTarget}
+          poolVdevs={poolVdevs[expandTarget] || []}
           onClose={() => setExpandTarget(null)}
           onSuccess={() => { showToast(`Disk added to pool "${expandTarget}"`, 'success'); refreshPoolVdevs(expandTarget); setExpandTarget(null); onRefresh(); startPostOpPoll(); }}
         />

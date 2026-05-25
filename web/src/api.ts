@@ -112,10 +112,11 @@ export const api = {
   startScrub:          (name: string) => request<any>(`/pools/${name}/scrub`, { method: 'POST' }),
   stopScrub:           (name: string) => request<any>(`/pools/${name}/scrub`, { method: 'DELETE' }),
   resilverPool:        (name: string) => request<any>(`/pools/${name}/resilver`, { method: 'POST' }),
-  expandPool:          (name: string, disks: string | string[], vdevType?: string, force = false) =>
+  expandPool:          (name: string, disks: string | string[], vdevType?: string, force = false, targetVdev?: string) =>
     request<any>(`/pools/${name}/expand`, { method: 'POST', body: JSON.stringify({
       disks: Array.isArray(disks) ? disks : [disks],
       vdev_type: vdevType,
+      target_vdev: targetVdev,
       force,
     }) }),
   replaceDisk: (poolName: string, oldDisk: string, newDisk: string, force = false) =>

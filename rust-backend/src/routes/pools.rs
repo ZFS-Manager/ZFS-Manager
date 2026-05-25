@@ -53,6 +53,7 @@ pub struct ExpandBody {
     pub disk:      Option<String>,
     pub disks:     Option<Vec<String>>,
     pub vdev_type: Option<String>,
+    pub target_vdev: Option<String>,
     #[serde(default)]
     pub force:     bool,
 }
@@ -620,10 +621,26 @@ async fn expand_pool(
         None => true,
     };
 
+    let target_vdev_opt = body.target_vdev.as_deref().filter(|s| !s.is_empty());
+
     if is_capacity_expansion {
         // We are doing capacity expansion. Check pool topology for RAIDZ.
         if let Ok(raw_status) = executor::zpool(&["status", "-v", &name]).await {
             let parsed_vdevs = parse_vdev_config(&raw_status);
+            
+            if let Some(target) = target_vdev_opt {
+                // Perform expansion on user-specified target vdev (RAIDZ or Mirror attach)
+                for disk in &all_disks {
+                    let mut args = vec!["attach".to_string()];
+                    if body.force { args.push("-f".to_string()); }
+                    args.push(name.clone());
+                    args.push(target.to_string());
+                    args.push(disk.clone());
+                    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                    executor::zpool(&refs).await?;
+                }
+                return Ok(Json(json!({ "message": format!("{} disk(s) attached to vdev '{}' in pool '{}'", all_disks.len(), target, name) })));
+            }
             
             // Filter out cache, log, spare, etc. Just get data vdevs
             let data_vdevs: Vec<&Value> = parsed_vdevs.iter().filter(|v| {
