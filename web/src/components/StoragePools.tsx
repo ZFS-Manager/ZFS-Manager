@@ -722,7 +722,7 @@ function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
                       onChange={e => setTargetVdev(e.target.value)}
                     >
                       {dataVdevs.map(v => (
-                        <option key={v.name || v.type} value={v.name}>
+                        <option key={v.name || v.type} value={v.name || v.type || ''}>
                           {v.name || v.type} ({v.type})
                         </option>
                       ))}
