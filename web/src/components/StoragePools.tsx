@@ -620,16 +620,16 @@ function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
   
   const dataVdevs = poolVdevs.filter((v: any) => !['log', 'cache', 'spare'].includes(v.type));
   const [expandMode, setExpandMode] = useState<'new' | 'attach'>(dataVdevs.length > 0 ? 'attach' : 'new');
-  const [targetVdev, setTargetVdev] = useState(dataVdevs.length > 0 ? (dataVdevs[0].name || '') : '');
+  const [targetVdev, setTargetVdev] = useState(dataVdevs.length > 0 ? (dataVdevs[0].name || dataVdevs[0].type || '') : '');
 
   const ready = disk.trim() !== '';
 
-  const isAttach = mode === 'extend' && expandMode === 'attach' && targetVdev !== '';
+  const targetForPreview = targetVdev || '<target_vdev>';
 
   const cmdPreview = mode === 'cache'
     ? `zpool add ${poolName} cache ${disk || '<disk>'}`
-    : isAttach
-      ? `zpool attach -f ${poolName} ${targetVdev} ${disk || '<disk>'}`
+    : expandMode === 'attach'
+      ? `zpool attach -f ${poolName} ${targetForPreview} ${disk || '<disk>'}`
       : `zpool add -f ${poolName} ${disk || '<disk>'}`;
 
   const handleExpand = async () => {
@@ -654,7 +654,7 @@ function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
             <h3 style={S.modal.title}>Expand Pool</h3>
-            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>zpool add {poolName}</p>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>{mode === 'cache' ? 'zpool add' : expandMode === 'attach' ? 'zpool attach' : 'zpool add'} {poolName}</p>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
         </div>
@@ -708,7 +708,7 @@ function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                  <input type="radio" name="expandMode" checked={expandMode === 'attach'} onChange={() => { setExpandMode('attach'); if(!targetVdev) setTargetVdev(dataVdevs[0].name || ''); }} style={{ margin: 0 }} />
+                  <input type="radio" name="expandMode" checked={expandMode === 'attach'} onChange={() => { setExpandMode('attach'); if(!targetVdev) setTargetVdev(dataVdevs[0]?.name || dataVdevs[0]?.type || ''); }} style={{ margin: 0 }} />
                   <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>Expand existing VDEV (Attach)</span>
                 </label>
                 <div style={{ fontSize: 11, color: 'var(--text-secondary)', paddingLeft: 21, marginBottom: expandMode === 'attach' ? 6 : 0 }}>
