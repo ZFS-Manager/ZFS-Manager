@@ -28,6 +28,16 @@ interface ScrubProgress {
   scan: string;
 }
 
+interface ExpansionProgress {
+  inProgress: boolean;
+  vdev: string;
+  progress: number;
+  eta: string;
+  speed: string;
+  copied: string;
+  detail: string;
+}
+
 const VDEV_INFO: Record<VdevType, { min: number; label: string; desc: string; color: string }> = {
   stripe: { min: 1, label: 'Stripe',  desc: 'Max performance, no redundancy',       color: 'var(--danger)'  },
   mirror: { min: 2, label: 'Mirror',  desc: 'Full redundancy, survives 1 disk loss', color: 'var(--success)' },
@@ -1474,8 +1484,9 @@ function raidColor(raidType: string): string {
 /* ── Main Component ───────────────────────────────────────────────────────────── */
 export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePoolsProps) {
   const { notify } = useNotifications();
-  const [scrubState,    setScrubState]    = useState<Record<string, ScrubState>>({});
-  const [scrubProgress, setScrubProgress] = useState<Record<string, ScrubProgress>>({});
+  const [scrubState,       setScrubState]       = useState<Record<string, ScrubState>>({});
+  const [scrubProgress,    setScrubProgress]    = useState<Record<string, ScrubProgress>>({});
+  const [expansionProgress,setExpansionProgress] = useState<Record<string, ExpansionProgress>>({});
   const [expandedPool,  setExpandedPool]  = useState<string | null>(null);
   const [poolStatus,    setPoolStatus]    = useState<Record<string, string>>({});
   const [statusLoading, setStatusLoading] = useState<string | null>(null);
@@ -1542,6 +1553,10 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           }}));
           startScrubPolling(pool.name);
         }
+        if (res.expansion?.in_progress) {
+          setExpansionProgress(p => ({ ...p, [pool.name]: res.expansion }));
+          startScrubPolling(pool.name); // same polling interval fetches expansion too
+        }
       }).catch(() => {});
     });
   }, [pools]);
@@ -1581,7 +1596,11 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           inProgress: res.in_progress, done: res.done,
           progress: res.progress, timeRemaining: res.time_remaining, scan: res.scan,
         }}));
-        if (!res.in_progress) {
+        // Update expansion progress
+        if (res.expansion) {
+          setExpansionProgress(p => ({ ...p, [poolName]: res.expansion }));
+        }
+        if (!res.in_progress && !res.expansion?.in_progress) {
           clearInterval(pollTimers.current[poolName]);
           delete pollTimers.current[poolName];
           setScrubState(s => ({ ...s, [poolName]: 'success' }));
@@ -1719,8 +1738,9 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
       {/* Pool cards */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {pools.map((pool, pi) => {
-          const state      = scrubState[pool.name] || 'idle';
-          const progress   = scrubProgress[pool.name];
+          const state        = scrubState[pool.name] || 'idle';
+          const progress     = scrubProgress[pool.name];
+          const expansionProg = expansionProgress[pool.name];
           const isExpanded = expandedPool === pool.name;
           const raidType   = getPoolRaidType(pool.name);
           const disks      = getPoolDisks(pool.name);
@@ -1842,6 +1862,31 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                     <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
                       <div style={{ height: '100%', width: `${progress.progress}%`, background: 'var(--warning)', borderRadius: 9999, transition: 'width 0.5s' }} />
                     </div>
+                  </div>
+                )}
+
+                {/* RAIDZ Expansion progress */}
+                {expansionProg?.inProgress && (
+                  <div style={{ flex: 1, minWidth: 220, padding: '10px 20px', background: 'rgba(99,102,241,0.06)', borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <span style={{ fontSize: 11, color: 'var(--accent)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
+                        Expanding {expansionProg.vdev}
+                      </span>
+                      <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                        {expansionProg.speed && <span style={{ color: 'var(--text-muted)' }}>{expansionProg.speed}</span>}
+                        {expansionProg.eta && <span style={{ color: 'var(--text-muted)' }}>{expansionProg.eta} rem</span>}
+                        <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{expansionProg.progress.toFixed(2)}%</span>
+                      </div>
+                    </div>
+                    <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${expansionProg.progress}%`, background: 'var(--accent)', borderRadius: 9999, transition: 'width 1s' }} />
+                    </div>
+                    {expansionProg.copied && (
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
+                        {expansionProg.copied} copied
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

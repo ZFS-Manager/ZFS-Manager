@@ -457,25 +457,37 @@ async fn scrub_status(Path(name): Path<String>) -> Result<Json<Value>, ApiError>
     let lines: Vec<&str> = raw.lines().collect();
     let mut scan_line   = String::new();
     let mut scan_detail = String::new();
+    let mut expand_line   = String::new();
+    let mut expand_detail = String::new();
 
-    for (i, line) in lines.iter().enumerate() {
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
         if line.trim_start().starts_with("scan:") {
             scan_line = line.trim().to_string();
             let mut j = i + 1;
             while j < lines.len() {
                 let next = lines[j];
                 if next.starts_with('\t') || next.starts_with("  ") {
-                    if !scan_detail.is_empty() {
-                        scan_detail.push_str(" ");
-                    }
+                    if !scan_detail.is_empty() { scan_detail.push(' '); }
                     scan_detail.push_str(next.trim());
                     j += 1;
-                } else {
-                    break;
-                }
+                } else { break; }
             }
-            break;
         }
+        if line.trim_start().starts_with("expand:") {
+            expand_line = line.trim().to_string();
+            let mut j = i + 1;
+            while j < lines.len() {
+                let next = lines[j];
+                if next.starts_with('\t') || next.starts_with("  ") {
+                    if !expand_detail.is_empty() { expand_detail.push(' '); }
+                    expand_detail.push_str(next.trim());
+                    j += 1;
+                } else { break; }
+            }
+        }
+        i += 1;
     }
 
     let in_progress = scan_line.contains("in progress");
@@ -488,6 +500,50 @@ async fn scrub_status(Path(name): Path<String>) -> Result<Json<Value>, ApiError>
     let time_remaining = if in_progress { extract_time_remaining(&scan_detail) }
                          else           { String::new() };
 
+    // ── Expansion status ────────────────────────────────────────────────────────
+    // Format: "expand: expansion of raidz2-0 in progress since ..."
+    // Detail: "35.7G / 41.5T copied at 563M/s, 0.08% done, 21:27:01 to go"
+    let expand_in_progress = expand_line.contains("in progress");
+    let expand_vdev = if expand_in_progress {
+        // extract "raidz2-0" from "expansion of raidz2-0 in progress"
+        expand_line
+            .trim_start_matches("expand:")
+            .trim()
+            .strip_prefix("expansion of ")
+            .and_then(|s| s.split(" in progress").next())
+            .unwrap_or("")
+            .to_string()
+    } else {
+        String::new()
+    };
+
+    // Parse "35.7G / 41.5T copied at 563M/s, 0.08% done, 21:27:01 to go"
+    let expand_progress: f64 = if expand_in_progress {
+        // find "X% done"
+        expand_detail.split(',')
+            .find(|s| s.trim().ends_with("% done"))
+            .and_then(|s| s.trim().strip_suffix("% done"))
+            .and_then(|s| s.trim().parse::<f64>().ok())
+            .unwrap_or(0.0)
+    } else { 0.0 };
+
+    let expand_eta: String = if expand_in_progress {
+        expand_detail.split(',')
+            .find(|s| s.trim().ends_with("to go"))
+            .map(|s| s.trim().trim_end_matches("to go").trim().to_string())
+            .unwrap_or_default()
+    } else { String::new() };
+
+    let expand_speed: String = if expand_in_progress {
+        expand_detail.split("at ").nth(1)
+            .and_then(|s| s.split(',').next())
+            .unwrap_or("").trim().to_string()
+    } else { String::new() };
+
+    let expand_copied: String = if expand_in_progress {
+        expand_detail.split(" copied").next().unwrap_or("").trim().to_string()
+    } else { String::new() };
+
     Ok(Json(json!({
         "name":           name,
         "in_progress":    in_progress,
@@ -496,6 +552,15 @@ async fn scrub_status(Path(name): Path<String>) -> Result<Json<Value>, ApiError>
         "scan":           scan_line,
         "scan_detail":    scan_detail,
         "time_remaining": time_remaining,
+        "expansion": {
+            "in_progress": expand_in_progress,
+            "vdev":        expand_vdev,
+            "progress":    expand_progress,
+            "eta":         expand_eta,
+            "speed":       expand_speed,
+            "copied":      expand_copied,
+            "detail":      expand_detail,
+        }
     })))
 }
 
