@@ -849,12 +849,45 @@ function ExpandPoolModal({ poolName, poolVdevs, zfsVersion, onClose, onSuccess }
 /* ── Pool Features Modal ──────────────────────────────────────────────────────── */
 type FeatureEntry = { name: string; property: string; value: string; enabled: boolean };
 
+function FeatureToggle({
+  feature, toggling, onToggle,
+}: { feature: FeatureEntry; toggling: boolean; onToggle: (f: FeatureEntry, enable: boolean) => void }) {
+  const isActive   = feature.value === 'active';
+  const isEnabled  = feature.value === 'enabled';
+  const isDisabled = feature.value === 'disabled';
+  const isOn       = isActive || isEnabled;
+
+  return (
+    <button
+      title={isActive ? 'In use — cannot be disabled' : isOn ? 'Click to disable' : 'Click to enable'}
+      disabled={toggling || isActive}
+      onClick={() => !isActive && onToggle(feature, isDisabled)}
+      style={{
+        width: 36, height: 18, borderRadius: 9, flexShrink: 0,
+        background: isOn ? (isActive ? 'var(--success)' : 'var(--accent)') : 'var(--bg-elevated)',
+        border: `1px solid ${isOn ? (isActive ? 'var(--success)' : 'var(--accent)') : 'var(--border)'}`,
+        position: 'relative', cursor: (isActive || toggling) ? 'default' : 'pointer',
+        transition: 'all 0.2s', opacity: (isActive || toggling) ? 0.6 : 1, padding: 0,
+      }}
+    >
+      <div style={{
+        position: 'absolute', top: 1,
+        left: isOn ? 17 : 1,
+        width: 14, height: 14, borderRadius: 7,
+        background: toggling ? 'rgba(255,255,255,0.5)' : '#fff',
+        transition: 'left 0.2s',
+      }} />
+    </button>
+  );
+}
+
 function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () => void }) {
   const { notify } = useNotifications();
-  const [features,      setFeatures]      = useState<FeatureEntry[]>([]);
-  const [loading,       setLoading]       = useState(true);
-  const [enabling,      setEnabling]      = useState(false);
-  const [pendingEnable, setPendingEnable] = useState(false);
+  const [features,  setFeatures]  = useState<FeatureEntry[]>([]);
+  const [loading,   setLoading]   = useState(true);
+  // pending: which feature is awaiting confirmation, and which direction
+  const [pending,   setPending]   = useState<{ feature: FeatureEntry; enable: boolean } | null>(null);
+  const [toggling,  setToggling]  = useState<string | null>(null); // feature name being toggled
 
   useEffect(() => {
     api.getPoolFeatures(poolName)
@@ -863,29 +896,27 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
       .finally(() => setLoading(false));
   }, [poolName]);
 
-  const raidz = features.find(f => f.name === 'raidz_expansion');
-
-  const handleConfirmEnable = async () => {
-    setEnabling(true);
-    try {
-      await api.enableRaidzExpansionFeature(poolName);
-      setFeatures(prev => prev.map(f => f.name === 'raidz_expansion' ? { ...f, value: 'enabled', enabled: true } : f));
-      setPendingEnable(false);
-      notify({ type: 'success', title: 'Feature Enabled', message: `raidz_expansion enabled on pool "${poolName}"` });
-    } catch (err: any) {
-      notify({ type: 'error', title: 'Enable Failed', message: err.message || 'Failed to enable raidz_expansion' });
-    } finally { setEnabling(false); }
+  const handleToggleRequest = (f: FeatureEntry, enable: boolean) => {
+    setPending({ feature: f, enable });
   };
 
-  const statusColor = (v: string) =>
-    v === 'active'   ? 'var(--success)' :
-    v === 'enabled'  ? 'var(--info)'    : 'var(--text-muted)';
-  const statusBg = (v: string) =>
-    v === 'active'   ? 'rgba(34,197,94,0.1)'   :
-    v === 'enabled'  ? 'rgba(56,189,248,0.1)'   : 'var(--bg-elevated)';
-  const statusBorder = (v: string) =>
-    v === 'active'   ? 'rgba(34,197,94,0.25)'   :
-    v === 'enabled'  ? 'rgba(56,189,248,0.25)'   : 'var(--border)';
+  const handleConfirm = async () => {
+    if (!pending) return;
+    const { feature, enable } = pending;
+    setPending(null);
+    setToggling(feature.name);
+    try {
+      await api.togglePoolFeature(poolName, feature.name, enable);
+      const newValue = enable ? 'enabled' : 'disabled';
+      setFeatures(prev => prev.map(f =>
+        f.name === feature.name ? { ...f, value: newValue, enabled: enable } : f
+      ));
+      notify({ type: 'success', title: enable ? 'Feature Enabled' : 'Feature Disabled',
+        message: `${feature.name} ${enable ? 'enabled' : 'disabled'} on "${poolName}"` });
+    } catch (err: any) {
+      notify({ type: 'error', title: 'Toggle Failed', message: err.message || 'Failed to toggle feature' });
+    } finally { setToggling(null); }
+  };
 
   const sorted = [...features].sort((a, b) => {
     const order = (v: string) => v === 'active' ? 0 : v === 'enabled' ? 1 : 2;
@@ -893,65 +924,40 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
   });
 
   return (
-    <div style={S.modal.overlay} onClick={onClose}>
+    <div style={S.modal.overlay} onClick={() => { if (!pending) onClose(); }}>
       <div style={{ ...S.modal.box, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <div>
             <h3 style={S.modal.title}>Pool Features</h3>
-            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>{poolName} · {features.length} features</p>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>
+              {poolName} · {features.length} features
+            </p>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
         </div>
 
-        {/* RAIDZ Expansion toggle — special control */}
-        {raidz && (
-          <div style={{ marginBottom: 12, padding: '12px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)' }}>RAIDZ Expansion</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Allows adding disks to an existing RAIDZ vdev</div>
-                {raidz.enabled && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 4 }}>
-                    <Info size={10} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Permanent — cannot be disabled once enabled</span>
-                  </div>
-                )}
+        {/* Confirm dialog */}
+        {pending && (
+          <div style={{ marginBottom: 12, padding: '12px 14px', background: pending.enable ? 'rgba(239,68,68,0.06)' : 'rgba(245,158,11,0.06)', border: `1px solid ${pending.enable ? 'rgba(239,68,68,0.2)' : 'rgba(245,158,11,0.2)'}`, borderRadius: 'var(--radius)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
+              <AlertTriangle size={13} style={{ color: pending.enable ? 'var(--danger)' : 'var(--warning)', flexShrink: 0, marginTop: 1 }} />
+              <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+                {pending.enable
+                  ? <><strong style={{ color: 'var(--danger)' }}>Permanent</strong> — <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{pending.feature.name}</code> cannot be disabled once data starts using it.</>
+                  : <>Disable <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{pending.feature.name}</code>? This only works while the feature is not yet active.</>
+                }
               </div>
-              {enabling ? (
-                <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)', flexShrink: 0, marginTop: 2 }} />
-              ) : (
-                <button onClick={raidz.enabled ? () => {} : () => setPendingEnable(p => !p)}
-                  title={raidz.enabled ? 'Cannot be disabled once enabled' : 'Enable RAIDZ Expansion'}
-                  style={{ width: 44, height: 22, borderRadius: 11, flexShrink: 0, marginTop: 2,
-                    background: raidz.enabled ? 'var(--success)' : 'var(--bg-elevated)',
-                    border: `1px solid ${raidz.enabled ? 'var(--success)' : 'var(--border)'}`,
-                    position: 'relative', cursor: raidz.enabled ? 'default' : 'pointer',
-                    transition: 'all 0.2s', opacity: raidz.enabled ? 0.75 : 1 }}>
-                  <div style={{ position: 'absolute', top: 2, left: raidz.enabled ? 22 : 2, width: 16, height: 16, borderRadius: 8, background: '#fff', transition: 'left 0.2s' }} />
-                </button>
-              )}
             </div>
-            {pendingEnable && !raidz.enabled && (
-              <div style={{ marginTop: 10, padding: '10px 12px', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)' }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
-                  <AlertTriangle size={13} style={{ color: 'var(--danger)', flexShrink: 0, marginTop: 1 }} />
-                  <span style={{ fontSize: 12, color: 'var(--danger)', lineHeight: 1.4 }}>
-                    <strong>Permanent</strong> — ZFS features cannot be disabled once enabled.
-                  </span>
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn btn-secondary" style={{ flex: 1, fontSize: 11 }} onClick={() => setPendingEnable(false)}>Cancel</button>
-                  <button className="btn btn-primary" style={{ flex: 1, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleConfirmEnable} disabled={enabling}>
-                    {enabling && <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} />}
-                    Confirm Enable
-                  </button>
-                </div>
-              </div>
-            )}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-secondary" style={{ flex: 1, fontSize: 11 }} onClick={() => setPending(null)}>Cancel</button>
+              <button className="btn btn-primary" style={{ flex: 1, fontSize: 11 }} onClick={handleConfirm}>
+                Confirm {pending.enable ? 'Enable' : 'Disable'}
+              </button>
+            </div>
           </div>
         )}
 
-        {/* All features list */}
+        {/* Feature list */}
         {loading ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '32px 0', justifyContent: 'center' }}>
             <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)' }} />
@@ -960,25 +966,45 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
         ) : features.length === 0 ? (
           <div style={{ padding: '20px 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>No features returned.</div>
         ) : (
-          <div style={{ maxHeight: 360, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }} className="no-scrollbar">
-            {sorted.map(f => (
-              <div key={f.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 10px', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)' }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
-                <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 999, flexShrink: 0, marginLeft: 8,
-                  color: statusColor(f.value), background: statusBg(f.value), border: `1px solid ${statusBorder(f.value)}` }}>
-                  {f.value}
-                </span>
-              </div>
-            ))}
+          <div style={{ maxHeight: 380, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }} className="no-scrollbar">
+            {sorted.map(f => {
+              const isActive  = f.value === 'active';
+              const isOn      = f.value === 'active' || f.value === 'enabled';
+              const isBusy    = toggling === f.name;
+              const statusCol = isActive ? 'var(--success)' : isOn ? 'var(--accent)' : 'var(--text-muted)';
+              return (
+                <div key={f.name} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '7px 10px', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)',
+                  opacity: isBusy ? 0.6 : 1, transition: 'opacity 0.2s',
+                }}>
+                  <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {isBusy && <Loader2 size={10} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)', flexShrink: 0 }} />}
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {f.name}
+                    </span>
+                    {isActive && (
+                      <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', flexShrink: 0 }}>in use</span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                    <span style={{ fontSize: 9, color: statusCol, fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      {f.value}
+                    </span>
+                    <FeatureToggle feature={f} toggling={isBusy} onToggle={handleToggleRequest} />
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 
-        <div style={{ marginTop: 14, display: 'flex', gap: 12, fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+        <div style={{ marginTop: 14, display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', paddingTop: 10, borderTop: '1px solid var(--border)' }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--success)', display: 'inline-block' }} /> active — in use
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--success)', display: 'inline-block' }} /> active — in use, toggle locked
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--info)', display: 'inline-block' }} /> enabled — on, not yet active
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--accent)', display: 'inline-block' }} /> enabled — on, not yet active
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--border)', display: 'inline-block' }} /> disabled
@@ -1914,6 +1940,16 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
     });
   };
 
+  const handleActivateSpare = async (poolName: string, failedDisk: string, spareDisk: string) => {
+    try {
+      await api.replaceDisk(poolName, failedDisk, spareDisk, false);
+      showToast(`Spare ${spareDisk} activated — replacing ${failedDisk}`, 'success');
+      onRefresh();
+    } catch (err: any) {
+      showToast(err.message || 'Failed to activate spare', 'error');
+    }
+  };
+
   const handleToggleStatus = async (poolName: string) => {
     if (expandedPool === poolName) {
       setExpandedPool(null);
@@ -2023,6 +2059,16 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           const capColor   = pool.cap > 90 ? 'var(--danger)' : pool.cap > 80 ? 'var(--warning)' : 'var(--accent)';
           const isOnline   = pool.health === 'ONLINE';
 
+          // Hot spare detection
+          const allVdevs    = poolVdevs[pool.name] || [];
+          const spareVdev   = allVdevs.find((v: any) => v.type === 'spare');
+          const availSpares = spareVdev ? (spareVdev.disks || []).filter((d: any) => d.state === 'AVAIL') : [];
+          const failedDisks = allVdevs
+            .filter((v: any) => !['spare', 'log', 'cache'].includes(v.type))
+            .flatMap((v: any) => v.disks || [])
+            .filter((d: any) => ['FAULTED', 'REMOVED', 'UNAVAIL', 'OFFLINE'].includes(d.state));
+          const canActivateSpare = availSpares.length > 0 && failedDisks.length > 0;
+
           return (
             <motion.div
               key={pool.name}
@@ -2115,6 +2161,28 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                   </div>
                 </div>
               </div>
+
+              {/* Hot spare available banner */}
+              {canActivateSpare && (
+                <div style={{ padding: '10px 24px', background: 'rgba(245,158,11,0.06)', borderBottom: '1px solid rgba(245,158,11,0.22)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                    <AlertTriangle size={13} style={{ color: 'var(--warning)', flexShrink: 0 }} />
+                    <div>
+                      <span style={{ fontSize: 12, color: 'var(--warning)', fontWeight: 600 }}>Hot spare available</span>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>
+                        {failedDisks[0]?.path} failed — spare {availSpares[0]?.path} not auto-activated (zed not running?)
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ fontSize: 11, flexShrink: 0, borderColor: 'rgba(245,158,11,0.5)', color: 'var(--warning)' }}
+                    onClick={() => handleActivateSpare(pool.name, failedDisks[0].path, availSpares[0].path)}
+                  >
+                    Activate Spare
+                  </button>
+                </div>
+              )}
 
               {/* Stats row & Scrub Progress */}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 0, padding: '0', borderBottom: '1px solid var(--border)' }}>

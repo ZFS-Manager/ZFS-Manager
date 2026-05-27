@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, Query, State},
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use redis::AsyncCommands;
@@ -32,6 +32,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/pools/:name/feature/raidz_expansion",        get(get_raidz_expansion_feature))
         .route("/api/v1/pools/:name/feature/raidz_expansion/enable", post(enable_raidz_expansion_feature))
         .route("/api/v1/pools/:name/features",                        get(list_pool_features))
+        .route("/api/v1/pools/:name/feature/:feature_name",           put(toggle_pool_feature))
         .with_state(state)
 }
 
@@ -1003,5 +1004,48 @@ async fn enable_raidz_expansion_feature(Path(name): Path<String>) -> Result<Json
         "pool":    name,
         "feature": "raidz_expansion",
         "enabled": true,
+    })))
+}
+
+#[derive(Deserialize)]
+struct ToggleFeatureBody {
+    enabled: bool,
+}
+
+async fn toggle_pool_feature(
+    Path((name, feature_name)): Path<(String, String)>,
+    Json(body): Json<ToggleFeatureBody>,
+) -> Result<Json<Value>, ApiError> {
+    executor::validate_zfs_name(&name, "pool")?;
+
+    // Feature names are alphanumeric + underscores only
+    if feature_name.is_empty() || !feature_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return Err(ApiError::BadRequest("Invalid feature name".into()));
+    }
+
+    let prop  = format!("feature@{feature_name}");
+    let value = if body.enabled { "enabled" } else { "disabled" };
+
+    // Check current state first — refuse to disable active features
+    if !body.enabled {
+        let raw = executor::zpool_host(&["get", "-H", &prop, &name]).await.unwrap_or_default();
+        let current = raw.lines().next()
+            .and_then(|l| l.split('\t').nth(2))
+            .map(|v| v.trim().to_string())
+            .unwrap_or_default();
+        if current == "active" {
+            return Err(ApiError::BadRequest(
+                format!("Feature '{feature_name}' is active (data is using it) and cannot be disabled.")
+            ));
+        }
+    }
+
+    executor::zpool_host(&["set", &format!("{prop}={value}"), &name]).await?;
+
+    Ok(Json(json!({
+        "message": format!("Feature '{feature_name}' set to '{value}' on pool '{name}'"),
+        "pool":    name,
+        "feature": feature_name,
+        "enabled": body.enabled,
     })))
 }

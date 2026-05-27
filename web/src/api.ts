@@ -232,6 +232,12 @@ export const api = {
       `/pools/${encodeURIComponent(name)}/features`
     ),
 
+  togglePoolFeature: (name: string, feature: string, enabled: boolean) =>
+    request<{ message: string; pool: string; feature: string; enabled: boolean }>(
+      `/pools/${encodeURIComponent(name)}/feature/${encodeURIComponent(feature)}`,
+      { method: 'PUT', body: JSON.stringify({ enabled }) },
+    ),
+
   getRaidzExpansionFeature: (name: string) =>
     request<{ pool: string; feature: string; value: string; enabled: boolean }>(
       `/pools/${encodeURIComponent(name)}/feature/raidz_expansion`
