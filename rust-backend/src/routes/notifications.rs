@@ -296,10 +296,10 @@ pub async fn trigger_rules_for_event(state: &AppState, trigger_type: &str, messa
         None => return,
     };
 
-    let level = if trigger_type == "login_failed" || trigger_type == "pool_unhealthy" {
-        "error"
-    } else {
-        "warning"
+    let level = match trigger_type {
+        "login_failed" | "pool_unhealthy" => "error",
+        "dataset_rewrite_success" | "scrub_finished" | "resilver_finished" => "success",
+        _ => "warning",
     };
 
     let _ = pg.execute(

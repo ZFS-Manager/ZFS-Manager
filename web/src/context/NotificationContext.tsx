@@ -341,13 +341,13 @@ export function NotificationCenter({
                 style={{
                   display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 14px',
                   borderBottom: '1px solid var(--border-subtle)',
-                  background: n.is_read ? 'transparent' : 'rgba(239,68,68,0.04)',
+                  background: n.is_read ? 'transparent' : (n.level === 'success' ? 'rgba(34,197,94,0.04)' : n.level === 'warning' ? 'rgba(245,158,11,0.04)' : n.level === 'info' ? 'rgba(56,189,248,0.04)' : 'rgba(239,68,68,0.04)'),
                   cursor: 'pointer',
                   opacity: n.is_read ? 0.7 : 1,
                 }}
                 onClick={() => onMarkSystemRead?.(n.id)}
               >
-                <div style={{ width: 6, height: 6, borderRadius: '50%', background: n.is_read ? 'transparent' : 'var(--danger)', flexShrink: 0, marginTop: 5 }} />
+                <div style={{ width: 6, height: 6, borderRadius: '50%', background: n.is_read ? 'transparent' : (n.level === 'success' ? 'var(--success)' : n.level === 'warning' ? 'var(--warning)' : n.level === 'info' ? 'var(--info)' : 'var(--danger)'), flexShrink: 0, marginTop: 5 }} />
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 11, fontWeight: n.is_read ? 400 : 600, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)' }}>{n.message}</div>
                   <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2, fontFamily: 'var(--font-mono)' }}>{new Date(n.created_at).toLocaleString()}</div>
