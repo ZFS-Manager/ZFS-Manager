@@ -248,33 +248,6 @@ html, body, #root {
 }
 .widget-remove:hover { color: var(--danger); border-color: rgba(239,68,68,0.3); background: var(--danger-dim); }
 
-/* ── Feature info tooltip ────────────────────────────────────────────────────── */
-.feat-info-wrap { position: relative; line-height: 1; }
-.feat-tooltip {
-  display: none;
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  width: 220px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 7px 10px;
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  font-family: var(--font-ui);
-  text-transform: none;
-  letter-spacing: normal;
-  font-weight: 400;
-  z-index: 300;
-  pointer-events: none;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.45);
-  white-space: normal;
-}
-.feat-info-wrap:hover .feat-tooltip { display: block; }
-
 /* ── Fragmentation info tooltip ──────────────────────────────────────────────── */
 .frag-info-wrap { position: relative; }
 .frag-tooltip {

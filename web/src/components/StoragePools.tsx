@@ -934,6 +934,7 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
   const [loading,   setLoading]   = useState(true);
   const [pending,   setPending]   = useState<{ feature: FeatureEntry; enable: boolean } | null>(null);
   const [toggling,  setToggling]  = useState<string | null>(null);
+  const [hovered,   setHovered]   = useState<FeatureEntry | null>(null);
 
   useEffect(() => {
     api.getPoolFeatures(poolName)
@@ -962,137 +963,206 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
     } finally { setToggling(null); }
   };
 
+  const statusColor = (v: string) => v === 'active' ? 'var(--success)' : v === 'enabled' ? 'var(--accent)' : 'var(--text-muted)';
+
   const active   = features.filter(f => f.value === 'active').sort((a,b) => a.name.localeCompare(b.name));
   const enabled  = features.filter(f => f.value === 'enabled').sort((a,b) => a.name.localeCompare(b.name));
   const disabled = features.filter(f => f.value === 'disabled').sort((a,b) => a.name.localeCompare(b.name));
 
-  const renderSection = (label: string, items: FeatureEntry[], accentColor: string, accentBg: string) => {
+  const renderSection = (label: string, items: FeatureEntry[], dot: string) => {
     if (items.length === 0) return null;
     return (
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 2px 4px', marginBottom: 2 }}>
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: accentColor, flexShrink: 0, display: 'inline-block' }} />
-          <span style={{ fontSize: 10, fontWeight: 700, color: accentColor, fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-            {label}
-          </span>
-          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>{items.length}</span>
+      <div style={{ marginBottom: 4 }}>
+        <div style={{ padding: '8px 14px 4px', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 5, height: 5, borderRadius: '50%', background: dot, display: 'inline-block', flexShrink: 0 }} />
+          <span style={{ fontSize: 9, fontWeight: 700, color: dot, fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{label}</span>
+          <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', marginLeft: 2 }}>{items.length}</span>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 8 }}>
-          {items.map(f => {
-            const isBusy = toggling === f.name;
-            const desc   = FEATURE_DESCRIPTIONS[f.name];
-            return (
-              <div key={f.name} style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                padding: '8px 12px',
-                background: accentBg,
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid rgba(255,255,255,0.04)',
-                opacity: isBusy ? 0.55 : 1, transition: 'opacity 0.2s',
-              }}>
-                {/* name + info */}
-                <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  {isBusy
-                    ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite', color: accentColor, flexShrink: 0 }} />
-                    : null
-                  }
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {f.name}
-                  </span>
-                  {desc && (
-                    <span className="feat-info-wrap" style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
-                      <Info size={10} style={{ color: 'var(--text-muted)', cursor: 'help' }} />
-                      <span className="feat-tooltip">{desc}</span>
-                    </span>
-                  )}
-                </div>
-                {/* toggle */}
-                <FeatureToggle feature={f} toggling={isBusy} onToggle={handleToggleRequest} />
-              </div>
-            );
-          })}
-        </div>
+        {items.map(f => {
+          const isBusy   = toggling === f.name;
+          const isHov    = hovered?.name === f.name;
+          const isActive = f.value === 'active';
+          return (
+            <div key={f.name}
+              onMouseEnter={() => setHovered(f)}
+              onMouseLeave={() => setHovered(h => h?.name === f.name ? null : h)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '7px 14px',
+                background: isHov ? 'rgba(255,255,255,0.04)' : 'transparent',
+                borderLeft: `2px solid ${isHov ? dot : 'transparent'}`,
+                cursor: 'default', transition: 'background 0.12s, border-color 0.12s',
+                opacity: isBusy ? 0.5 : 1,
+              }}
+            >
+              {isBusy
+                ? <Loader2 size={9} style={{ animation: 'spin 1s linear infinite', color: dot, flexShrink: 0 }} />
+                : <span style={{ width: 5, height: 5, borderRadius: '50%', background: dot, display: 'inline-block', flexShrink: 0, opacity: isActive ? 1 : 0.45 }} />
+              }
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: isHov ? 'var(--text-primary)' : 'var(--text-secondary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'color 0.12s' }}>
+                {f.name}
+              </span>
+              <FeatureToggle feature={f} toggling={isBusy} onToggle={handleToggleRequest} />
+            </div>
+          );
+        })}
       </div>
     );
   };
 
+  // right-panel description for hovered feature
+  const desc = hovered ? FEATURE_DESCRIPTIONS[hovered.name] : null;
+
   return (
     <div style={S.modal.overlay} onClick={() => { if (!pending) onClose(); }}>
-      <div style={{ ...S.modal.box, maxWidth: 560 }} onClick={e => e.stopPropagation()}>
+      <div style={{ ...S.modal.box, maxWidth: 720, padding: 0, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
 
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 18 }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Layers size={15} style={{ color: 'var(--accent)' }} />
-              <h3 style={{ ...S.modal.title, margin: 0 }}>Pool Features</h3>
-            </div>
-            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 5 }}>
-              {poolName} &nbsp;·&nbsp;
-              <span style={{ color: 'var(--success)' }}>{active.length} active</span>
-              {enabled.length > 0 && <> &nbsp;·&nbsp; <span style={{ color: 'var(--accent)' }}>{enabled.length} enabled</span></>}
-              {disabled.length > 0 && <> &nbsp;·&nbsp; {disabled.length} disabled</>}
-            </p>
-          </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}><X size={16} /></button>
-        </div>
-
-        {/* Confirm dialog */}
-        {pending && (
-          <div style={{ marginBottom: 14, padding: '12px 14px', background: pending.enable ? 'rgba(239,68,68,0.07)' : 'rgba(245,158,11,0.07)', border: `1px solid ${pending.enable ? 'rgba(239,68,68,0.25)' : 'rgba(245,158,11,0.25)'}`, borderRadius: 'var(--radius)' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
-              <AlertTriangle size={13} style={{ color: pending.enable ? 'var(--danger)' : 'var(--warning)', flexShrink: 0, marginTop: 1 }} />
-              <div style={{ fontSize: 12, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
-                {pending.enable
-                  ? <><strong style={{ color: 'var(--danger)' }}>Permanent action</strong> — once data starts using <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-primary)' }}>{pending.feature.name}</code>, it cannot be disabled.</>
-                  : <>Disable <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-primary)' }}>{pending.feature.name}</code>? This only works while no data uses it yet.</>
-                }
+        {/* ── Top: header + general info ───────────────────────────────────── */}
+        <div style={{ padding: '20px 24px 0' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 'var(--radius)', background: 'rgba(99,179,237,0.12)', border: '1px solid rgba(99,179,237,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Layers size={15} style={{ color: 'var(--accent)' }} />
+              </div>
+              <div>
+                <h3 style={{ ...S.modal.title, margin: 0 }}>Pool Features</h3>
+                <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+                  {poolName} &nbsp;·&nbsp;
+                  <span style={{ color: 'var(--success)' }}>{active.length} active</span>
+                  {enabled.length > 0 && <>&nbsp;·&nbsp;<span style={{ color: 'var(--accent)' }}>{enabled.length} enabled</span></>}
+                  {disabled.length > 0 && <>&nbsp;·&nbsp;{disabled.length} disabled</>}
+                </p>
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-secondary" style={{ flex: 1, fontSize: 11 }} onClick={() => setPending(null)}>Cancel</button>
-              <button className="btn btn-primary" style={{ flex: 1, fontSize: 11 }} onClick={handleConfirm}>
-                Confirm {pending.enable ? 'Enable' : 'Disable'}
-              </button>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, flexShrink: 0 }}><X size={16} /></button>
+          </div>
+
+          {/* General info callout */}
+          <div style={{ padding: '10px 14px', marginBottom: 14, background: 'rgba(99,179,237,0.06)', border: '1px solid rgba(99,179,237,0.18)', borderRadius: 'var(--radius)', display: 'flex', gap: 10 }}>
+            <Info size={13} style={{ color: 'var(--accent)', flexShrink: 0, marginTop: 1 }} />
+            <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>
+              ZFS features are <strong style={{ color: 'var(--text-primary)' }}>permanent on-disk format extensions</strong>. Once a feature moves to <span style={{ color: 'var(--success)' }}>active</span> (data is using it), it can never be removed. Features that are <span style={{ color: 'var(--accent)' }}>enabled</span> but not yet active can still be disabled. Hover any row to see what a feature does.
+            </p>
+          </div>
+
+          {/* Confirm dialog */}
+          {pending && (
+            <div style={{ marginBottom: 14, padding: '12px 14px', background: pending.enable ? 'rgba(239,68,68,0.07)' : 'rgba(245,158,11,0.07)', border: `1px solid ${pending.enable ? 'rgba(239,68,68,0.25)' : 'rgba(245,158,11,0.25)'}`, borderRadius: 'var(--radius)' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
+                <AlertTriangle size={13} style={{ color: pending.enable ? 'var(--danger)' : 'var(--warning)', flexShrink: 0, marginTop: 1 }} />
+                <div style={{ fontSize: 12, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
+                  {pending.enable
+                    ? <><strong style={{ color: 'var(--danger)' }}>Permanent action</strong> — once data starts using <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-primary)' }}>{pending.feature.name}</code>, it cannot be disabled.</>
+                    : <>Disable <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-primary)' }}>{pending.feature.name}</code>? Only works while no data uses it yet.</>
+                  }
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-secondary" style={{ flex: 1, fontSize: 11 }} onClick={() => setPending(null)}>Cancel</button>
+                <button className="btn btn-primary" style={{ flex: 1, fontSize: 11 }} onClick={handleConfirm}>
+                  Confirm {pending.enable ? 'Enable' : 'Disable'}
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
-        {/* Feature sections */}
-        {loading ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '36px 0', justifyContent: 'center' }}>
-            <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)' }} />
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading features…</span>
-          </div>
-        ) : features.length === 0 ? (
-          <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>No features returned.</div>
-        ) : (
-          <div style={{ maxHeight: 420, overflowY: 'auto' }} className="no-scrollbar">
-            {renderSection('Active — in use',          active,   'var(--success)', 'rgba(34,197,94,0.05)')}
-            {renderSection('Enabled — not yet active', enabled,  'var(--accent)',  'rgba(99,179,237,0.05)')}
-            {renderSection('Disabled',                 disabled, 'var(--text-muted)', 'var(--bg-elevated)')}
-          </div>
-        )}
+        {/* ── Body: two-column ─────────────────────────────────────────────── */}
+        <div style={{ display: 'flex', borderTop: '1px solid var(--border)' }}>
 
-        {/* Legend */}
-        {!loading && features.length > 0 && (
-          <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)', display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--success)', display: 'inline-block' }} /> active — toggle locked
+          {/* Left: scrollable feature list */}
+          <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', maxHeight: 380, borderRight: '1px solid var(--border)', paddingTop: 6, paddingBottom: 10 }} className="no-scrollbar">
+            {loading ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '48px 0', justifyContent: 'center' }}>
+                <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)' }} />
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading…</span>
+              </div>
+            ) : features.length === 0 ? (
+              <div style={{ padding: '24px', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>No features returned.</div>
+            ) : (
+              <>
+                {renderSection('Active', active,   'var(--success)')}
+                {renderSection('Enabled', enabled,  'var(--accent)')}
+                {renderSection('Disabled', disabled, 'var(--text-muted)')}
+              </>
+            )}
+          </div>
+
+          {/* Right: description panel */}
+          <div style={{ width: 260, flexShrink: 0, padding: '20px 20px', display: 'flex', flexDirection: 'column', background: 'var(--bg-elevated)' }}>
+            {hovered ? (
+              <>
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', wordBreak: 'break-all', lineHeight: 1.4, marginBottom: 8 }}>
+                    {hovered.name}
+                  </div>
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 999,
+                    color: statusColor(hovered.value),
+                    background: hovered.value === 'active' ? 'rgba(34,197,94,0.12)' : hovered.value === 'enabled' ? 'rgba(99,179,237,0.12)' : 'rgba(255,255,255,0.06)',
+                    border: `1px solid ${hovered.value === 'active' ? 'rgba(34,197,94,0.3)' : hovered.value === 'enabled' ? 'rgba(99,179,237,0.3)' : 'var(--border)'}`,
+                    fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.07em',
+                  }}>
+                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: statusColor(hovered.value), display: 'inline-block' }} />
+                    {hovered.value}
+                  </span>
+                </div>
+
+                <div style={{ flex: 1 }}>
+                  {desc ? (
+                    <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.65, margin: 0 }}>{desc}</p>
+                  ) : (
+                    <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.65, margin: 0, fontStyle: 'italic' }}>No description available for this feature.</p>
+                  )}
+                </div>
+
+                <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                  {hovered.value === 'active' && (
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                      <span style={{ fontSize: 10, color: 'var(--success)', fontFamily: 'var(--font-ui)', lineHeight: 1.5 }}>
+                        In use — pool data requires this feature. Toggle is locked.
+                      </span>
+                    </div>
+                  )}
+                  {hovered.value === 'enabled' && (
+                    <div style={{ fontSize: 10, color: 'var(--accent)', fontFamily: 'var(--font-ui)', lineHeight: 1.5 }}>
+                      Not yet active — can still be disabled before data uses it.
+                    </div>
+                  )}
+                  {hovered.value === 'disabled' && (
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', lineHeight: 1.5 }}>
+                      Not enabled. Enabling will permanently extend the pool format once data uses it.
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, opacity: 0.45 }}>
+                <Layers size={28} style={{ color: 'var(--text-muted)' }} />
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.5, margin: 0, fontFamily: 'var(--font-ui)' }}>
+                  Hover a feature<br />to see its description
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Footer ───────────────────────────────────────────────────────── */}
+        <div style={{ padding: '12px 24px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', gap: 14, fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--success)', display: 'inline-block' }} /> active
             </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)', display: 'inline-block' }} /> enabled — can disable
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', display: 'inline-block' }} /> enabled
             </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--border)', display: 'inline-block' }} /> disabled — can enable
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 'auto' }}>
-              <Info size={9} style={{ color: 'var(--text-muted)' }} /> hover for description
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--border)', display: 'inline-block' }} /> disabled
             </span>
           </div>
-        )}
-
-        <button className="btn btn-secondary" style={{ width: '100%', marginTop: 12 }} onClick={onClose}>Close</button>
+          <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={onClose}>Close</button>
+        </div>
       </div>
     </div>
   );
