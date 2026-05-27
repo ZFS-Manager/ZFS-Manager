@@ -1128,7 +1128,7 @@ export default function Dashboard({
             <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>
               Storage Pools
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: displayPools.length === 1 ? '1fr' : displayPools.length === 2 || displayPools.length === 4 ? '1fr 1fr' : 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
               {displayPools.map((pool, i) => <PoolCard key={i} pool={pool} fillInfo={fillByPool[pool.name]} />)}
             </div>
           </div>

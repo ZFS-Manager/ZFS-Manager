@@ -4,7 +4,7 @@ import {
   Database, RefreshCw, ChevronDown, CheckCircle, XCircle,
   Loader2, Plus, Trash2, AlertTriangle, X, HardDrive,
   ArrowLeftRight, Download, Expand, RotateCcw, ChevronRight,
-  Activity, Info, Cpu, Settings,
+  Activity, Info, Cpu, Settings, Layers,
 } from 'lucide-react';
 import { ZFSPool } from '../types';
 import { api, formatBytes } from '../api';
@@ -671,30 +671,54 @@ function ImportPoolModal({ onClose, onSuccess }: { onClose: () => void; onSucces
 }
 
 /* ── Expand Pool Modal ────────────────────────────────────────────────────────── */
-function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
+function ExpandPoolModal({ poolName, poolVdevs, zfsVersion, onClose, onSuccess }: {
   poolName: string;
   poolVdevs: any[];
+  zfsVersion?: string;
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const [expanding, setExpanding] = useState(false);
-  const [error, setError]         = useState('');
-  const [mode, setMode]           = useState<'extend' | 'cache'>('extend');
-  const [disk, setDisk]           = useState('');
+  const [expanding, setExpanding]     = useState(false);
+  const [error, setError]             = useState('');
+  const [mode, setMode]               = useState<'extend' | 'cache' | 'spare'>('extend');
+  const [disk, setDisk]               = useState('');
+  const [raidzEnabled, setRaidzEnabled] = useState<boolean | null>(null);
 
   const dataVdevs = poolVdevs.filter((v: any) => !['log', 'cache', 'spare'].includes(v.type));
   const [expandMode, setExpandMode] = useState<'new' | 'attach'>(dataVdevs.length > 0 ? 'attach' : 'new');
   const [targetVdev, setTargetVdev] = useState(dataVdevs.length > 0 ? (dataVdevs[0].name || dataVdevs[0].type || '') : '');
 
-  const ready = disk.trim() !== '';
+  // zpool attach (RAIDZ expansion) requires OpenZFS >= 2.1
+  const attachSupported = (() => {
+    if (!zfsVersion) return true;
+    const m = zfsVersion.match(/(\d+)\.(\d+)/);
+    if (!m) return true;
+    return parseInt(m[1]) * 100 + parseInt(m[2]) >= 201;
+  })();
 
+  useEffect(() => {
+    api.getRaidzExpansionFeature(poolName)
+      .then(res => setRaidzEnabled(res.enabled))
+      .catch(() => setRaidzEnabled(false));
+  }, [poolName]);
+
+  const ready = disk.trim() !== '';
   const targetForPreview = targetVdev || '<target_vdev>';
+
+  const modeLabels: Record<string, string> = { extend: 'Extend Pool', cache: 'Add Cache', spare: 'Add Hot Spare' };
+  const modeHints: Record<string, React.ReactNode> = {
+    extend: <>Expand your pool by adding a new vdev or attaching to an existing one (e.g. RAIDZ Expansion).</>,
+    cache:  <>Adds one disk as an <strong>L2ARC cache</strong> to accelerate read performance.</>,
+    spare:  <>Adds a disk as a <strong>hot spare</strong> — ZFS will automatically use it to replace a failed drive (<code style={{ fontFamily: 'var(--font-mono)' }}>autoreplace</code> must be enabled).</>,
+  };
 
   const cmdPreview = mode === 'cache'
     ? `zpool add ${poolName} cache ${disk || '<disk>'}`
-    : expandMode === 'attach'
-      ? `zpool attach -f ${poolName} ${targetForPreview} ${disk || '<disk>'}`
-      : `zpool add -f ${poolName} ${disk || '<disk>'}`;
+    : mode === 'spare'
+      ? `zpool add ${poolName} spare ${disk || '<disk>'}`
+      : expandMode === 'attach'
+        ? `zpool attach -f ${poolName} ${targetForPreview} ${disk || '<disk>'}`
+        : `zpool add -f ${poolName} ${disk || '<disk>'}`;
 
   const handleExpand = async () => {
     if (!ready) { setError('Select a disk to continue'); return; }
@@ -702,6 +726,8 @@ function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
     try {
       if (mode === 'cache') {
         await api.expandPool(poolName, [disk], 'cache', false);
+      } else if (mode === 'spare') {
+        await api.expandPool(poolName, [disk], 'spare', false);
       } else {
         const actualTarget = (expandMode === 'attach' && targetVdev) ? targetVdev : 'STRIPE_NEW';
         await api.expandPool(poolName, [disk], undefined, true, actualTarget);
@@ -718,30 +744,27 @@ function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
             <h3 style={S.modal.title}>Expand Pool</h3>
-            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>{mode === 'cache' ? 'zpool add' : expandMode === 'attach' ? 'zpool attach' : 'zpool add'} {poolName}</p>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>
+              {mode === 'cache' ? 'zpool add cache' : mode === 'spare' ? 'zpool add spare' : expandMode === 'attach' ? 'zpool attach' : 'zpool add'} {poolName}
+            </p>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-
           {/* Mode selector */}
           <div>
             <label style={S.modal.label}>Operation</label>
             <div style={{ display: 'flex', gap: 8 }}>
-              {(['extend', 'cache'] as const).map(m => (
-                <button
-                  key={m}
-                  onClick={() => { setMode(m); setDisk(''); setError(''); }}
-                  style={{
-                    flex: 1, padding: '8px 6px', fontSize: 12, fontFamily: 'var(--font-ui)',
-                    background: mode === m ? 'var(--accent)' : 'var(--bg-elevated)',
-                    color: mode === m ? '#fff' : 'var(--text-secondary)',
-                    border: `1px solid ${mode === m ? 'var(--accent)' : 'var(--border)'}`,
-                    borderRadius: 'var(--radius)', cursor: 'pointer', transition: 'all 0.12s',
-                  }}
-                >
-                  {m === 'extend' ? 'Extend Pool' : 'Add Cache'}
+              {(['extend', 'cache', 'spare'] as const).map(m => (
+                <button key={m} onClick={() => { setMode(m); setDisk(''); setError(''); }} style={{
+                  flex: 1, padding: '8px 6px', fontSize: 12, fontFamily: 'var(--font-ui)',
+                  background: mode === m ? 'var(--accent)' : 'var(--bg-elevated)',
+                  color: mode === m ? '#fff' : 'var(--text-secondary)',
+                  border: `1px solid ${mode === m ? 'var(--accent)' : 'var(--border)'}`,
+                  borderRadius: 'var(--radius)', cursor: 'pointer', transition: 'all 0.12s',
+                }}>
+                  {modeLabels[m]}
                 </button>
               ))}
             </div>
@@ -751,60 +774,58 @@ function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 14px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 'var(--radius)' }}>
             <AlertTriangle size={13} style={{ color: 'var(--info)', marginTop: 1, flexShrink: 0 }} />
             <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', lineHeight: 1.5 }}>
-              {mode === 'extend'
-                ? <>Expand your pool by adding a new vdev or attaching to an existing one (e.g. RAIDZ Expansion).</>
-                : <>Adds one disk as an <strong>L2ARC cache</strong> to accelerate read performance.</>}
+              {modeHints[mode]}
             </span>
           </div>
 
           {mode === 'extend' && dataVdevs.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <label style={S.modal.label}>Extend Strategy for {poolName}</label>
-              
+
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                  <input type="radio" name="expandMode" checked={expandMode === 'new'} onChange={() => { setExpandMode('new'); }} style={{ margin: 0 }} />
+                  <input type="radio" name="expandMode" checked={expandMode === 'new'} onChange={() => setExpandMode('new')} style={{ margin: 0 }} />
                   <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>Create new VDEV</span>
                 </label>
                 <div style={{ fontSize: 11, color: 'var(--text-secondary)', paddingLeft: 21 }}>
-                  Adds the disk as a new, standalone Stripe VDEV to the pool using <code style={{ fontFamily: 'var(--font-mono)' }}>zpool add</code>.
+                  Adds the disk as a new standalone Stripe VDEV using <code style={{ fontFamily: 'var(--font-mono)' }}>zpool add</code>.
                 </div>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                  <input type="radio" name="expandMode" checked={expandMode === 'attach'} onChange={() => { setExpandMode('attach'); if(!targetVdev) setTargetVdev(dataVdevs[0]?.name || dataVdevs[0]?.type || ''); }} style={{ margin: 0 }} />
-                  <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>Expand existing VDEV (Attach)</span>
-                </label>
-                <div style={{ fontSize: 11, color: 'var(--text-secondary)', paddingLeft: 21, marginBottom: expandMode === 'attach' ? 6 : 0 }}>
-                  Expands the capacity of an existing RAIDZ VDEV by attaching the disk to it using <code style={{ fontFamily: 'var(--font-mono)' }}>zpool attach</code>.
-                </div>
-                {expandMode === 'attach' && (
-                  <div style={{ paddingLeft: 21 }}>
-                    <select 
-                      style={{ ...S.modal.select, width: '100%' }} 
-                      value={targetVdev} 
-                      onChange={e => setTargetVdev(e.target.value)}
-                    >
-                      {dataVdevs.map(v => (
-                        <option key={v.name || v.type} value={v.name || v.type || ''}>
-                          {v.name || v.type} ({v.type})
-                        </option>
-                      ))}
-                    </select>
+              {attachSupported && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input type="radio" name="expandMode" checked={expandMode === 'attach'} onChange={() => { setExpandMode('attach'); if (!targetVdev) setTargetVdev(dataVdevs[0]?.name || dataVdevs[0]?.type || ''); }} style={{ margin: 0 }} />
+                    <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>Expand existing VDEV (Attach)</span>
+                  </label>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', paddingLeft: 21 }}>
+                    Expands capacity of an existing RAIDZ VDEV by attaching a disk using <code style={{ fontFamily: 'var(--font-mono)' }}>zpool attach</code>.
                   </div>
-                )}
-              </div>
+                  {raidzEnabled === false && (
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 7, paddingLeft: 21, marginTop: 2 }}>
+                      <AlertTriangle size={11} style={{ color: 'var(--warning)', flexShrink: 0, marginTop: 1 }} />
+                      <span style={{ fontSize: 11, color: 'var(--warning)', lineHeight: 1.4 }}>
+                        RAIDZ Expansion is not enabled on this pool — attaching to a RAIDZ vdev will fail. Enable it via <strong>Pool Features</strong>.
+                      </span>
+                    </div>
+                  )}
+                  {expandMode === 'attach' && (
+                    <div style={{ paddingLeft: 21 }}>
+                      <select style={{ ...S.modal.select, width: '100%' }} value={targetVdev} onChange={e => setTargetVdev(e.target.value)}>
+                        {dataVdevs.map(v => (
+                          <option key={v.name || v.type} value={v.name || v.type || ''}>{v.name || v.type} ({v.type})</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
-          {/* Disk label */}
           <label style={S.modal.label}>Select disk</label>
-
-          {/* Inline disk picker */}
           <InlineDiskPicker selected={disk} onSelect={setDisk} />
 
-          {/* Command preview */}
           <div style={{ background: 'var(--bg-elevated)', borderRadius: 'var(--radius)', padding: '8px 12px', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Command preview</div>
             <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--info)', wordBreak: 'break-all' }}>{cmdPreview}</code>
@@ -816,9 +837,119 @@ function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
             <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
             <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleExpand} disabled={expanding || !ready}>
               {expanding ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Expand size={14} />}
-              {expanding ? 'Adding…' : (mode === 'extend' ? 'Extend Pool' : 'Add Cache')}
+              {expanding ? 'Adding…' : modeLabels[mode]}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Pool Features Modal ──────────────────────────────────────────────────────── */
+function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () => void }) {
+  const { notify } = useNotifications();
+  const [raidzFeature,   setRaidzFeature]   = useState<{ value: string; enabled: boolean } | null>(null);
+  const [loading,        setLoading]        = useState(true);
+  const [enabling,       setEnabling]       = useState(false);
+  const [pendingEnable,  setPendingEnable]  = useState(false);
+
+  useEffect(() => {
+    api.getRaidzExpansionFeature(poolName)
+      .then(res => setRaidzFeature({ value: res.value, enabled: res.enabled }))
+      .catch(() => setRaidzFeature(null))
+      .finally(() => setLoading(false));
+  }, [poolName]);
+
+  const handleConfirmEnable = async () => {
+    setEnabling(true);
+    try {
+      await api.enableRaidzExpansionFeature(poolName);
+      setRaidzFeature({ value: 'enabled', enabled: true });
+      setPendingEnable(false);
+      notify({ type: 'success', title: 'Feature Enabled', message: `raidz_expansion enabled on pool "${poolName}"` });
+    } catch (err: any) {
+      notify({ type: 'error', title: 'Enable Failed', message: err.message || 'Failed to enable raidz_expansion' });
+    } finally { setEnabling(false); }
+  };
+
+  return (
+    <div style={S.modal.overlay} onClick={onClose}>
+      <div style={{ ...S.modal.box, maxWidth: 440 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+          <div>
+            <h3 style={S.modal.title}>Pool Features</h3>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>{poolName}</p>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
+        </div>
+
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '24px 0', justifyContent: 'center' }}>
+            <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)' }} />
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading features…</span>
+          </div>
+        ) : raidzFeature === null ? (
+          <div style={{ padding: '16px 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
+            Could not load pool features.
+          </div>
+        ) : (
+          <div style={{ borderTop: '1px solid var(--border)' }}>
+            <div style={{ padding: '16px 0', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)' }}>RAIDZ Expansion</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.4 }}>
+                    Allows adding disks to an existing RAIDZ vdev to grow its capacity
+                  </div>
+                  {raidzFeature.enabled && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 6 }}>
+                      <Info size={10} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Permanent — ZFS features cannot be disabled once enabled</span>
+                    </div>
+                  )}
+                </div>
+                {enabling ? (
+                  <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)', flexShrink: 0, marginTop: 3 }} />
+                ) : (
+                  <button
+                    onClick={raidzFeature.enabled ? () => {} : () => setPendingEnable(p => !p)}
+                    title={raidzFeature.enabled ? 'ZFS features cannot be disabled once enabled' : 'Enable RAIDZ Expansion'}
+                    style={{
+                      width: 44, height: 22, borderRadius: 11, flexShrink: 0, marginTop: 3,
+                      background: raidzFeature.enabled ? 'var(--success)' : 'var(--bg-elevated)',
+                      border: `1px solid ${raidzFeature.enabled ? 'var(--success)' : 'var(--border)'}`,
+                      position: 'relative', cursor: raidzFeature.enabled ? 'default' : 'pointer',
+                      transition: 'all 0.2s', opacity: raidzFeature.enabled ? 0.75 : 1,
+                    }}
+                  >
+                    <div style={{ position: 'absolute', top: 2, left: raidzFeature.enabled ? 22 : 2, width: 16, height: 16, borderRadius: 8, background: '#fff', transition: 'left 0.2s' }} />
+                  </button>
+                )}
+              </div>
+              {pendingEnable && !raidzFeature.enabled && (
+                <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
+                    <AlertTriangle size={13} style={{ color: 'var(--danger)', flexShrink: 0, marginTop: 1 }} />
+                    <span style={{ fontSize: 12, color: 'var(--danger)', lineHeight: 1.4 }}>
+                      This is <strong>permanent</strong>. ZFS features cannot be disabled once enabled.
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="btn btn-secondary" style={{ flex: 1, fontSize: 11 }} onClick={() => setPendingEnable(false)}>Cancel</button>
+                    <button className="btn btn-primary" style={{ flex: 1, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleConfirmEnable} disabled={enabling}>
+                      {enabling && <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} />}
+                      Confirm Enable
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div style={{ marginTop: 20 }}>
+          <button className="btn btn-secondary" style={{ width: '100%' }} onClick={onClose}>Close</button>
         </div>
       </div>
     </div>
@@ -1177,8 +1308,6 @@ function SettingsPopout({
   const [showDestroyDialog, setShowDestroyDialog] = useState(false);
   const [destroyInput,      setDestroyInput]      = useState('');
   const [destroying,        setDestroying]        = useState(false);
-  const [raidzFeature,      setRaidzFeature]      = useState<{ value: string; enabled: boolean } | null>(null);
-  const [raidzEnabling,     setRaidzEnabling]     = useState(false);
 
   useEffect(() => { requestAnimationFrame(() => setVisible(true)); }, []);
 
@@ -1190,31 +1319,14 @@ function SettingsPopout({
   const load = () => {
     setLoading(true);
     setError(null);
-    Promise.all([
-      api.getPoolSettings(poolName),
-      api.getRaidzExpansionFeature(poolName).catch(() => null),
-    ]).then(([settingsRes, featureRes]) => {
+    api.getPoolSettings(poolName).then(settingsRes => {
       const map: Record<string, string> = {};
       for (const p of [...settingsRes.pool_props, ...settingsRes.dataset_props]) map[p.name] = p.value;
       setProps(map);
       setEdits({ ...map });
-      if (featureRes) setRaidzFeature({ value: featureRes.value, enabled: featureRes.enabled });
     }).catch(err => {
       setError(err.message || 'Failed to load settings');
     }).finally(() => setLoading(false));
-  };
-
-  const handleEnableRaidzExpansion = async () => {
-    setRaidzEnabling(true);
-    try {
-      await api.enableRaidzExpansionFeature(poolName);
-      setRaidzFeature({ value: 'enabled', enabled: true });
-      notify({ type: 'success', title: 'Feature Enabled', message: `raidz_expansion enabled on pool "${poolName}"` });
-    } catch (err: any) {
-      notify({ type: 'error', title: 'Enable Failed', message: err.message || 'Failed to enable raidz_expansion' });
-    } finally {
-      setRaidzEnabling(false);
-    }
   };
 
   useEffect(() => { load(); }, [poolName]);
@@ -1331,56 +1443,6 @@ function SettingsPopout({
                   />
                 </div>
               </div>
-              {/* ZFS Features */}
-              {raidzFeature !== null && (
-                <div style={{ paddingTop: 8 }}>
-                  {sectionHeader('ZFS Features')}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid var(--border-subtle)' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)' }}>
-                        RAIDZ Expansion
-                      </div>
-                      <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', marginTop: 2, lineHeight: 1.4 }}>
-                        Allows adding disks to an existing RAIDZ vdev to grow its capacity
-                      </div>
-                      {raidzFeature.enabled && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 5 }}>
-                          <Info size={10} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>
-                            Permanent — ZFS features cannot be disabled once enabled
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    {raidzEnabling ? (
-                      <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)', flexShrink: 0 }} />
-                    ) : (
-                      <button
-                        title={raidzFeature.enabled ? 'ZFS features cannot be disabled once enabled' : 'Enable RAIDZ Expansion'}
-                        onClick={raidzFeature.enabled
-                          ? () => {}
-                          : handleEnableRaidzExpansion
-                        }
-                        style={{
-                          width: 44, height: 22, borderRadius: 11, flexShrink: 0,
-                          background: raidzFeature.enabled ? 'var(--success)' : 'var(--bg-elevated)',
-                          border: `1px solid ${raidzFeature.enabled ? 'var(--success)' : 'var(--border)'}`,
-                          position: 'relative', cursor: 'pointer', transition: 'all 0.2s',
-                          opacity: raidzFeature.enabled ? 0.75 : 1,
-                        }}
-                      >
-                        <div style={{
-                          position: 'absolute', top: 2,
-                          left: raidzFeature.enabled ? 22 : 2,
-                          width: 16, height: 16, borderRadius: 8,
-                          background: '#fff', transition: 'left 0.2s',
-                        }} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-
               {/* Pool Property Groups */}
               <div style={{ paddingTop: 8 }}>
                 {poolPropGroups.map(group => (
@@ -1623,7 +1685,8 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
   const [replaceTarget, setReplaceTarget] = useState<{ pool: string; preselectedDisk?: string } | null>(null);
   const [smartTarget,   setSmartTarget]   = useState<string | null>(null);
   const [poolVdevs,     setPoolVdevs]     = useState<Record<string, any[]>>({});
-  const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null);
+  const [settingsOpenFor,  setSettingsOpenFor]  = useState<string | null>(null);
+  const [featuresOpenFor,  setFeaturesOpenFor]  = useState<string | null>(null);
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
@@ -1864,9 +1927,13 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
         <ExpandPoolModal
           poolName={expandTarget}
           poolVdevs={poolVdevs[expandTarget] || []}
+          zfsVersion={zfsVersion}
           onClose={() => setExpandTarget(null)}
           onSuccess={() => { showToast(`Disk added to pool "${expandTarget}"`, 'success'); refreshPoolVdevs(expandTarget); setExpandTarget(null); onRefresh(); startPostOpPoll(); }}
         />
+      )}
+      {featuresOpenFor && (
+        <FeaturesModal poolName={featuresOpenFor} onClose={() => setFeaturesOpenFor(null)} />
       )}
       {replaceTarget && (
         <ReplaceDiskModal
@@ -1979,6 +2046,14 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                     <button className="btn btn-secondary" onClick={() => handleToggleStatus(pool.name)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <Info size={13} />
                       {isExpanded ? 'Hide' : 'Status'}
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => setFeaturesOpenFor(pool.name)}
+                      title="Pool Features"
+                      style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                    >
+                      <Layers size={13} /> Features
                     </button>
                     <button
                       className="btn btn-secondary"
