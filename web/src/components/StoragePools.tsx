@@ -216,14 +216,16 @@ function DiskStatusBadge({ disk }: { disk: EnrichedDisk }) {
   );
 }
 
-function DiskPicker({ onSelect, onClose, selected }: {
+function DiskPicker({ onSelect, onClose, selected, addedDisks = [] }: {
   onSelect: (path: string) => void;
   onClose: () => void;
   selected?: string;
+  addedDisks?: string[];
 }) {
   const [disks, setDisks]             = useState<EnrichedDisk[]>([]);
   const [loading, setLoading]         = useState(true);
   const [confirmDisk, setConfirmDisk] = useState<EnrichedDisk | null>(null);
+  const addedSet = new Set(addedDisks.filter(Boolean));
 
   useEffect(() => {
     api.getEnrichedDisks()
@@ -233,8 +235,10 @@ function DiskPicker({ onSelect, onClose, selected }: {
   }, []);
 
   const handleClick = (disk: EnrichedDisk) => {
+    const path = `/dev/${disk.name}`;
+    if (addedSet.has(path)) return; // already added — no action
     if (disk.in_use) { setConfirmDisk(disk); return; }
-    onSelect(`/dev/${disk.name}`);
+    onSelect(path);
     onClose();
   };
 
@@ -284,27 +288,32 @@ function DiskPicker({ onSelect, onClose, selected }: {
             {disks.map((disk, i) => {
               const path = `/dev/${disk.name}`;
               const isSelected = selected === path;
-              const sysBorder = disk.is_system ? 'rgba(251,146,60,0.4)' : isSelected ? 'var(--accent-mid)' : 'var(--border)';
-              const sysBg = disk.is_system ? 'rgba(251,146,60,0.06)' : isSelected ? 'var(--accent-dim)' : 'var(--bg-elevated)';
+              const isAdded = addedSet.has(path);
+              const sysBorder = isAdded ? 'rgba(34,197,94,0.35)' : disk.is_system ? 'rgba(251,146,60,0.4)' : isSelected ? 'var(--accent-mid)' : 'var(--border)';
+              const sysBg = isAdded ? 'rgba(34,197,94,0.06)' : disk.is_system ? 'rgba(251,146,60,0.06)' : isSelected ? 'var(--accent-dim)' : 'var(--bg-elevated)';
               return (
               <button
                 key={i}
                 onClick={() => handleClick(disk)}
+                disabled={isAdded}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
                   background: sysBg,
                   border: `1px solid ${sysBorder}`,
-                  borderRadius: 'var(--radius)', cursor: 'pointer', textAlign: 'left',
-                  opacity: disk.in_use && !isSelected ? 0.65 : 1, transition: 'all 0.12s',
+                  borderRadius: 'var(--radius)', cursor: isAdded ? 'default' : 'pointer', textAlign: 'left',
+                  opacity: (disk.in_use && !isSelected && !isAdded) ? 0.65 : 1, transition: 'all 0.12s',
                 }}
-                onMouseEnter={e => { if (!disk.in_use) (e.currentTarget as HTMLElement).style.borderColor = disk.is_system ? 'rgba(251,146,60,0.7)' : 'var(--accent)'; }}
+                onMouseEnter={e => { if (!disk.in_use && !isAdded) (e.currentTarget as HTMLElement).style.borderColor = disk.is_system ? 'rgba(251,146,60,0.7)' : 'var(--accent)'; }}
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = sysBorder; }}
               >
-                <HardDrive size={16} style={{ color: disk.in_use ? 'var(--text-muted)' : 'var(--info)', flexShrink: 0 }} />
+                <HardDrive size={16} style={{ color: isAdded ? 'var(--success)' : disk.in_use ? 'var(--text-muted)' : 'var(--info)', flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>/dev/{disk.name}</span>
-                    <DiskStatusBadge disk={disk} />
+                    {isAdded && (
+                      <span style={{ fontSize: 10, color: 'var(--success)', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 4, padding: '1px 6px', fontWeight: 700, flexShrink: 0 }}>✓ ADDED</span>
+                    )}
+                    {!isAdded && <DiskStatusBadge disk={disk} />}
                   </div>
                   {(disk.model || disk.serial) && (
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2, fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -312,7 +321,7 @@ function DiskPicker({ onSelect, onClose, selected }: {
                     </div>
                   )}
                 </div>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: disk.in_use ? 'var(--text-muted)' : 'var(--text-secondary)', fontWeight: 600, minWidth: 60, textAlign: 'right', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: isAdded ? 'var(--success)' : disk.in_use ? 'var(--text-muted)' : 'var(--text-secondary)', fontWeight: 600, minWidth: 60, textAlign: 'right', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
                   {disk.size_human}
                 </span>
               </button>
@@ -868,6 +877,7 @@ function CreatePoolModal({ onClose, onSuccess, usedDisks = new Set<string>() }: 
           onSelect={path => { handlePickerSelect(path); setShowPicker(false); }}
           onClose={() => setShowPicker(false)}
           selected={pickerTarget !== null ? devices[pickerTarget] : undefined}
+          addedDisks={devices.filter((d, idx) => d.trim() && (pickerTarget === null || idx !== pickerTarget))}
         />
       )}
       <div style={S.modal.overlay} onClick={onClose}>
