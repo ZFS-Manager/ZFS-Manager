@@ -894,35 +894,25 @@ const FEATURE_DESCRIPTIONS: Record<string, string> = {
   longname:               'Supports filenames longer than 255 bytes (up to 1023 bytes) in UTF-8.',
 };
 
-function FeatureToggle({
-  feature, toggling, onToggle,
-}: { feature: FeatureEntry; toggling: boolean; onToggle: (f: FeatureEntry, enable: boolean) => void }) {
-  const isActive   = feature.value === 'active';
-  const isEnabled  = feature.value === 'enabled';
-  const isDisabled = feature.value === 'disabled';
-  const isOn       = isActive || isEnabled;
-
+function FeatureToggle({ isOn, locked, pending, onClick }: { isOn: boolean; locked: boolean; pending: boolean; onClick: () => void }) {
+  const trackColor = locked ? 'var(--success)' : pending ? 'var(--warning)' : isOn ? 'var(--accent)' : 'rgba(255,255,255,0.08)';
+  const borderColor = locked ? 'rgba(34,197,94,0.5)' : pending ? 'rgba(245,158,11,0.5)' : isOn ? 'rgba(99,179,237,0.5)' : 'var(--border)';
   return (
     <button
-      title={isActive ? 'In use — cannot be disabled' : isOn ? 'Click to disable' : 'Click to enable'}
-      disabled={toggling || isActive}
-      onClick={() => !isActive && onToggle(feature, isDisabled)}
+      disabled={locked}
+      onClick={onClick}
       style={{
         width: 36, height: 20, borderRadius: 10, flexShrink: 0,
-        background: isOn ? (isActive ? 'var(--success)' : 'var(--accent)') : 'rgba(255,255,255,0.08)',
-        border: `1px solid ${isOn ? (isActive ? 'rgba(34,197,94,0.6)' : 'rgba(99,179,237,0.6)') : 'var(--border)'}`,
-        position: 'relative', cursor: (isActive || toggling) ? 'default' : 'pointer',
-        transition: 'all 0.2s', opacity: isActive ? 0.55 : 1, padding: 0,
-        boxShadow: isOn && !isActive ? '0 0 6px rgba(99,179,237,0.25)' : 'none',
+        background: trackColor, border: `1px solid ${borderColor}`,
+        position: 'relative', cursor: locked ? 'default' : 'pointer',
+        transition: 'all 0.18s', opacity: locked ? 0.5 : 1, padding: 0,
       }}
     >
       <div style={{
-        position: 'absolute', top: 2,
-        left: isOn ? 16 : 2,
+        position: 'absolute', top: 2, left: isOn ? 16 : 2,
         width: 14, height: 14, borderRadius: 7,
-        background: toggling ? 'rgba(255,255,255,0.4)' : isOn ? '#fff' : 'rgba(255,255,255,0.35)',
-        transition: 'left 0.18s ease',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+        background: (locked || isOn) ? '#fff' : 'rgba(255,255,255,0.35)',
+        transition: 'left 0.18s ease', boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
       }} />
     </button>
   );
@@ -930,11 +920,13 @@ function FeatureToggle({
 
 function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () => void }) {
   const { notify } = useNotifications();
-  const [features,  setFeatures]  = useState<FeatureEntry[]>([]);
-  const [loading,   setLoading]   = useState(true);
-  const [pending,   setPending]   = useState<{ feature: FeatureEntry; enable: boolean } | null>(null);
-  const [toggling,  setToggling]  = useState<string | null>(null);
-  const [hovered,   setHovered]   = useState<FeatureEntry | null>(null);
+  const [features,     setFeatures]     = useState<FeatureEntry[]>([]);
+  const [loading,      setLoading]      = useState(true);
+  // Map<featureName, desiredEnabled> — staged but not yet saved
+  const [staged,       setStaged]       = useState<Map<string, boolean>>(new Map());
+  const [confirmSave,  setConfirmSave]  = useState(false);
+  const [saving,       setSaving]       = useState(false);
+  const [hovered,      setHovered]      = useState<FeatureEntry | null>(null);
 
   useEffect(() => {
     api.getPoolFeatures(poolName)
@@ -943,24 +935,42 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
       .finally(() => setLoading(false));
   }, [poolName]);
 
-  const handleToggleRequest = (f: FeatureEntry, enable: boolean) => setPending({ feature: f, enable });
+  const handleToggle = (f: FeatureEntry) => {
+    if (f.value === 'active') return;
+    const currentOn = f.value === 'active' || f.value === 'enabled';
+    const wantOn    = !currentOn;
+    setStaged(prev => {
+      const next = new Map(prev);
+      // If toggling back to the saved state, remove from staged
+      if (wantOn === currentOn) next.delete(f.name);
+      else                      next.set(f.name, wantOn);
+      return next;
+    });
+  };
 
-  const handleConfirm = async () => {
-    if (!pending) return;
-    const { feature, enable } = pending;
-    setPending(null);
-    setToggling(feature.name);
-    try {
-      await api.togglePoolFeature(poolName, feature.name, enable);
-      const newValue = enable ? 'enabled' : 'disabled';
-      setFeatures(prev => prev.map(f =>
-        f.name === feature.name ? { ...f, value: newValue, enabled: enable } : f
-      ));
-      notify({ type: 'success', title: enable ? 'Feature Enabled' : 'Feature Disabled',
-        message: `${feature.name} ${enable ? 'enabled' : 'disabled'} on "${poolName}"` });
-    } catch (err: any) {
-      notify({ type: 'error', title: 'Toggle Failed', message: err.message || 'Failed to toggle feature' });
-    } finally { setToggling(null); }
+  const handleSaveAll = async () => {
+    setConfirmSave(false);
+    setSaving(true);
+    const entries = [...staged.entries()];
+    const errors: string[] = [];
+    for (const [name, enable] of entries) {
+      try {
+        await api.togglePoolFeature(poolName, name, enable);
+        const newValue = enable ? 'enabled' : 'disabled';
+        setFeatures(prev => prev.map(f =>
+          f.name === name ? { ...f, value: newValue, enabled: enable } : f
+        ));
+      } catch (err: any) {
+        errors.push(`${name}: ${err.message || 'failed'}`);
+      }
+    }
+    setStaged(new Map());
+    setSaving(false);
+    if (errors.length === 0) {
+      notify({ type: 'success', title: 'Features Saved', message: `${entries.length} change${entries.length > 1 ? 's' : ''} applied to "${poolName}"` });
+    } else {
+      notify({ type: 'error', title: `${errors.length} change(s) failed`, message: errors.join(' · ') });
+    }
   };
 
   const statusColor = (v: string) => v === 'active' ? 'var(--success)' : v === 'enabled' ? 'var(--accent)' : 'var(--text-muted)';
@@ -979,9 +989,11 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
           <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', marginLeft: 2 }}>{items.length}</span>
         </div>
         {items.map(f => {
-          const isBusy   = toggling === f.name;
-          const isHov    = hovered?.name === f.name;
-          const isActive = f.value === 'active';
+          const isActive  = f.value === 'active';
+          const currentOn = f.value === 'active' || f.value === 'enabled';
+          const hasPending = staged.has(f.name);
+          const effectiveOn = hasPending ? staged.get(f.name)! : currentOn;
+          const isHov = hovered?.name === f.name;
           return (
             <div key={f.name}
               onMouseEnter={() => setHovered(f)}
@@ -989,20 +1001,26 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
               style={{
                 display: 'flex', alignItems: 'center', gap: 8,
                 padding: '7px 14px',
-                background: isHov ? 'rgba(255,255,255,0.04)' : 'transparent',
-                borderLeft: `2px solid ${isHov ? dot : 'transparent'}`,
+                background: isHov ? 'rgba(255,255,255,0.04)' : hasPending ? 'rgba(245,158,11,0.04)' : 'transparent',
+                borderLeft: `2px solid ${hasPending ? 'rgba(245,158,11,0.5)' : isHov ? dot : 'transparent'}`,
                 cursor: 'default', transition: 'background 0.12s, border-color 0.12s',
-                opacity: isBusy ? 0.5 : 1,
+                opacity: saving ? 0.5 : 1,
               }}
             >
-              {isBusy
-                ? <Loader2 size={9} style={{ animation: 'spin 1s linear infinite', color: dot, flexShrink: 0 }} />
-                : <span style={{ width: 5, height: 5, borderRadius: '50%', background: dot, display: 'inline-block', flexShrink: 0, opacity: isActive ? 1 : 0.45 }} />
-              }
+              <span style={{
+                width: 5, height: 5, borderRadius: '50%', display: 'inline-block', flexShrink: 0,
+                background: hasPending ? 'var(--warning)' : dot,
+                opacity: (isActive || hasPending) ? 1 : 0.45,
+              }} />
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: isHov ? 'var(--text-primary)' : 'var(--text-secondary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'color 0.12s' }}>
                 {f.name}
               </span>
-              <FeatureToggle feature={f} toggling={isBusy} onToggle={handleToggleRequest} />
+              {hasPending && (
+                <span style={{ fontSize: 9, color: 'var(--warning)', fontFamily: 'var(--font-ui)', flexShrink: 0 }}>
+                  {effectiveOn ? '→ on' : '→ off'}
+                </span>
+              )}
+              <FeatureToggle isOn={effectiveOn} locked={isActive} pending={hasPending} onClick={() => handleToggle(f)} />
             </div>
           );
         })}
@@ -1010,15 +1028,28 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
     );
   };
 
-  // right-panel description for hovered feature
-  const desc = hovered ? FEATURE_DESCRIPTIONS[hovered.name] : null;
+  const desc      = hovered ? FEATURE_DESCRIPTIONS[hovered.name] : null;
+  const hovStaged = hovered ? staged.get(hovered.name) : undefined;
+  const hovCurrentOn = hovered ? (hovered.value === 'active' || hovered.value === 'enabled') : false;
+  const hovEffectiveOn = hovStaged !== undefined ? hovStaged : hovCurrentOn;
+  const stagedCount = staged.size;
+
+  // staged changes for the confirm dialog
+  const stagedList = [...staged.entries()].map(([name, enable]) => {
+    const f = features.find(x => x.name === name);
+    const fromVal = f?.value ?? '?';
+    const toVal   = enable ? 'enabled' : 'disabled';
+    const isPermanent = enable && fromVal === 'disabled';
+    return { name, enable, fromVal, toVal, isPermanent };
+  });
+  const hasPermChanges = stagedList.some(s => s.isPermanent);
 
   return (
-    <div style={S.modal.overlay} onClick={() => { if (!pending) onClose(); }}>
+    <div style={S.modal.overlay} onClick={() => { if (!confirmSave) onClose(); }}>
       <div style={{ ...S.modal.box, maxWidth: 720, padding: 0, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
 
-        {/* ── Top: header + general info ───────────────────────────────────── */}
-        <div style={{ padding: '20px 24px 0' }}>
+        {/* ── Header ───────────────────────────────────────────────────────── */}
+        <div style={{ padding: '20px 24px 14px' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 14 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div style={{ width: 32, height: 32, borderRadius: 'var(--radius)', background: 'rgba(99,179,237,0.12)', border: '1px solid rgba(99,179,237,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -1031,6 +1062,7 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
                   <span style={{ color: 'var(--success)' }}>{active.length} active</span>
                   {enabled.length > 0 && <>&nbsp;·&nbsp;<span style={{ color: 'var(--accent)' }}>{enabled.length} enabled</span></>}
                   {disabled.length > 0 && <>&nbsp;·&nbsp;{disabled.length} disabled</>}
+                  {stagedCount > 0 && <>&nbsp;·&nbsp;<span style={{ color: 'var(--warning)' }}>{stagedCount} pending</span></>}
                 </p>
               </div>
             </div>
@@ -1038,34 +1070,41 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
           </div>
 
           {/* General info callout */}
-          <div style={{ padding: '10px 14px', marginBottom: 14, background: 'rgba(99,179,237,0.06)', border: '1px solid rgba(99,179,237,0.18)', borderRadius: 'var(--radius)', display: 'flex', gap: 10 }}>
+          <div style={{ padding: '10px 14px', background: 'rgba(99,179,237,0.06)', border: '1px solid rgba(99,179,237,0.18)', borderRadius: 'var(--radius)', display: 'flex', gap: 10 }}>
             <Info size={13} style={{ color: 'var(--accent)', flexShrink: 0, marginTop: 1 }} />
             <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>
-              ZFS features are <strong style={{ color: 'var(--text-primary)' }}>permanent on-disk format extensions</strong>. Once a feature moves to <span style={{ color: 'var(--success)' }}>active</span> (data is using it), it can never be removed. Features that are <span style={{ color: 'var(--accent)' }}>enabled</span> but not yet active can still be disabled. Hover any row to see what a feature does.
+              ZFS features are <strong style={{ color: 'var(--text-primary)' }}>permanent on-disk format extensions</strong>. Once a feature becomes <span style={{ color: 'var(--success)' }}>active</span> (data uses it), it cannot be removed. Toggle as many features as you want, then click <strong>Save Changes</strong>.
             </p>
           </div>
-
-          {/* Confirm dialog */}
-          {pending && (
-            <div style={{ marginBottom: 14, padding: '12px 14px', background: pending.enable ? 'rgba(239,68,68,0.07)' : 'rgba(245,158,11,0.07)', border: `1px solid ${pending.enable ? 'rgba(239,68,68,0.25)' : 'rgba(245,158,11,0.25)'}`, borderRadius: 'var(--radius)' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
-                <AlertTriangle size={13} style={{ color: pending.enable ? 'var(--danger)' : 'var(--warning)', flexShrink: 0, marginTop: 1 }} />
-                <div style={{ fontSize: 12, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
-                  {pending.enable
-                    ? <><strong style={{ color: 'var(--danger)' }}>Permanent action</strong> — once data starts using <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-primary)' }}>{pending.feature.name}</code>, it cannot be disabled.</>
-                    : <>Disable <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-primary)' }}>{pending.feature.name}</code>? Only works while no data uses it yet.</>
-                  }
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn btn-secondary" style={{ flex: 1, fontSize: 11 }} onClick={() => setPending(null)}>Cancel</button>
-                <button className="btn btn-primary" style={{ flex: 1, fontSize: 11 }} onClick={handleConfirm}>
-                  Confirm {pending.enable ? 'Enable' : 'Disable'}
-                </button>
-              </div>
-            </div>
-          )}
         </div>
+
+        {/* ── Confirm save dialog ───────────────────────────────────────────── */}
+        {confirmSave && (
+          <div style={{ margin: '0 24px 14px', padding: '14px', background: hasPermChanges ? 'rgba(239,68,68,0.07)' : 'rgba(245,158,11,0.07)', border: `1px solid ${hasPermChanges ? 'rgba(239,68,68,0.25)' : 'rgba(245,158,11,0.25)'}`, borderRadius: 'var(--radius)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <AlertTriangle size={13} style={{ color: hasPermChanges ? 'var(--danger)' : 'var(--warning)', flexShrink: 0 }} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: hasPermChanges ? 'var(--danger)' : 'var(--warning)' }}>
+                {hasPermChanges ? 'Permanent changes included' : 'Confirm changes'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
+              {stagedList.map(s => (
+                <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
+                  <span style={{ width: 4, height: 4, borderRadius: '50%', background: s.enable ? 'var(--accent)' : 'var(--text-muted)', display: 'inline-block', flexShrink: 0 }} />
+                  <span style={{ color: 'var(--text-primary)', minWidth: 180 }}>{s.name}</span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>{s.fromVal} → {s.toVal}</span>
+                  {s.isPermanent && <span style={{ fontSize: 9, color: 'var(--danger)', fontFamily: 'var(--font-ui)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>permanent</span>}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-secondary" style={{ flex: 1, fontSize: 11 }} onClick={() => setConfirmSave(false)}>Cancel</button>
+              <button className="btn btn-primary" style={{ flex: 1, fontSize: 11 }} onClick={handleSaveAll}>
+                Apply {stagedCount} Change{stagedCount > 1 ? 's' : ''}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ── Body: two-column ─────────────────────────────────────────────── */}
         <div style={{ display: 'flex', borderTop: '1px solid var(--border)' }}>
@@ -1089,56 +1128,48 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
           </div>
 
           {/* Right: description panel */}
-          <div style={{ width: 260, flexShrink: 0, padding: '20px 20px', display: 'flex', flexDirection: 'column', background: 'var(--bg-elevated)' }}>
+          <div style={{ width: 260, flexShrink: 0, padding: '20px', display: 'flex', flexDirection: 'column', background: 'var(--bg-elevated)' }}>
             {hovered ? (
               <>
                 <div style={{ marginBottom: 12 }}>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', wordBreak: 'break-all', lineHeight: 1.4, marginBottom: 8 }}>
                     {hovered.name}
                   </div>
-                  <span style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 5,
-                    fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 999,
-                    color: statusColor(hovered.value),
-                    background: hovered.value === 'active' ? 'rgba(34,197,94,0.12)' : hovered.value === 'enabled' ? 'rgba(99,179,237,0.12)' : 'rgba(255,255,255,0.06)',
-                    border: `1px solid ${hovered.value === 'active' ? 'rgba(34,197,94,0.3)' : hovered.value === 'enabled' ? 'rgba(99,179,237,0.3)' : 'var(--border)'}`,
-                    fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.07em',
-                  }}>
-                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: statusColor(hovered.value), display: 'inline-block' }} />
-                    {hovered.value}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                      fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 999,
+                      color: statusColor(hovered.value),
+                      background: hovered.value === 'active' ? 'rgba(34,197,94,0.12)' : hovered.value === 'enabled' ? 'rgba(99,179,237,0.12)' : 'rgba(255,255,255,0.06)',
+                      border: `1px solid ${hovered.value === 'active' ? 'rgba(34,197,94,0.3)' : hovered.value === 'enabled' ? 'rgba(99,179,237,0.3)' : 'var(--border)'}`,
+                      fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.07em',
+                    }}>
+                      <span style={{ width: 5, height: 5, borderRadius: '50%', background: statusColor(hovered.value), display: 'inline-block' }} />
+                      {hovered.value}
+                    </span>
+                    {hovStaged !== undefined && (
+                      <span style={{ fontSize: 10, color: 'var(--warning)', fontFamily: 'var(--font-ui)' }}>
+                        → {hovEffectiveOn ? 'enabled' : 'disabled'}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div style={{ flex: 1 }}>
-                  {desc ? (
-                    <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.65, margin: 0 }}>{desc}</p>
-                  ) : (
-                    <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.65, margin: 0, fontStyle: 'italic' }}>No description available for this feature.</p>
-                  )}
+                  {desc
+                    ? <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.65, margin: 0 }}>{desc}</p>
+                    : <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.65, margin: 0, fontStyle: 'italic' }}>No description available.</p>
+                  }
                 </div>
 
-                <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                  {hovered.value === 'active' && (
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-                      <span style={{ fontSize: 10, color: 'var(--success)', fontFamily: 'var(--font-ui)', lineHeight: 1.5 }}>
-                        In use — pool data requires this feature. Toggle is locked.
-                      </span>
-                    </div>
-                  )}
-                  {hovered.value === 'enabled' && (
-                    <div style={{ fontSize: 10, color: 'var(--accent)', fontFamily: 'var(--font-ui)', lineHeight: 1.5 }}>
-                      Not yet active — can still be disabled before data uses it.
-                    </div>
-                  )}
-                  {hovered.value === 'disabled' && (
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', lineHeight: 1.5 }}>
-                      Not enabled. Enabling will permanently extend the pool format once data uses it.
-                    </div>
-                  )}
+                <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)', fontSize: 10, fontFamily: 'var(--font-ui)', lineHeight: 1.5 }}>
+                  {hovered.value === 'active'   && <span style={{ color: 'var(--success)' }}>In use — toggle is locked.</span>}
+                  {hovered.value === 'enabled'  && <span style={{ color: 'var(--accent)' }}>Not yet active — can still be disabled.</span>}
+                  {hovered.value === 'disabled' && <span style={{ color: 'var(--text-muted)' }}>Enabling is permanent once data uses it.</span>}
                 </div>
               </>
             ) : (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, opacity: 0.45 }}>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, opacity: 0.4 }}>
                 <Layers size={28} style={{ color: 'var(--text-muted)' }} />
                 <p style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.5, margin: 0, fontFamily: 'var(--font-ui)' }}>
                   Hover a feature<br />to see its description
@@ -1149,7 +1180,7 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
         </div>
 
         {/* ── Footer ───────────────────────────────────────────────────────── */}
-        <div style={{ padding: '12px 24px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ padding: '12px 24px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <div style={{ display: 'flex', gap: 14, fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--success)', display: 'inline-block' }} /> active
@@ -1160,8 +1191,31 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
             <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--border)', display: 'inline-block' }} /> disabled
             </span>
+            {stagedCount > 0 && (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--warning)', display: 'inline-block' }} /> pending
+              </span>
+            )}
           </div>
-          <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={onClose}>Close</button>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            {stagedCount > 0 && (
+              <button className="btn btn-secondary" style={{ fontSize: 11 }} onClick={() => setStaged(new Map())}>
+                Reset
+              </button>
+            )}
+            <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={onClose}>Close</button>
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: 12, opacity: stagedCount === 0 ? 0.4 : 1 }}
+              disabled={stagedCount === 0 || saving}
+              onClick={() => setConfirmSave(true)}
+            >
+              {saving
+                ? <><Loader2 size={12} style={{ animation: 'spin 1s linear infinite', display: 'inline', marginRight: 6 }} />Saving…</>
+                : stagedCount > 0 ? `Save ${stagedCount} Change${stagedCount > 1 ? 's' : ''}` : 'Save Changes'
+              }
+            </button>
+          </div>
         </div>
       </div>
     </div>
