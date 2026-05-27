@@ -677,42 +677,16 @@ function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const { notify } = useNotifications();
   const [expanding, setExpanding] = useState(false);
   const [error, setError]         = useState('');
   const [mode, setMode]           = useState<'extend' | 'cache'>('extend');
   const [disk, setDisk]           = useState('');
 
-  // raidz_expansion feature gate
-  const [featureStatus, setFeatureStatus] = useState<'loading' | 'enabled' | 'disabled' | 'error'>('loading');
-  const [featureEnabling, setFeatureEnabling] = useState(false);
-  const [featureError, setFeatureError]       = useState('');
-
-  useEffect(() => {
-    api.getRaidzExpansionFeature(poolName)
-      .then(res => setFeatureStatus(res.enabled ? 'enabled' : 'disabled'))
-      .catch(() => setFeatureStatus('error'));
-  }, [poolName]);
-
-  const handleEnableFeature = async () => {
-    setFeatureEnabling(true);
-    setFeatureError('');
-    try {
-      await api.enableRaidzExpansionFeature(poolName);
-      setFeatureStatus('enabled');
-      notify({ type: 'success', title: 'Feature Enabled', message: 'raidz_expansion has been enabled. You can now expand the pool.' });
-    } catch (err: any) {
-      setFeatureError(err.message || 'Failed to enable raidz_expansion');
-    } finally {
-      setFeatureEnabling(false);
-    }
-  };
-
   const dataVdevs = poolVdevs.filter((v: any) => !['log', 'cache', 'spare'].includes(v.type));
   const [expandMode, setExpandMode] = useState<'new' | 'attach'>(dataVdevs.length > 0 ? 'attach' : 'new');
   const [targetVdev, setTargetVdev] = useState(dataVdevs.length > 0 ? (dataVdevs[0].name || dataVdevs[0].type || '') : '');
 
-  const ready = disk.trim() !== '' && featureStatus === 'enabled';
+  const ready = disk.trim() !== '';
 
   const targetForPreview = targetVdev || '<target_vdev>';
 
@@ -750,68 +724,6 @@ function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-
-          {/* raidz_expansion feature check */}
-          {featureStatus === 'loading' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text-muted)' }}>
-              <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
-              <span style={{ fontSize: 12 }}>Checking raidz_expansion feature…</span>
-            </div>
-          )}
-
-          {(featureStatus === 'disabled' || featureStatus === 'enabled') && (
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-              padding: '10px 14px',
-              background: featureStatus === 'enabled' ? 'rgba(34,197,94,0.06)' : 'rgba(245,158,11,0.06)',
-              border: `1px solid ${featureStatus === 'enabled' ? 'rgba(34,197,94,0.2)' : 'rgba(245,158,11,0.3)'}`,
-              borderRadius: 'var(--radius)',
-            }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: featureStatus === 'enabled' ? 'var(--success)' : 'var(--warning)', fontFamily: 'var(--font-ui)', marginBottom: 2 }}>
-                  raidz_expansion
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', lineHeight: 1.4 }}>
-                  {featureStatus === 'enabled'
-                    ? 'Enabled — you can now expand the pool'
-                    : 'Not enabled on this pool. You must enable it before expanding.'}
-                </div>
-                {featureStatus === 'enabled' && (
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
-                    Permanent — ZFS features cannot be disabled once enabled
-                  </div>
-                )}
-                {featureError && (
-                  <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 6 }}>{featureError}</div>
-                )}
-              </div>
-              {featureEnabling ? (
-                <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)', flexShrink: 0 }} />
-              ) : (
-                <button
-                  title={featureStatus === 'enabled' ? 'ZFS features cannot be disabled once enabled' : 'Enable raidz_expansion'}
-                  onClick={featureStatus === 'enabled'
-                    ? () => {}
-                    : handleEnableFeature
-                  }
-                  style={{
-                    width: 44, height: 22, borderRadius: 11, flexShrink: 0,
-                    background: featureStatus === 'enabled' ? 'var(--success)' : 'var(--bg-elevated)',
-                    border: `1px solid ${featureStatus === 'enabled' ? 'var(--success)' : 'var(--border)'}`,
-                    position: 'relative', cursor: 'pointer', transition: 'all 0.2s',
-                    opacity: featureStatus === 'enabled' ? 0.75 : 1,
-                  }}
-                >
-                  <div style={{
-                    position: 'absolute', top: 2,
-                    left: featureStatus === 'enabled' ? 22 : 2,
-                    width: 16, height: 16, borderRadius: 8,
-                    background: '#fff', transition: 'left 0.2s',
-                  }} />
-                </button>
-              )}
-            </div>
-          )}
 
           {/* Mode selector */}
           <div>
