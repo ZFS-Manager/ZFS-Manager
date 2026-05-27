@@ -849,6 +849,51 @@ function ExpandPoolModal({ poolName, poolVdevs, zfsVersion, onClose, onSuccess }
 /* ── Pool Features Modal ──────────────────────────────────────────────────────── */
 type FeatureEntry = { name: string; property: string; value: string; enabled: boolean };
 
+const FEATURE_DESCRIPTIONS: Record<string, string> = {
+  async_destroy:          'Destroy filesystems asynchronously in the background, reducing impact on I/O.',
+  empty_bpobj:            'Optimized representation of empty block pointer lists, reducing space overhead.',
+  lz4_compress:           'Enables the LZ4 compression algorithm — fast and efficient for most workloads.',
+  multi_vdev_crash_dump:  'Support crash dumps on pools with multiple top-level vdevs.',
+  spacemap_histogram:     'Stores a histogram of free space in each spacemap for faster allocation decisions.',
+  enabled_txg:            'Tracks the transaction group in which each feature was first enabled.',
+  hole_birth:             'Records the transaction group in which a hole was created, enabling efficient incremental send.',
+  extensible_dataset:     'Enables per-dataset feature flags and extensible metadata on datasets.',
+  embedded_data:          'Stores small block data directly inside block pointers, saving space for tiny files.',
+  bookmarks:              'Allows creating lightweight bookmarks of snapshot points without using snapshot space.',
+  filesystem_limits:      'Enforces limits on the number of filesystems and snapshots per dataset.',
+  large_blocks:           'Supports record sizes larger than 128 KB (up to 1 MB) for sequential workloads.',
+  large_dnode:            'Allows variable-length dnodes, enabling more bonus space for metadata.',
+  sha512:                 'Enables SHA-512/256 and Skein checksum algorithms as alternatives to SHA-256.',
+  skein:                  'Enables the Skein checksum algorithm for data integrity verification.',
+  edonr:                  'Enables the Edon-R checksum algorithm — faster than SHA-256 for checksum-only use.',
+  userobj_accounting:     'Tracks per-user and per-group object counts alongside space accounting.',
+  encryption:             'Enables native ZFS dataset encryption with per-dataset keys.',
+  project_quota:          'Allows setting space and object quotas on project IDs within a dataset.',
+  device_removal:         'Allows removing top-level vdevs (mirrors, stripes) from a pool.',
+  obsolete_counts:        'Tracks counts of obsolete space mappings after device removal.',
+  zpool_checkpoint:       'Allows saving and rewinding to a pool checkpoint — a full pool snapshot.',
+  spacemap_v2:            'New spacemap format that scales better for large, fragmented pools.',
+  allocation_classes:     'Enables separate allocation classes (e.g. special vdevs for metadata).',
+  resilver_defer:         'Defers a new resilver if one is already running, reducing redundant work.',
+  bookmark_v2:            'Extended bookmarks that store more information, including redaction lists.',
+  redaction_bookmarks:    'Bookmarks used to track redacted send streams for privacy-preserving replication.',
+  redacted_datasets:      'Datasets produced by redacted send — contain holes where data was redacted.',
+  bookmark_written:       'Adds written space tracking to bookmarks for delta calculations.',
+  log_spacemap:           'Uses a dedicated log for spacemap updates, greatly improving import time on large pools.',
+  livelist:               'Tracks live block references during deletion, accelerating dataset destroy.',
+  device_rebuild:         'Enables sequential device rebuild for mirror and dRAID vdevs — faster than traditional resilver.',
+  zstd_compress:          'Enables the Zstandard compression algorithm — higher ratios than LZ4 with tunable levels.',
+  draid:                  'Distributed spare RAID — distributes spare capacity across all drives for faster rebuild.',
+  zilsaxattr:             'Stores extended attributes (xattrs) in the ZIL for atomic xattr+data writes.',
+  head_errlog:            'Maintains a per-head-dataset error log rather than a single pool-wide log.',
+  blake3:                 'Enables the BLAKE3 checksum algorithm — very fast hardware-accelerated integrity checks.',
+  block_cloning:          'Allows copy-on-write block cloning (reflink) — instant zero-space file copies.',
+  vdev_zaps_v2:           'Extended ZAP (ZFS Attribute Processor) objects on vdevs for more per-vdev metadata.',
+  raidz_expansion:        'Allows adding disks to an existing RAIDZ vdev to expand capacity online.',
+  fast_dedup:             'New deduplication engine with in-memory hash table — significantly faster than classic dedup.',
+  longname:               'Supports filenames longer than 255 bytes (up to 1023 bytes) in UTF-8.',
+};
+
 function FeatureToggle({
   feature, toggling, onToggle,
 }: { feature: FeatureEntry; toggling: boolean; onToggle: (f: FeatureEntry, enable: boolean) => void }) {
@@ -863,19 +908,21 @@ function FeatureToggle({
       disabled={toggling || isActive}
       onClick={() => !isActive && onToggle(feature, isDisabled)}
       style={{
-        width: 36, height: 18, borderRadius: 9, flexShrink: 0,
-        background: isOn ? (isActive ? 'var(--success)' : 'var(--accent)') : 'var(--bg-elevated)',
-        border: `1px solid ${isOn ? (isActive ? 'var(--success)' : 'var(--accent)') : 'var(--border)'}`,
+        width: 36, height: 20, borderRadius: 10, flexShrink: 0,
+        background: isOn ? (isActive ? 'var(--success)' : 'var(--accent)') : 'rgba(255,255,255,0.08)',
+        border: `1px solid ${isOn ? (isActive ? 'rgba(34,197,94,0.6)' : 'rgba(99,179,237,0.6)') : 'var(--border)'}`,
         position: 'relative', cursor: (isActive || toggling) ? 'default' : 'pointer',
-        transition: 'all 0.2s', opacity: (isActive || toggling) ? 0.6 : 1, padding: 0,
+        transition: 'all 0.2s', opacity: isActive ? 0.55 : 1, padding: 0,
+        boxShadow: isOn && !isActive ? '0 0 6px rgba(99,179,237,0.25)' : 'none',
       }}
     >
       <div style={{
-        position: 'absolute', top: 1,
-        left: isOn ? 17 : 1,
+        position: 'absolute', top: 2,
+        left: isOn ? 16 : 2,
         width: 14, height: 14, borderRadius: 7,
-        background: toggling ? 'rgba(255,255,255,0.5)' : '#fff',
-        transition: 'left 0.2s',
+        background: toggling ? 'rgba(255,255,255,0.4)' : isOn ? '#fff' : 'rgba(255,255,255,0.35)',
+        transition: 'left 0.18s ease',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
       }} />
     </button>
   );
@@ -885,9 +932,8 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
   const { notify } = useNotifications();
   const [features,  setFeatures]  = useState<FeatureEntry[]>([]);
   const [loading,   setLoading]   = useState(true);
-  // pending: which feature is awaiting confirmation, and which direction
   const [pending,   setPending]   = useState<{ feature: FeatureEntry; enable: boolean } | null>(null);
-  const [toggling,  setToggling]  = useState<string | null>(null); // feature name being toggled
+  const [toggling,  setToggling]  = useState<string | null>(null);
 
   useEffect(() => {
     api.getPoolFeatures(poolName)
@@ -896,9 +942,7 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
       .finally(() => setLoading(false));
   }, [poolName]);
 
-  const handleToggleRequest = (f: FeatureEntry, enable: boolean) => {
-    setPending({ feature: f, enable });
-  };
+  const handleToggleRequest = (f: FeatureEntry, enable: boolean) => setPending({ feature: f, enable });
 
   const handleConfirm = async () => {
     if (!pending) return;
@@ -918,33 +962,90 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
     } finally { setToggling(null); }
   };
 
-  const sorted = [...features].sort((a, b) => {
-    const order = (v: string) => v === 'active' ? 0 : v === 'enabled' ? 1 : 2;
-    return order(a.value) - order(b.value) || a.name.localeCompare(b.name);
-  });
+  const active   = features.filter(f => f.value === 'active').sort((a,b) => a.name.localeCompare(b.name));
+  const enabled  = features.filter(f => f.value === 'enabled').sort((a,b) => a.name.localeCompare(b.name));
+  const disabled = features.filter(f => f.value === 'disabled').sort((a,b) => a.name.localeCompare(b.name));
+
+  const renderSection = (label: string, items: FeatureEntry[], accentColor: string, accentBg: string) => {
+    if (items.length === 0) return null;
+    return (
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 2px 4px', marginBottom: 2 }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: accentColor, flexShrink: 0, display: 'inline-block' }} />
+          <span style={{ fontSize: 10, fontWeight: 700, color: accentColor, fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            {label}
+          </span>
+          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>{items.length}</span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 8 }}>
+          {items.map(f => {
+            const isBusy = toggling === f.name;
+            const desc   = FEATURE_DESCRIPTIONS[f.name];
+            return (
+              <div key={f.name} style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 12px',
+                background: accentBg,
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid rgba(255,255,255,0.04)',
+                opacity: isBusy ? 0.55 : 1, transition: 'opacity 0.2s',
+              }}>
+                {/* name + info */}
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {isBusy
+                    ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite', color: accentColor, flexShrink: 0 }} />
+                    : null
+                  }
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {f.name}
+                  </span>
+                  {desc && (
+                    <span className="feat-info-wrap" style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
+                      <Info size={10} style={{ color: 'var(--text-muted)', cursor: 'help' }} />
+                      <span className="feat-tooltip">{desc}</span>
+                    </span>
+                  )}
+                </div>
+                {/* toggle */}
+                <FeatureToggle feature={f} toggling={isBusy} onToggle={handleToggleRequest} />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div style={S.modal.overlay} onClick={() => { if (!pending) onClose(); }}>
-      <div style={{ ...S.modal.box, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+      <div style={{ ...S.modal.box, maxWidth: 560 }} onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 18 }}>
           <div>
-            <h3 style={S.modal.title}>Pool Features</h3>
-            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>
-              {poolName} · {features.length} features
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Layers size={15} style={{ color: 'var(--accent)' }} />
+              <h3 style={{ ...S.modal.title, margin: 0 }}>Pool Features</h3>
+            </div>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 5 }}>
+              {poolName} &nbsp;·&nbsp;
+              <span style={{ color: 'var(--success)' }}>{active.length} active</span>
+              {enabled.length > 0 && <> &nbsp;·&nbsp; <span style={{ color: 'var(--accent)' }}>{enabled.length} enabled</span></>}
+              {disabled.length > 0 && <> &nbsp;·&nbsp; {disabled.length} disabled</>}
             </p>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}><X size={16} /></button>
         </div>
 
         {/* Confirm dialog */}
         {pending && (
-          <div style={{ marginBottom: 12, padding: '12px 14px', background: pending.enable ? 'rgba(239,68,68,0.06)' : 'rgba(245,158,11,0.06)', border: `1px solid ${pending.enable ? 'rgba(239,68,68,0.2)' : 'rgba(245,158,11,0.2)'}`, borderRadius: 'var(--radius)' }}>
+          <div style={{ marginBottom: 14, padding: '12px 14px', background: pending.enable ? 'rgba(239,68,68,0.07)' : 'rgba(245,158,11,0.07)', border: `1px solid ${pending.enable ? 'rgba(239,68,68,0.25)' : 'rgba(245,158,11,0.25)'}`, borderRadius: 'var(--radius)' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
               <AlertTriangle size={13} style={{ color: pending.enable ? 'var(--danger)' : 'var(--warning)', flexShrink: 0, marginTop: 1 }} />
-              <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 12, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
                 {pending.enable
-                  ? <><strong style={{ color: 'var(--danger)' }}>Permanent</strong> — <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{pending.feature.name}</code> cannot be disabled once data starts using it.</>
-                  : <>Disable <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{pending.feature.name}</code>? This only works while the feature is not yet active.</>
+                  ? <><strong style={{ color: 'var(--danger)' }}>Permanent action</strong> — once data starts using <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-primary)' }}>{pending.feature.name}</code>, it cannot be disabled.</>
+                  : <>Disable <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-primary)' }}>{pending.feature.name}</code>? This only works while no data uses it yet.</>
                 }
               </div>
             </div>
@@ -957,59 +1058,40 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
           </div>
         )}
 
-        {/* Feature list */}
+        {/* Feature sections */}
         {loading ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '32px 0', justifyContent: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '36px 0', justifyContent: 'center' }}>
             <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)' }} />
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading features…</span>
           </div>
         ) : features.length === 0 ? (
-          <div style={{ padding: '20px 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>No features returned.</div>
+          <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>No features returned.</div>
         ) : (
-          <div style={{ maxHeight: 380, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }} className="no-scrollbar">
-            {sorted.map(f => {
-              const isActive  = f.value === 'active';
-              const isOn      = f.value === 'active' || f.value === 'enabled';
-              const isBusy    = toggling === f.name;
-              const statusCol = isActive ? 'var(--success)' : isOn ? 'var(--accent)' : 'var(--text-muted)';
-              return (
-                <div key={f.name} style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '7px 10px', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)',
-                  opacity: isBusy ? 0.6 : 1, transition: 'opacity 0.2s',
-                }}>
-                  <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    {isBusy && <Loader2 size={10} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)', flexShrink: 0 }} />}
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {f.name}
-                    </span>
-                    {isActive && (
-                      <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', flexShrink: 0 }}>in use</span>
-                    )}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                    <span style={{ fontSize: 9, color: statusCol, fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      {f.value}
-                    </span>
-                    <FeatureToggle feature={f} toggling={isBusy} onToggle={handleToggleRequest} />
-                  </div>
-                </div>
-              );
-            })}
+          <div style={{ maxHeight: 420, overflowY: 'auto' }} className="no-scrollbar">
+            {renderSection('Active — in use',          active,   'var(--success)', 'rgba(34,197,94,0.05)')}
+            {renderSection('Enabled — not yet active', enabled,  'var(--accent)',  'rgba(99,179,237,0.05)')}
+            {renderSection('Disabled',                 disabled, 'var(--text-muted)', 'var(--bg-elevated)')}
           </div>
         )}
 
-        <div style={{ marginTop: 14, display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--success)', display: 'inline-block' }} /> active — in use, toggle locked
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--accent)', display: 'inline-block' }} /> enabled — on, not yet active
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--border)', display: 'inline-block' }} /> disabled
-          </span>
-        </div>
+        {/* Legend */}
+        {!loading && features.length > 0 && (
+          <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)', display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--success)', display: 'inline-block' }} /> active — toggle locked
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)', display: 'inline-block' }} /> enabled — can disable
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--border)', display: 'inline-block' }} /> disabled — can enable
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 'auto' }}>
+              <Info size={9} style={{ color: 'var(--text-muted)' }} /> hover for description
+            </span>
+          </div>
+        )}
+
         <button className="btn btn-secondary" style={{ width: '100%', marginTop: 12 }} onClick={onClose}>Close</button>
       </div>
     </div>
@@ -2123,10 +2205,6 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                     <button className="btn btn-secondary" onClick={() => setReplaceTarget({ pool: pool.name })} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <ArrowLeftRight size={13} /> Replace Disk
                     </button>
-                    <button className="btn btn-secondary" onClick={() => handleToggleStatus(pool.name)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <Info size={13} />
-                      {isExpanded ? 'Hide' : 'Status'}
-                    </button>
                     <button
                       className="btn btn-secondary"
                       onClick={() => setFeaturesOpenFor(pool.name)}
@@ -2134,6 +2212,10 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                       style={{ display: 'flex', alignItems: 'center', gap: 6 }}
                     >
                       <Layers size={13} /> Features
+                    </button>
+                    <button className="btn btn-secondary" onClick={() => handleToggleStatus(pool.name)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Info size={13} />
+                      {isExpanded ? 'Hide' : 'Status'}
                     </button>
                     <button
                       className="btn btn-secondary"
