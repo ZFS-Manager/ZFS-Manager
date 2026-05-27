@@ -324,8 +324,10 @@ fn lsblk_has_system_mount(node: &serde_json::Value) -> bool {
 
 async fn detect_system_disks() -> std::collections::HashSet<String> {
     let mut system_disks = std::collections::HashSet::new();
-    let output = tokio::process::Command::new("lsblk")
-        .args(["-J", "-o", "NAME,MOUNTPOINTS,TYPE,PKNAME"])
+    // Run lsblk in the host mount namespace so container bind-mounts don't hide
+    // real mountpoints like / and /boot.
+    let output = tokio::process::Command::new("nsenter")
+        .args(["-t", "1", "-m", "--", "lsblk", "-J", "-o", "NAME,MOUNTPOINTS,TYPE,PKNAME"])
         .output()
         .await;
     let out = match output {
