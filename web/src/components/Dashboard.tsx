@@ -317,7 +317,8 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
   const capColor = pool.cap > 90 ? 'var(--danger)' : pool.cap > 80 ? 'var(--warning)' : 'var(--success)';
 
   const [scrubState,  setScrubState]  = useState<'idle' | 'running' | 'success' | 'error'>('idle');
-  const [scrubProg,   setScrubProg]   = useState<{ progress: number; timeRemaining: string }>({ progress: 0, timeRemaining: '' });
+  const [scrubProg,   setScrubProg]   = useState<{ progress: number; timeRemaining: string; isResilver: boolean; scanDetail: string }>({ progress: 0, timeRemaining: '', isResilver: false, scanDetail: '' });
+  const [expansionProg, setExpansionProg] = useState<{ inProgress: boolean; vdev: string; progress: number; eta: string; detail: string } | null>(null);
   const [showSnap,    setShowSnap]    = useState(false);
   const [snapName,    setSnapName]    = useState('');
   const [snapError,   setSnapError]   = useState('');
@@ -331,7 +332,11 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
     api.getScrubStatus(pool.name).then(res => {
       if (res.in_progress) {
         setScrubState('running');
-        setScrubProg({ progress: res.progress || 0, timeRemaining: res.time_remaining || '' });
+        setScrubProg({ progress: res.progress || 0, timeRemaining: res.time_remaining || '', isResilver: !!(res.is_resilver), scanDetail: res.scan_detail || '' });
+        startPoll();
+      }
+      if (res.expansion?.in_progress) {
+        setExpansionProg(res.expansion);
         startPoll();
       }
     }).catch(() => {});
@@ -353,8 +358,12 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
       try {
         const res = await api.getScrubStatus(pool.name);
         if (res.in_progress) {
-          setScrubProg({ progress: res.progress || 0, timeRemaining: res.time_remaining || '' });
-        } else {
+          setScrubProg({ progress: res.progress || 0, timeRemaining: res.time_remaining || '', isResilver: !!(res.is_resilver), scanDetail: res.scan_detail || '' });
+        }
+        if (res.expansion) {
+          setExpansionProg(res.expansion.in_progress ? res.expansion : null);
+        }
+        if (!res.in_progress && !res.expansion?.in_progress) {
           clearInterval(pollRef.current!); pollRef.current = null;
           setScrubState('success');
           setTimeout(() => setScrubState('idle'), 4000);
@@ -363,7 +372,7 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
         clearInterval(pollRef.current!); pollRef.current = null;
         setScrubState('idle');
       }
-    }, 2000);
+    }, 1000);
   };
 
   const handleScrub = async () => {
@@ -468,19 +477,63 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
       )}
 
       {scrubState === 'running' && (
-        <div style={{ marginBottom: 16, padding: '10px 14px', background: 'rgba(245,158,11,0.04)', borderRadius: 'var(--radius)', border: '1px solid rgba(245,158,11,0.2)' }}>
+        scrubProg.isResilver ? (
+          <div style={{ marginBottom: 16, padding: '10px 14px', background: 'rgba(20,184,166,0.04)', borderRadius: 'var(--radius)', border: '1px solid rgba(20,184,166,0.2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 11, color: 'var(--success)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ width: 10, height: 10, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.2)', borderTopColor: 'var(--success)', animation: 'spin 0.7s linear infinite' }} /> Resilvering
+              </span>
+              <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                {scrubProg.timeRemaining && <span style={{ color: 'var(--text-muted)' }}>{scrubProg.timeRemaining} rem</span>}
+                <span style={{ color: 'var(--success)', fontWeight: 700 }}>{scrubProg.progress.toFixed(1)}%</span>
+              </div>
+            </div>
+            <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${scrubProg.progress}%`, background: 'var(--success)', borderRadius: 9999, transition: 'width 0.5s' }} />
+            </div>
+            {scrubProg.scanDetail && (
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
+                {scrubProg.scanDetail.replace(' scanned', '')}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{ marginBottom: 16, padding: '10px 14px', background: 'rgba(245,158,11,0.04)', borderRadius: 'var(--radius)', border: '1px solid rgba(245,158,11,0.2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 11, color: 'var(--warning)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ width: 10, height: 10, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.2)', borderTopColor: 'var(--warning)', animation: 'spin 0.7s linear infinite' }} /> Scrubbing
+              </span>
+              <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                {scrubProg.timeRemaining && <span style={{ color: 'var(--text-muted)' }}>{scrubProg.timeRemaining} rem</span>}
+                <span style={{ color: 'var(--warning)', fontWeight: 700 }}>{scrubProg.progress.toFixed(1)}%</span>
+              </div>
+            </div>
+            <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${scrubProg.progress}%`, background: 'var(--warning)', borderRadius: 9999, transition: 'width 0.5s' }} />
+            </div>
+          </div>
+        )
+      )}
+
+      {expansionProg?.inProgress && (
+        <div style={{ marginBottom: 16, padding: '10px 14px', background: 'rgba(99,102,241,0.06)', borderRadius: 'var(--radius)', border: '1px solid rgba(99,102,241,0.2)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span style={{ fontSize: 11, color: 'var(--warning)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ width: 10, height: 10, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.2)', borderTopColor: 'var(--warning)', animation: 'spin 0.7s linear infinite' }} /> Scrubbing
+            <span style={{ fontSize: 11, color: 'var(--accent)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 10, height: 10, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.2)', borderTopColor: 'var(--accent)', animation: 'spin 0.7s linear infinite' }} /> Expanding {expansionProg.vdev}
             </span>
             <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-              {scrubProg.timeRemaining && <span style={{ color: 'var(--text-muted)' }}>{scrubProg.timeRemaining} rem</span>}
-              <span style={{ color: 'var(--warning)', fontWeight: 700 }}>{scrubProg.progress.toFixed(1)}%</span>
+              {expansionProg.eta && <span style={{ color: 'var(--text-muted)' }}>{expansionProg.eta} rem</span>}
+              <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{expansionProg.progress.toFixed(2)}%</span>
             </div>
           </div>
           <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: `${scrubProg.progress}%`, background: 'var(--warning)', borderRadius: 9999, transition: 'width 0.5s' }} />
+            <div style={{ height: '100%', width: `${expansionProg.progress}%`, background: 'var(--accent)', borderRadius: 9999, transition: 'width 1s' }} />
           </div>
+          {expansionProg.detail && (
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
+              Expanding {expansionProg.vdev}: {expansionProg.detail.replace(' copied', '')}
+            </div>
+          )}
         </div>
       )}
 
@@ -659,7 +712,7 @@ export default function Dashboard({
 
   const [histData1d, setHistData1d] = useState<any[]>([]);
   const [histData7d, setHistData7d] = useState<any[]>([]);
-  const [scrubLive,  setScrubLive]  = useState<Record<string, {inProgress: boolean; progress: number; timeRemaining: string}>>({});
+  const [scrubLive,  setScrubLive]  = useState<Record<string, {inProgress: boolean; progress: number; timeRemaining: string; isResilver: boolean; expansionInProgress: boolean; expansionVdev: string; expansionProgress: number; expansionEta: string}>>({});
   const [diskMetrics, setDiskMetrics] = useState<Record<string, any[]>>({});
   const [diskPools,   setDiskPools]   = useState<string[]>([]);
   const [ioShowRead,  setIoShowRead]  = useState(true);
@@ -758,13 +811,22 @@ export default function Dashboard({
         api.getScrubStatus(p.name).then(res => {
           setScrubLive(prev => ({
             ...prev,
-            [p.name]: { inProgress: res.in_progress, progress: res.progress || 0, timeRemaining: res.time_remaining || '' },
+            [p.name]: {
+              inProgress: res.in_progress,
+              progress: res.progress || 0,
+              timeRemaining: res.time_remaining || '',
+              isResilver: !!(res.is_resilver),
+              expansionInProgress: !!(res.expansion?.in_progress),
+              expansionVdev: res.expansion?.vdev || '',
+              expansionProgress: res.expansion?.progress || 0,
+              expansionEta: res.expansion?.eta || '',
+            },
           }));
         }).catch(() => {});
       });
     };
     poll();
-    const id = setInterval(poll, 5000);
+    const id = setInterval(poll, 1000);
     return () => clearInterval(id);
   }, [pools.length]);
 
@@ -1058,15 +1120,17 @@ export default function Dashboard({
         );
 
       case 'activity-log': {
-        const liveEntries = Object.entries(scrubLive).filter(([, s]) => s.inProgress);
-        const totalEvents = liveEntries.length + logs.length;
+        const scrubEntries  = Object.entries(scrubLive).filter(([, s]) => s.inProgress);
+        const expandEntries = Object.entries(scrubLive).filter(([, s]) => s.expansionInProgress);
+        const liveCount = scrubEntries.length + expandEntries.length;
+        const totalEvents = liveCount + logs.length;
         return totalEvents > 0 ? (
           <Panel
             title="Recent Activity"
             right={<span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>{totalEvents} events</span>}
           >
             <div style={{ padding: '0 20px', maxHeight: 280, overflowY: 'auto' }} className="no-scrollbar">
-              {liveEntries.map(([poolName, s]) => (
+              {scrubEntries.map(([poolName, s]) => (
                 <div key={`scrub-${poolName}`} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--border-subtle)' }}>
                   <div style={{
                     flexShrink: 0, marginTop: 1, width: 36, height: 18,
@@ -1080,7 +1144,7 @@ export default function Dashboard({
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--accent)' }}>
-                      Scrubbing {poolName} — {s.progress.toFixed(1)}% complete{s.timeRemaining ? ` · ${s.timeRemaining} remaining` : ''}
+                      {s.isResilver ? 'Resilvering' : 'Scrubbing'} {poolName} — {s.progress.toFixed(1)}% complete{s.timeRemaining ? ` · ${s.timeRemaining} remaining` : ''}
                     </div>
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
                       Live · {poolName}
@@ -1088,7 +1152,29 @@ export default function Dashboard({
                   </div>
                 </div>
               ))}
-              {logs.slice(0, 20 - liveEntries.length).map((log, i) => <LogRow key={log.id || i} log={log} />)}
+              {expandEntries.map(([poolName, s]) => (
+                <div key={`expand-${poolName}`} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                  <div style={{
+                    flexShrink: 0, marginTop: 1, width: 36, height: 18,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', borderRadius: 3,
+                    fontSize: 9, fontFamily: 'var(--font-mono)', fontWeight: 700,
+                    color: 'var(--accent)', letterSpacing: '0.04em',
+                  }}>
+                    <span className="live-dot" style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent)', display: 'inline-block', marginRight: 3 }} />
+                    EXP
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--accent)' }}>
+                      Expanding {s.expansionVdev} in {poolName} — {s.expansionProgress.toFixed(2)}%{s.expansionEta ? ` · ${s.expansionEta} remaining` : ''}
+                    </div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                      Live · {poolName}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {logs.slice(0, 20 - liveCount).map((log, i) => <LogRow key={log.id || i} log={log} />)}
             </div>
           </Panel>
         ) : null;
