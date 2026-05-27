@@ -1595,7 +1595,15 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           startScrubPolling(pool.name);
         }
         if (res.expansion?.in_progress) {
-          setExpansionProgress(p => ({ ...p, [pool.name]: res.expansion }));
+          setExpansionProgress(p => ({ ...p, [pool.name]: {
+            inProgress: true,
+            vdev: res.expansion.vdev || '',
+            progress: res.expansion.progress || 0,
+            eta: res.expansion.eta || '',
+            speed: res.expansion.speed || '',
+            copied: res.expansion.copied || '',
+            detail: res.expansion.detail || '',
+          }}));
           startScrubPolling(pool.name);
         }
       }).catch(() => {});
@@ -1640,7 +1648,15 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           scanSpeed: res.scan_speed || '',
         }}));
         if (res.expansion) {
-          setExpansionProgress(p => ({ ...p, [poolName]: res.expansion }));
+          setExpansionProgress(p => ({ ...p, [poolName]: {
+            inProgress: res.expansion.in_progress || false,
+            vdev: res.expansion.vdev || '',
+            progress: res.expansion.progress || 0,
+            eta: res.expansion.eta || '',
+            speed: res.expansion.speed || '',
+            copied: res.expansion.copied || '',
+            detail: res.expansion.detail || '',
+          }}));
         }
         if (!res.in_progress && !res.expansion?.in_progress) {
           clearInterval(pollTimers.current[poolName]);

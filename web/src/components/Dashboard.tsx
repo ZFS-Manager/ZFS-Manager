@@ -364,7 +364,13 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
         startPoll();
       }
       if (res.expansion?.in_progress) {
-        setExpansionProg(res.expansion);
+        setExpansionProg({
+          inProgress: true,
+          vdev: res.expansion.vdev || '',
+          progress: res.expansion.progress || 0,
+          eta: res.expansion.eta || '',
+          detail: res.expansion.detail || '',
+        });
         startPoll();
       }
     }).catch(() => {});
@@ -393,7 +399,13 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
           setScrubProg({ progress: res.progress || 0, timeRemaining: res.time_remaining || '', isResilver: !!(res.is_resilver), scanDetail: res.scan_detail || '', scanSpeed: res.scan_speed || '' });
         }
         if (res.expansion) {
-          setExpansionProg(res.expansion.in_progress ? res.expansion : null);
+          setExpansionProg(res.expansion.in_progress ? {
+            inProgress: true,
+            vdev: res.expansion.vdev || '',
+            progress: res.expansion.progress || 0,
+            eta: res.expansion.eta || '',
+            detail: res.expansion.detail || '',
+          } : null);
         }
         if (!res.in_progress && !res.expansion?.in_progress) {
           clearInterval(pollRef.current!); pollRef.current = null;
