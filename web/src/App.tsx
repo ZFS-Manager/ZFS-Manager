@@ -13,7 +13,7 @@ import Settings from './components/Settings';
 import Notifications from './pages/Notifications';
 import { ZFSPool, ZFSDataset, ZFSLog } from './types';
 import { api, formatBytes, setApiKey } from './api';
-import { Bell, AlertTriangle } from 'lucide-react';
+import { Bell } from 'lucide-react';
 import { NotificationProvider, NotificationCenter, useNotifications } from './context/NotificationContext';
 
 const PAGE_TITLES: Record<string, string> = {
@@ -95,7 +95,23 @@ function TopBar({
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const title = PAGE_TITLES[location.pathname] || 'ZFS Manager';
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const { unreadCount, notifications } = useNotifications();
+  const { unreadCount, notifications, notify } = useNotifications();
+  const shownSysNotifIds = useRef<Set<number>>(new Set());
+
+  // Bridge unread critical system notifications into the standard toast system
+  useEffect(() => {
+    for (const item of sysNotifications) {
+      if (item.is_read) continue;
+      if (item.level !== 'error' && item.level !== 'warning') continue;
+      if (shownSysNotifIds.current.has(item.id)) continue;
+      shownSysNotifIds.current.add(item.id);
+      notify({
+        type: item.level === 'error' ? 'error' : 'warning',
+        title: item.level === 'error' ? 'System Alert' : 'System Warning',
+        message: item.message,
+      });
+    }
+  }, [sysNotifications, notify]);
 
   const sysUnread = sysNotifications.filter(n => !n.is_read).length;
   const totalUnread = unreadCount + sysUnread;
@@ -218,7 +234,6 @@ export default function App() {
   const [healthData, setHealthData] = useState<any>(null);
   const [logs, setLogs]             = useState<ZFSLog[]>([]);
   const [sysNotifications, setSysNotifications] = useState<any[]>([]);
-  const [showNotifPopup, setShowNotifPopup] = useState(false);
   const [loading, setLoading]       = useState(true);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [selectedPool, setSelectedPool] = useState<string>(
@@ -338,12 +353,8 @@ export default function App() {
       // fetch notifications without throwing
       fetch('/api/v1/notifications', { headers: { 'Authorization': `Bearer ${localStorage.getItem('zfs_access_token')}` } })
         .then(r => r.json())
-        .then(n => {
-          setSysNotifications(n);
-          if (n.some((x: any) => !x.is_read && x.level === 'error')) {
-            setShowNotifPopup(true);
-          }
-        }).catch(() => {});
+        .then(n => { if (Array.isArray(n)) setSysNotifications(n); })
+        .catch(() => {});
 
       if (statsRes) setSystemStats(statsRes);
       if (healthRes) setHealthData(healthRes);
@@ -579,22 +590,6 @@ export default function App() {
         </div>
       </div>
 
-      {showNotifPopup && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: 'var(--bg-surface)', padding: 24, borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)', maxWidth: 400, width: '100%' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, color: 'var(--danger)' }}>
-              <AlertTriangle size={24} />
-              <h3 style={{ margin: 0, fontSize: 16 }}>Important System Alerts</h3>
-            </div>
-            <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 20 }}>
-              You have unread critical system notifications (e.g. Pool degraded, HDD temperatures high). Please check them in the Notifications center.
-            </p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-              <button className="btn btn-primary" onClick={() => setShowNotifPopup(false)}>Acknowledge</button>
-            </div>
-          </div>
-        </div>
-      )}
     </BrowserRouter>
     </NotificationProvider>
   );

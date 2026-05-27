@@ -487,7 +487,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     api.getDisks().then(async res => {
       const blockdevices = res.blockdevices || [];
       const smartResults = await Promise.allSettled(
-        blockdevices.slice(0, 6).map((d: any) =>
+        blockdevices.map((d: any) =>
           api.getSmartData(d.name || d.path).then(s => ({ disk: d, smart: s }))
         )
       );
@@ -930,7 +930,8 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
 
       case 'smart-health':
         return (
-          <Panel title="Disk SMART Status" sub={`Physical health summary${multiPool && effectivePool ? ` · ${effectivePool}` : ''}`}>
+          <Panel title="Disk SMART Status" sub={`Physical health summary${multiPool && effectivePool ? ` · ${effectivePool}` : ''} · ${filteredSmartData.length || 0} disk${filteredSmartData.length !== 1 ? 's' : ''}`}>
+            <div style={{ maxHeight: filteredSmartData.length > 8 ? 520 : undefined, overflowY: filteredSmartData.length > 8 ? 'auto' : undefined, paddingRight: filteredSmartData.length > 8 ? 4 : 0 }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
               {smartData.length === 0 ? (
                 [1, 2, 3].map(i => <Skeleton key={i} height={80} />)
@@ -960,6 +961,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
                   </div>
                 );
               })}
+            </div>
             </div>
           </Panel>
         );
