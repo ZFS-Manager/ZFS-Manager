@@ -1176,6 +1176,8 @@ function SettingsPopout({
   const [showDestroyDialog, setShowDestroyDialog] = useState(false);
   const [destroyInput,      setDestroyInput]      = useState('');
   const [destroying,        setDestroying]        = useState(false);
+  const [raidzFeature,      setRaidzFeature]      = useState<{ value: string; enabled: boolean } | null>(null);
+  const [raidzEnabling,     setRaidzEnabling]     = useState(false);
 
   useEffect(() => { requestAnimationFrame(() => setVisible(true)); }, []);
 
@@ -1187,14 +1189,31 @@ function SettingsPopout({
   const load = () => {
     setLoading(true);
     setError(null);
-    api.getPoolSettings(poolName).then(res => {
+    Promise.all([
+      api.getPoolSettings(poolName),
+      api.getRaidzExpansionFeature(poolName).catch(() => null),
+    ]).then(([settingsRes, featureRes]) => {
       const map: Record<string, string> = {};
-      for (const p of [...res.pool_props, ...res.dataset_props]) map[p.name] = p.value;
+      for (const p of [...settingsRes.pool_props, ...settingsRes.dataset_props]) map[p.name] = p.value;
       setProps(map);
       setEdits({ ...map });
+      if (featureRes) setRaidzFeature({ value: featureRes.value, enabled: featureRes.enabled });
     }).catch(err => {
       setError(err.message || 'Failed to load settings');
     }).finally(() => setLoading(false));
+  };
+
+  const handleEnableRaidzExpansion = async () => {
+    setRaidzEnabling(true);
+    try {
+      await api.enableRaidzExpansionFeature(poolName);
+      setRaidzFeature({ value: 'enabled', enabled: true });
+      notify({ type: 'success', title: 'Feature Enabled', message: `raidz_expansion enabled on pool "${poolName}"` });
+    } catch (err: any) {
+      notify({ type: 'error', title: 'Enable Failed', message: err.message || 'Failed to enable raidz_expansion' });
+    } finally {
+      setRaidzEnabling(false);
+    }
   };
 
   useEffect(() => { load(); }, [poolName]);
@@ -1311,6 +1330,68 @@ function SettingsPopout({
                   />
                 </div>
               </div>
+              {/* ZFS Features */}
+              {raidzFeature !== null && (
+                <div style={{ paddingTop: 8 }}>
+                  {sectionHeader('ZFS Features')}
+                  <div style={{ padding: '12px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)' }}>
+                          RAIDZ Expansion
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', marginTop: 2, lineHeight: 1.4 }}>
+                          Allows adding disks to an existing RAIDZ vdev to grow its capacity
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                          <span style={{
+                            fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+                            color: raidzFeature.enabled ? 'var(--success)' : 'var(--text-muted)',
+                            background: raidzFeature.enabled ? 'rgba(34,197,94,0.12)' : 'var(--bg-elevated)',
+                            border: `1px solid ${raidzFeature.enabled ? 'rgba(34,197,94,0.3)' : 'var(--border)'}`,
+                            borderRadius: 4, padding: '1px 7px',
+                          }}>
+                            {raidzFeature.enabled ? 'Enabled' : 'Disabled'}
+                          </span>
+                          {raidzFeature.enabled && (
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                              ({raidzFeature.value})
+                            </span>
+                          )}
+                        </div>
+                        {!raidzFeature.enabled && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 6 }}>
+                            <Info size={10} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', lineHeight: 1.3 }}>
+                              ZFS features cannot be disabled once enabled
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      {!raidzFeature.enabled ? (
+                        <button
+                          onClick={handleEnableRaidzExpansion}
+                          disabled={raidzEnabling}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
+                            padding: '5px 12px', fontSize: 11, fontFamily: 'var(--font-ui)',
+                            background: 'var(--accent)', color: '#fff',
+                            border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
+                            cursor: raidzEnabling ? 'not-allowed' : 'pointer', opacity: raidzEnabling ? 0.7 : 1,
+                            transition: 'opacity 0.15s',
+                          }}
+                        >
+                          {raidzEnabling ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> : <CheckCircle size={11} />}
+                          {raidzEnabling ? 'Enabling…' : 'Enable'}
+                        </button>
+                      ) : (
+                        <CheckCircle size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Pool Property Groups */}
               <div style={{ paddingTop: 8 }}>
                 {poolPropGroups.map(group => (

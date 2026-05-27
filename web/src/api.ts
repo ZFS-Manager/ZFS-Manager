@@ -227,6 +227,17 @@ export const api = {
       { method: 'PUT', body: JSON.stringify({ scope, prop, value }) },
     ),
 
+  getRaidzExpansionFeature: (name: string) =>
+    request<{ pool: string; feature: string; value: string; enabled: boolean }>(
+      `/pools/${encodeURIComponent(name)}/feature/raidz_expansion`
+    ),
+
+  enableRaidzExpansionFeature: (name: string) =>
+    request<{ message: string; pool: string; feature: string; enabled: boolean }>(
+      `/pools/${encodeURIComponent(name)}/feature/raidz_expansion/enable`,
+      { method: 'POST' }
+    ),
+
   // ── Per-disk metrics ───────────────────────────────────────────────────────
   getPoolDiskMetrics: (poolName: string) =>
     request<{

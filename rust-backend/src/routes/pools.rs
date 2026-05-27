@@ -29,6 +29,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/pools/:name/replace",      post(replace_disk))
         .route("/api/v1/pools/:name/events",       get(pool_events))
         .route("/api/v1/pools/:name/settings",     get(get_pool_settings).put(set_pool_setting))
+        .route("/api/v1/pools/:name/feature/raidz_expansion",        get(get_raidz_expansion_feature))
+        .route("/api/v1/pools/:name/feature/raidz_expansion/enable", post(enable_raidz_expansion_feature))
         .with_state(state)
 }
 
@@ -939,5 +941,37 @@ async fn set_pool_setting(
         "pool":  name,
         "prop":  body.prop,
         "value": body.value,
+    })))
+}
+
+// ── RAIDZ Expansion feature ───────────────────────────────────────────────────
+
+async fn get_raidz_expansion_feature(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
+    executor::validate_zfs_name(&name, "pool")?;
+    let raw = executor::zpool(&["get", "-H", "feature@raidz_expansion", &name]).await?;
+    let value = raw.lines()
+        .next()
+        .and_then(|line| {
+            let c: Vec<&str> = line.split('\t').collect();
+            c.get(2).map(|v| v.trim().to_string())
+        })
+        .unwrap_or_else(|| "disabled".to_string());
+    let enabled = matches!(value.as_str(), "active" | "enabled");
+    Ok(Json(json!({
+        "pool":    name,
+        "feature": "raidz_expansion",
+        "value":   value,
+        "enabled": enabled,
+    })))
+}
+
+async fn enable_raidz_expansion_feature(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
+    executor::validate_zfs_name(&name, "pool")?;
+    executor::zpool(&["set", "feature@raidz_expansion=enabled", &name]).await?;
+    Ok(Json(json!({
+        "message": format!("raidz_expansion feature enabled on pool '{name}'"),
+        "pool":    name,
+        "feature": "raidz_expansion",
+        "enabled": true,
     })))
 }
