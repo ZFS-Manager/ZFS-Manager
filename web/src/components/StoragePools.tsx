@@ -937,11 +937,12 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
 
   const handleToggle = (f: FeatureEntry) => {
     if (f.value === 'active') return;
-    const currentOn = f.value === 'active' || f.value === 'enabled';
-    const wantOn    = !currentOn;
+    const currentOn   = f.value === 'active' || f.value === 'enabled';
+    const effectiveOn = staged.has(f.name) ? staged.get(f.name)! : currentOn;
+    const wantOn      = !effectiveOn; // flip the *displayed* state, not the server state
     setStaged(prev => {
       const next = new Map(prev);
-      // If toggling back to the saved state, remove from staged
+      // Back to server state → remove from staged (no change needed)
       if (wantOn === currentOn) next.delete(f.name);
       else                      next.set(f.name, wantOn);
       return next;
