@@ -1630,6 +1630,14 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
   const postOpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const animEnabled = localStorage.getItem('page_animations') !== 'false';
 
+  // zpool resilver was introduced in OpenZFS 2.1.0
+  const resilverAvailable = (() => {
+    if (!zfsVersion) return true;
+    const m = zfsVersion.match(/(\d+)\.(\d+)/);
+    if (!m) return true;
+    return parseInt(m[1]) * 100 + parseInt(m[2]) >= 201;
+  })();
+
   // After any pool-modifying operation, poll aggressively for 30s so resilver/expand status shows up quickly
   const startPostOpPoll = () => {
     if (postOpPollRef.current) clearInterval(postOpPollRef.current);
@@ -1794,8 +1802,8 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
 
   const handleResilver = async (poolName: string) => {
     setConfirmState({
-      title: "Start ZFS Resilver (Scrub)",
-      message: `Are you sure you want to start a ZFS resilver (rewrite/scrub) on pool "${poolName}"? This will check all mirrored or parity copies and synchronize any out-of-sync blocks.`,
+      title: "Start ZFS Resilver",
+      message: `Force an immediate resilver on pool "${poolName}"? This runs zpool resilver and re-synchronizes all mirrored or parity data. It may impact I/O performance while running.`,
       onConfirm: async () => {
         try {
           await api.resilverPool(poolName);
@@ -1949,22 +1957,6 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
 
                   {/* Action buttons */}
                   <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                    <button
-                      className="btn btn-secondary"
-                      onClick={() => handleScrub(pool.name)}
-                      disabled={state === 'running'}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 6,
-                        color: state === 'running' ? 'var(--warning)' : state === 'success' ? 'var(--success)' : state === 'error' ? 'var(--danger)' : 'var(--text-secondary)',
-                        borderColor: state === 'running' ? 'rgba(245,158,11,0.3)' : state === 'success' ? 'rgba(34,197,94,0.3)' : undefined,
-                      }}
-                    >
-                      {state === 'running' && <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />}
-                      {state === 'success' && <CheckCircle size={13} />}
-                      {state === 'error'   && <XCircle size={13} />}
-                      {state === 'idle'    && <Activity size={13} />}
-                      {state === 'running' ? 'Scrubbing…' : state === 'success' ? 'Done' : state === 'error' ? 'Failed' : 'Scrub'}
-                    </button>
                     <button className="btn btn-secondary" onClick={() => setReplaceTarget({ pool: pool.name })} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <ArrowLeftRight size={13} /> Replace Disk
                     </button>
@@ -2112,16 +2104,29 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                 <button className="btn btn-ghost" onClick={() => setExpandTarget(pool.name)} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11 }}>
                   <Expand size={12} /> Expand Pool
                 </button>
-                <button className="btn btn-ghost" onClick={() => handleResilver(pool.name)} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11 }}>
-                  <RotateCcw size={12} /> Resilver (Scrub)
-                </button>
+                {resilverAvailable && (
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => handleResilver(pool.name)}
+                    disabled={state === 'running'}
+                    style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11 }}
+                  >
+                    <RotateCcw size={12} /> Resilver
+                  </button>
+                )}
               </div>
 
               {/* Expanded status */}
               {isExpanded && (
                 <div style={{ padding: '20px 24px', borderTop: '1px solid var(--border)', background: 'rgba(0,0,0,0.2)' }}>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 12 }}>
-                    zpool status {pool.name}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', fontFamily: 'var(--font-mono)' }}>
+                      zpool status {pool.name}
+                    </span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 7px', borderRadius: 999, background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.25)' }}>
+                      <span className="live-dot" style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--success)', display: 'inline-block' }} />
+                      <span style={{ fontSize: 9, color: 'var(--success)', fontWeight: 700, letterSpacing: '0.08em', fontFamily: 'var(--font-ui)' }}>LIVE · 1s</span>
+                    </span>
                   </div>
                   {statusLoading === pool.name ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)' }}>
