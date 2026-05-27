@@ -791,7 +791,7 @@ function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
                 <button
                   title={featureStatus === 'enabled' ? 'ZFS features cannot be disabled once enabled' : 'Enable raidz_expansion'}
                   onClick={featureStatus === 'enabled'
-                    ? () => notify({ type: 'error', title: 'Cannot Disable', message: 'ZFS features cannot be disabled once enabled. This is permanent.' })
+                    ? () => {}
                     : handleEnableFeature
                   }
                   style={{
@@ -1446,7 +1446,7 @@ function SettingsPopout({
                       <button
                         title={raidzFeature.enabled ? 'ZFS features cannot be disabled once enabled' : 'Enable RAIDZ Expansion'}
                         onClick={raidzFeature.enabled
-                          ? () => notify({ type: 'error', title: 'Cannot Disable', message: 'ZFS features cannot be disabled once enabled. This is permanent.' })
+                          ? () => {}
                           : handleEnableRaidzExpansion
                         }
                         style={{
