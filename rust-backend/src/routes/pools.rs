@@ -501,6 +501,20 @@ async fn scrub_status(Path(name): Path<String>) -> Result<Json<Value>, ApiError>
     let time_remaining = if in_progress { extract_time_remaining(&scan_detail) }
                          else           { String::new() };
 
+    // Extract issued speed for resilver: "456M issued at 89.5M/s" → "89.5M/s"
+    let scan_speed: String = if in_progress && is_resilver {
+        scan_detail.split("issued at ").nth(1)
+            .and_then(|s| s.split(',').next())
+            .unwrap_or("").trim().to_string()
+    } else if in_progress {
+        // For scrub, look for "at X/s"
+        scan_detail.split(" at ").nth(1)
+            .and_then(|s| s.split(',').next())
+            .unwrap_or("").trim().to_string()
+    } else {
+        String::new()
+    };
+
     // ── Expansion status ────────────────────────────────────────────────────────
     // Format: "expand: expansion of raidz2-0 in progress since ..."
     // Detail: "35.7G / 41.5T copied at 563M/s, 0.08% done, 21:27:01 to go"
@@ -553,6 +567,7 @@ async fn scrub_status(Path(name): Path<String>) -> Result<Json<Value>, ApiError>
         "progress":       progress,
         "scan":           scan_line,
         "scan_detail":    scan_detail,
+        "scan_speed":     scan_speed,
         "time_remaining": time_remaining,
         "expansion": {
             "in_progress": expand_in_progress,
