@@ -383,7 +383,7 @@ async fn destroy_pool(
 
 async fn pool_status(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "pool")?;
-    let raw = executor::zpool(&["status", &name]).await?;
+    let raw = executor::zpool_status_host(&name).await?;
     Ok(Json(json!({ "name": name, "status": raw })))
 }
 
