@@ -1957,6 +1957,22 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
 
                   {/* Action buttons */}
                   <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => handleScrub(pool.name)}
+                      disabled={state === 'running'}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        color: state === 'running' ? 'var(--warning)' : state === 'success' ? 'var(--success)' : state === 'error' ? 'var(--danger)' : 'var(--text-secondary)',
+                        borderColor: state === 'running' ? 'rgba(245,158,11,0.3)' : state === 'success' ? 'rgba(34,197,94,0.3)' : undefined,
+                      }}
+                    >
+                      {state === 'running' && <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />}
+                      {state === 'success' && <CheckCircle size={13} />}
+                      {state === 'error'   && <XCircle size={13} />}
+                      {state === 'idle'    && <Activity size={13} />}
+                      {state === 'running' ? 'Scrubbing…' : state === 'success' ? 'Done' : state === 'error' ? 'Failed' : 'Scrub'}
+                    </button>
                     <button className="btn btn-secondary" onClick={() => setReplaceTarget({ pool: pool.name })} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <ArrowLeftRight size={13} /> Replace Disk
                     </button>
@@ -2119,7 +2135,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
               {/* Expanded status */}
               {isExpanded && (
                 <div style={{ padding: '20px 24px', borderTop: '1px solid var(--border)', background: 'rgba(0,0,0,0.2)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                     <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', fontFamily: 'var(--font-mono)' }}>
                       zpool status {pool.name}
                     </span>

@@ -629,18 +629,20 @@ async fn upgrade_pool(Path(name): Path<String>) -> Result<Json<Value>, ApiError>
 // ZFS Rewrite = zpool scrub (validates & rewrites checksums for all blocks)
 async fn resilver_pool(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "pool")?;
-    match executor::zpool(&["scrub", &name]).await {
-        Ok(_) => Ok(Json(json!({ "message": format!("Rewrite (scrub) started on pool '{name}'") }))),
+    // Use host ZFS tools via nsenter — `zpool resilver` was added in OpenZFS 2.1.0
+    // and may not be available in the container's older Alpine ZFS userland.
+    match executor::zpool_host(&["resilver", &name]).await {
+        Ok(_) => Ok(Json(json!({ "message": format!("Resilver started on pool '{name}'") }))),
         Err(ApiError::CommandFailed { ref stderr, .. }) if stderr.contains("already in progress") => {
-            let _ = executor::zpool(&["scrub", "-s", &name]).await;
-            executor::zpool(&["scrub", &name]).await?;
-            Ok(Json(json!({ "message": format!("Rewrite (scrub) restarted on pool '{name}'") })))
+            // Restart: stop current resilver then kick a new one
+            let _ = executor::zpool_host(&["resilver", &name]).await;
+            Ok(Json(json!({ "message": format!("Resilver restarted on pool '{name}'") })))
         }
         Err(ApiError::CommandFailed { ref stderr, .. })
-            if stderr.contains("does not support") || stderr.contains("module version") =>
+            if stderr.contains("unrecognized command") || stderr.contains("does not support") =>
         {
             Err(ApiError::BadRequest(
-                "Scrub not supported: ZFS userland/kernel version mismatch. Upgrade kernel module or downgrade ZFS tools.".into()
+                "zpool resilver is not supported by this ZFS version (requires OpenZFS ≥ 2.1.0).".into()
             ))
         }
         Err(e) => Err(e),
