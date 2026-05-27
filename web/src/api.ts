@@ -139,6 +139,8 @@ export const api = {
     request<any>('/datasets/rewrite', { method: 'POST', body: JSON.stringify({ name: datasetName }) }),
   getRewriteStatus: (datasetName: string) =>
     request<{ in_progress: boolean, name: string }>(`/datasets/rewrite/status?name=${encodeURIComponent(datasetName)}`),
+  getActiveRewrites: () =>
+    request<{ active: Array<{ name: string; pool: string; total_bytes: number; elapsed_secs: number }> }>('/datasets/rewrite/active'),
 
   // ── Dataset Properties ─────────────────────────────────────────────────────
   getDatasetProperties: (name: string, props?: string) =>
@@ -167,7 +169,7 @@ export const api = {
   getEnrichedDisks: () => request<{ disks: Array<{
     name: string; size_bytes: number; size_human: string;
     in_use: boolean; pool: string | null; partitions: boolean;
-    model: string | null; serial: string | null;
+    model: string | null; serial: string | null; is_system: boolean;
   }> }>('/disks'),
 
   // ── Metrics ────────────────────────────────────────────────────────────────

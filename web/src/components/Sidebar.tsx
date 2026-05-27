@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Activity, Database, Layers,
@@ -55,6 +55,14 @@ export default function Sidebar({
 }: SidebarProps) {
   const location = useLocation();
   const [hoverExpanded, setHoverExpanded] = useState(false);
+  const [githubVersion, setGithubVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('https://api.github.com/repos/EinNiki/ZFS-Manager/releases/latest')
+      .then(r => r.json())
+      .then(d => { if (d?.tag_name) setGithubVersion(d.tag_name); })
+      .catch(() => {});
+  }, []);
 
   const isMobile = breakpoint === 'mobile';
   const isTablet = breakpoint === 'tablet';
@@ -221,7 +229,7 @@ export default function Sidebar({
                 }}>{systemStats.hostname}</span>
               </div>
             )}
-            {healthData?.version && (
+            {(githubVersion || healthData?.version) && (
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                 <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', fontWeight: 600 }}>ZFS-Manager</span>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -245,7 +253,7 @@ export default function Sidebar({
                     />
                   ) : null}
                   <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
-                    {healthData.version}
+                    {githubVersion || healthData?.version}
                   </span>
                 </span>
               </div>

@@ -302,7 +302,62 @@ fn format_size_human(bytes: u64) -> String {
     format!("{} B", bytes)
 }
 
+fn lsblk_has_system_mount(node: &serde_json::Value) -> bool {
+    if let Some(mounts) = node["mountpoints"].as_array() {
+        for m in mounts {
+            if let Some(mp) = m.as_str() {
+                if mp == "/" || mp.starts_with("/boot") {
+                    return true;
+                }
+            }
+        }
+    }
+    if let Some(children) = node["children"].as_array() {
+        for child in children {
+            if lsblk_has_system_mount(child) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+async fn detect_system_disks() -> std::collections::HashSet<String> {
+    let mut system_disks = std::collections::HashSet::new();
+    // Run lsblk in the host mount namespace so container bind-mounts don't hide
+    // real mountpoints like / and /boot.
+    let output = tokio::process::Command::new("nsenter")
+        .args(["-t", "1", "-m", "--", "lsblk", "-J", "-o", "NAME,MOUNTPOINTS,TYPE,PKNAME"])
+        .output()
+        .await;
+    let out = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return system_disks,
+    };
+    let json: serde_json::Value = match serde_json::from_slice(&out.stdout) {
+        Ok(v) => v,
+        Err(_) => return system_disks,
+    };
+    if let Some(blockdevices) = json["blockdevices"].as_array() {
+        for dev in blockdevices {
+            // Only top-level disks (type=disk, pkname=null/absent)
+            if dev["type"].as_str() != Some("disk") { continue; }
+            if dev["pkname"].is_string() { continue; } // has a parent — skip
+            if lsblk_has_system_mount(dev) {
+                let name = dev["name"].as_str().unwrap_or("").to_string();
+                if !name.is_empty() {
+                    system_disks.insert(name);
+                }
+            }
+        }
+    }
+    system_disks
+}
+
 async fn list_enriched_disks(State(_state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    // Detect which disks back the OS — walks lsblk tree recursively
+    let system_disk_names = detect_system_disks().await;
+
     // Build ZFS pool membership map — ZFS is the single source of truth for in_use.
     // Using `zpool status -P` gives full /dev/... paths which we normalize to short
     // kernel names (sda, loop10, nvme0n1) so they match lsblk output.
@@ -390,6 +445,7 @@ async fn list_enriched_disks(State(_state): State<AppState>) -> Result<Json<Valu
             // in_use is determined solely by ZFS pool membership — no lsblk FSTYPE / partition detection
             let pool = disk_pool_map.get(name).cloned();
             let in_use = pool.is_some();
+            let is_system = system_disk_names.contains(name);
 
             disks.push(json!({
                 "name":       name,
@@ -400,6 +456,7 @@ async fn list_enriched_disks(State(_state): State<AppState>) -> Result<Json<Valu
                 "partitions": false,  // kept for API compat; always false with ZFS-only detection
                 "model":      model,
                 "serial":     serial,
+                "is_system":  is_system,
             }));
         }
     }

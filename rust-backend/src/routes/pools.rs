@@ -383,7 +383,7 @@ async fn destroy_pool(
 
 async fn pool_status(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "pool")?;
-    let raw = executor::zpool(&["status", &name]).await?;
+    let raw = executor::zpool_status_host(&name).await?;
     Ok(Json(json!({ "name": name, "status": raw })))
 }
 
@@ -452,7 +452,7 @@ async fn stop_scrub(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
 
 async fn scrub_status(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "pool")?;
-    let raw = executor::zpool(&["status", &name]).await?;
+    let raw = executor::zpool_status_host(&name).await?;
 
     let lines: Vec<&str> = raw.lines().collect();
     let mut scan_line   = String::new();
@@ -491,6 +491,7 @@ async fn scrub_status(Path(name): Path<String>) -> Result<Json<Value>, ApiError>
     }
 
     let in_progress = scan_line.contains("in progress");
+    let is_resilver = scan_line.contains("resilver in progress");
     let done        = scan_line.contains("repaired") || scan_line.contains("canceled");
 
     let progress = if in_progress { parse_scan_progress(&scan_detail) }
@@ -499,6 +500,20 @@ async fn scrub_status(Path(name): Path<String>) -> Result<Json<Value>, ApiError>
 
     let time_remaining = if in_progress { extract_time_remaining(&scan_detail) }
                          else           { String::new() };
+
+    // Extract issued speed for resilver: "456M issued at 89.5M/s" → "89.5M/s"
+    let scan_speed: String = if in_progress && is_resilver {
+        scan_detail.split("issued at ").nth(1)
+            .and_then(|s| s.split(',').next())
+            .unwrap_or("").trim().to_string()
+    } else if in_progress {
+        // For scrub, look for "at X/s"
+        scan_detail.split(" at ").nth(1)
+            .and_then(|s| s.split(',').next())
+            .unwrap_or("").trim().to_string()
+    } else {
+        String::new()
+    };
 
     // ── Expansion status ────────────────────────────────────────────────────────
     // Format: "expand: expansion of raidz2-0 in progress since ..."
@@ -547,10 +562,12 @@ async fn scrub_status(Path(name): Path<String>) -> Result<Json<Value>, ApiError>
     Ok(Json(json!({
         "name":           name,
         "in_progress":    in_progress,
+        "is_resilver":    is_resilver,
         "done":           done,
         "progress":       progress,
         "scan":           scan_line,
         "scan_detail":    scan_detail,
+        "scan_speed":     scan_speed,
         "time_remaining": time_remaining,
         "expansion": {
             "in_progress": expand_in_progress,

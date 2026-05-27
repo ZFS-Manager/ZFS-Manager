@@ -50,6 +50,16 @@ pub async fn zpool(args: &[&str]) -> Result<String, ApiError> {
     command("zpool", args).await
 }
 
+/// Run `zpool status <pool>` via host ZFS tools using nsenter so the output
+/// includes version-specific fields (expand:, action:, etc.) that the older
+/// container-side ZFS userland might omit. Falls back to container's zpool on error.
+pub async fn zpool_status_host(pool: &str) -> Result<String, ApiError> {
+    match command("nsenter", &["-t", "1", "-m", "--", "zpool", "status", pool]).await {
+        Ok(out) => Ok(out),
+        Err(_) => command("zpool", &["status", pool]).await,
+    }
+}
+
 pub async fn command(bin: &str, args: &[&str]) -> Result<String, ApiError> {
     debug!("Executing: {} {:?}", bin, args);
     let output = Command::new(bin).args(args).output().await?;

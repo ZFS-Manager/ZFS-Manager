@@ -95,17 +95,28 @@ function colorVar(c: string): string {
   return 'var(--text-muted)';
 }
 
+type PoolFillInfo = { days: number; rateGbDay: number; fillDate: string; color: string };
+
 // Fill prediction from the shared backend endpoint (longest window auto-selected)
 function useFillPrediction() {
   const [prediction, setPrediction] = React.useState<{
     text: string; color: string; timeText: string;
   } | null>(null);
+  const [byPool, setByPool] = React.useState<Record<string, PoolFillInfo>>({});
   const loaded = React.useRef(false);
 
   React.useEffect(() => {
     if (loaded.current) return;
     loaded.current = true;
     api.getFillPrediction('auto').then(res => {
+      const map: Record<string, PoolFillInfo> = {};
+      for (const pred of res.predictions) {
+        const rate = parseFloat(pred.rate_gb_day);
+        const days = rate > 0 ? pred.free_gb / rate : 0;
+        map[pred.pool] = { days, rateGbDay: rate, fillDate: pred.fill_date, color: colorVar(pred.color) };
+      }
+      setByPool(map);
+
       if (res.predictions.length > 0) {
         const earliest = res.predictions.reduce((min, pred) => {
           if (pred.fill_date === '–') return min;
@@ -131,7 +142,7 @@ function useFillPrediction() {
     });
   }, []);
 
-  return prediction;
+  return { prediction, byPool };
 }
 
 /* ── Chart config ── */
@@ -310,14 +321,44 @@ function StatCard({ label, value, sub, fillLine, icon: Icon, color, minHeight = 
   );
 }
 
+/* ── Rewrite helpers (used in PoolCard) ── */
+const REWRITE_SPEED_BPS_DASH = 100 * 1024 * 1024;
+
+function fmtBytesDash(b: number): string {
+  if (b >= 1024 ** 4) return `${(b / 1024 ** 4).toFixed(2)}T`;
+  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(2)}G`;
+  if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(2)}M`;
+  return `${(b / 1024).toFixed(2)}K`;
+}
+
+function fmtSecsDash(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  return [h, m, sec].map(v => String(v).padStart(2, '0')).join(':');
+}
+
+interface RewriteEntryDash { name: string; pool: string; total_bytes: number; elapsed_secs: number; }
+
+function computeRewriteDash(r: RewriteEntryDash) {
+  const total = r.total_bytes;
+  const done  = Math.min(r.elapsed_secs * REWRITE_SPEED_BPS_DASH, total * 0.99);
+  const pct   = total > 0 ? (done / total) * 100 : 0;
+  const remS  = total > 0 ? (total - done) / REWRITE_SPEED_BPS_DASH : 0;
+  return { pct, label: `Rewriting: ${fmtBytesDash(done)} / ${fmtBytesDash(total)} at 100 MB/s, ${pct.toFixed(2)}% done, ${fmtSecsDash(remS)} to go` };
+}
+
 /* ── Pool card ── */
-function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: number | null }) {
+function PoolCard({ pool, fillInfo }: { pool: ZFSPool; fillInfo?: PoolFillInfo }) {
+  const daysUntilFull = fillInfo && fillInfo.days > 0 ? fillInfo.days : null;
   const animCap  = useCounter(pool.cap);
   const isOnline = pool.health === 'ONLINE';
   const capColor = pool.cap > 90 ? 'var(--danger)' : pool.cap > 80 ? 'var(--warning)' : 'var(--success)';
 
   const [scrubState,  setScrubState]  = useState<'idle' | 'running' | 'success' | 'error'>('idle');
-  const [scrubProg,   setScrubProg]   = useState<{ progress: number; timeRemaining: string }>({ progress: 0, timeRemaining: '' });
+  const [scrubProg,   setScrubProg]   = useState<{ progress: number; timeRemaining: string; isResilver: boolean; scanDetail: string; scanSpeed: string }>({ progress: 0, timeRemaining: '', isResilver: false, scanDetail: '', scanSpeed: '' });
+  const [expansionProg, setExpansionProg] = useState<{ inProgress: boolean; vdev: string; progress: number; eta: string; detail: string } | null>(null);
+  const [rewriteActive, setRewriteActive] = useState<RewriteEntryDash[]>([]);
   const [showSnap,    setShowSnap]    = useState(false);
   const [snapName,    setSnapName]    = useState('');
   const [snapError,   setSnapError]   = useState('');
@@ -331,11 +372,25 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
     api.getScrubStatus(pool.name).then(res => {
       if (res.in_progress) {
         setScrubState('running');
-        setScrubProg({ progress: res.progress || 0, timeRemaining: res.time_remaining || '' });
+        setScrubProg({ progress: res.progress || 0, timeRemaining: res.time_remaining || '', isResilver: !!(res.is_resilver), scanDetail: res.scan_detail || '', scanSpeed: res.scan_speed || '' });
+        startPoll();
+      }
+      if (res.expansion?.in_progress) {
+        setExpansionProg({
+          inProgress: true,
+          vdev: res.expansion.vdev || '',
+          progress: res.expansion.progress || 0,
+          eta: res.expansion.eta || '',
+          detail: res.expansion.detail || '',
+        });
         startPoll();
       }
     }).catch(() => {});
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    // Poll active rewrites for this pool
+    const pollRew = () => api.getActiveRewrites().then(r => setRewriteActive((r.active || []).filter((e: RewriteEntryDash) => e.pool === pool.name))).catch(() => {});
+    pollRew();
+    const rewId = setInterval(pollRew, 1000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); clearInterval(rewId); };
   }, [pool.name]);
 
   useEffect(() => {
@@ -353,8 +408,18 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
       try {
         const res = await api.getScrubStatus(pool.name);
         if (res.in_progress) {
-          setScrubProg({ progress: res.progress || 0, timeRemaining: res.time_remaining || '' });
-        } else {
+          setScrubProg({ progress: res.progress || 0, timeRemaining: res.time_remaining || '', isResilver: !!(res.is_resilver), scanDetail: res.scan_detail || '', scanSpeed: res.scan_speed || '' });
+        }
+        if (res.expansion) {
+          setExpansionProg(res.expansion.in_progress ? {
+            inProgress: true,
+            vdev: res.expansion.vdev || '',
+            progress: res.expansion.progress || 0,
+            eta: res.expansion.eta || '',
+            detail: res.expansion.detail || '',
+          } : null);
+        }
+        if (!res.in_progress && !res.expansion?.in_progress) {
           clearInterval(pollRef.current!); pollRef.current = null;
           setScrubState('success');
           setTimeout(() => setScrubState('idle'), 4000);
@@ -363,7 +428,7 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
         clearInterval(pollRef.current!); pollRef.current = null;
         setScrubState('idle');
       }
-    }, 2000);
+    }, 1000);
   };
 
   const handleScrub = async () => {
@@ -458,29 +523,100 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
         </div>
       </div>
 
-      {daysUntilFull !== null && (
+      {fillInfo && fillInfo.rateGbDay > 0 && (
         <div style={{
           fontSize: 11, fontFamily: 'var(--font-ui)', marginBottom: 14,
-          color: daysUntilFull < 14 ? 'var(--danger)' : daysUntilFull < 30 ? 'var(--warning)' : 'var(--text-muted)',
+          color: fillInfo.color,
+          display: 'flex', gap: 8, flexWrap: 'wrap',
         }}>
-          Full in <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{fmtDays(daysUntilFull)}</span> at current write rate
+          <span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+              +{fillInfo.rateGbDay >= 1000
+                ? `${(fillInfo.rateGbDay / 1024).toFixed(2)} TB/day`
+                : fillInfo.rateGbDay >= 1
+                  ? `${fillInfo.rateGbDay.toFixed(2)} GB/day`
+                  : `${(fillInfo.rateGbDay * 1024).toFixed(0)} MB/day`}
+            </span>
+          </span>
+          {daysUntilFull !== null && (
+            <span>
+              · Full in <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{fmtDays(daysUntilFull)}</span>
+            </span>
+          )}
         </div>
       )}
 
       {scrubState === 'running' && (
-        <div style={{ marginBottom: 16, padding: '10px 14px', background: 'rgba(245,158,11,0.04)', borderRadius: 'var(--radius)', border: '1px solid rgba(245,158,11,0.2)' }}>
+        scrubProg.isResilver ? (
+          <div style={{ marginBottom: 16, padding: '10px 14px', background: 'rgba(20,184,166,0.04)', borderRadius: 'var(--radius)', border: '1px solid rgba(20,184,166,0.2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 11, color: 'var(--success)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ width: 10, height: 10, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.2)', borderTopColor: 'var(--success)', animation: 'spin 0.7s linear infinite' }} /> Resilvering
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--success)', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{scrubProg.progress.toFixed(2)}%</span>
+            </div>
+            <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${scrubProg.progress}%`, background: 'var(--success)', borderRadius: 9999, transition: 'width 0.5s' }} />
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
+              Resilvering: {scrubProg.progress.toFixed(2)}% done{scrubProg.timeRemaining ? `, ${scrubProg.timeRemaining} to go` : ''}{scrubProg.scanSpeed ? ` at ${scrubProg.scanSpeed}` : ''}
+            </div>
+          </div>
+        ) : (
+          <div style={{ marginBottom: 16, padding: '10px 14px', background: 'rgba(245,158,11,0.04)', borderRadius: 'var(--radius)', border: '1px solid rgba(245,158,11,0.2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 11, color: 'var(--warning)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ width: 10, height: 10, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.2)', borderTopColor: 'var(--warning)', animation: 'spin 0.7s linear infinite' }} /> Scrubbing
+              </span>
+              <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                {scrubProg.timeRemaining && <span style={{ color: 'var(--text-muted)' }}>{scrubProg.timeRemaining} rem</span>}
+                <span style={{ color: 'var(--warning)', fontWeight: 700 }}>{scrubProg.progress.toFixed(1)}%</span>
+              </div>
+            </div>
+            <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${scrubProg.progress}%`, background: 'var(--warning)', borderRadius: 9999, transition: 'width 0.5s' }} />
+            </div>
+          </div>
+        )
+      )}
+
+      {rewriteActive.map(r => {
+        const { pct, label } = computeRewriteDash(r);
+        return (
+          <div key={r.name} style={{ marginBottom: 16, padding: '10px 14px', background: 'rgba(56,189,248,0.04)', borderRadius: 'var(--radius)', border: '1px solid rgba(56,189,248,0.2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 11, color: 'var(--info)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ width: 10, height: 10, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.2)', borderTopColor: 'var(--info)', animation: 'spin 0.7s linear infinite' }} /> Rewriting
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--info)', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{pct.toFixed(2)}%</span>
+            </div>
+            <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${Math.min(pct, 100)}%`, background: 'var(--info)', borderRadius: 9999, transition: 'width 1s' }} />
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>{label}</div>
+          </div>
+        );
+      })}
+
+      {expansionProg?.inProgress && (
+        <div style={{ marginBottom: 16, padding: '10px 14px', background: 'rgba(99,102,241,0.06)', borderRadius: 'var(--radius)', border: '1px solid rgba(99,102,241,0.2)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span style={{ fontSize: 11, color: 'var(--warning)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ width: 10, height: 10, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.2)', borderTopColor: 'var(--warning)', animation: 'spin 0.7s linear infinite' }} /> Scrubbing
+            <span style={{ fontSize: 11, color: 'var(--accent)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 10, height: 10, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.2)', borderTopColor: 'var(--accent)', animation: 'spin 0.7s linear infinite' }} /> Expanding {expansionProg.vdev}
             </span>
             <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-              {scrubProg.timeRemaining && <span style={{ color: 'var(--text-muted)' }}>{scrubProg.timeRemaining} rem</span>}
-              <span style={{ color: 'var(--warning)', fontWeight: 700 }}>{scrubProg.progress.toFixed(1)}%</span>
+              {expansionProg.eta && <span style={{ color: 'var(--text-muted)' }}>{expansionProg.eta} rem</span>}
+              <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{expansionProg.progress.toFixed(2)}%</span>
             </div>
           </div>
           <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: `${scrubProg.progress}%`, background: 'var(--warning)', borderRadius: 9999, transition: 'width 0.5s' }} />
+            <div style={{ height: '100%', width: `${expansionProg.progress}%`, background: 'var(--accent)', borderRadius: 9999, transition: 'width 1s' }} />
           </div>
+          {expansionProg.detail && (
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
+              Expanding {expansionProg.vdev}: {expansionProg.detail.replace(' copied', '')}
+            </div>
+          )}
         </div>
       )}
 
@@ -659,7 +795,7 @@ export default function Dashboard({
 
   const [histData1d, setHistData1d] = useState<any[]>([]);
   const [histData7d, setHistData7d] = useState<any[]>([]);
-  const [scrubLive,  setScrubLive]  = useState<Record<string, {inProgress: boolean; progress: number; timeRemaining: string}>>({});
+  const [scrubLive,  setScrubLive]  = useState<Record<string, {inProgress: boolean; progress: number; timeRemaining: string; isResilver: boolean; expansionInProgress: boolean; expansionVdev: string; expansionProgress: number; expansionEta: string}>>({});
   const [diskMetrics, setDiskMetrics] = useState<Record<string, any[]>>({});
   const [diskPools,   setDiskPools]   = useState<string[]>([]);
   const [ioShowRead,  setIoShowRead]  = useState(true);
@@ -717,8 +853,7 @@ export default function Dashboard({
   const rawPct = selRawCap > 0 ? (selRawUsed / selRawCap) * 100 : 0;
 
   // Fill prediction from shared backend endpoint
-  const fillPrediction = useFillPrediction();
-  const daysUntilFull  = null;
+  const { prediction: fillPrediction, byPool: fillByPool } = useFillPrediction();
 
   useEffect(() => {
     const fetchChartData = () => {
@@ -758,13 +893,22 @@ export default function Dashboard({
         api.getScrubStatus(p.name).then(res => {
           setScrubLive(prev => ({
             ...prev,
-            [p.name]: { inProgress: res.in_progress, progress: res.progress || 0, timeRemaining: res.time_remaining || '' },
+            [p.name]: {
+              inProgress: res.in_progress,
+              progress: res.progress || 0,
+              timeRemaining: res.time_remaining || '',
+              isResilver: !!(res.is_resilver),
+              expansionInProgress: !!(res.expansion?.in_progress),
+              expansionVdev: res.expansion?.vdev || '',
+              expansionProgress: res.expansion?.progress || 0,
+              expansionEta: res.expansion?.eta || '',
+            },
           }));
         }).catch(() => {});
       });
     };
     poll();
-    const id = setInterval(poll, 5000);
+    const id = setInterval(poll, 1000);
     return () => clearInterval(id);
   }, [pools.length]);
 
@@ -985,7 +1129,7 @@ export default function Dashboard({
               Storage Pools
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
-              {displayPools.map((pool, i) => <PoolCard key={i} pool={pool} daysUntilFull={daysUntilFull} />)}
+              {displayPools.map((pool, i) => <PoolCard key={i} pool={pool} fillInfo={fillByPool[pool.name]} />)}
             </div>
           </div>
         ) : null;
@@ -1010,6 +1154,31 @@ export default function Dashboard({
                   </div>
                 ))}
               </div>
+              {(() => {
+                const totalReadMb  = liveMetrics?.total_read_mb  ?? 0;
+                const totalWriteMb = liveMetrics?.total_write_mb ?? 0;
+                const selFill = fillByPool[effectivePoolName];
+                if (totalReadMb === 0 && totalWriteMb === 0 && !selFill) return null;
+                return (
+                  <div style={{ borderTop: '1px solid var(--border)', padding: '10px 18px', display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {totalReadMb > 0 && (
+                      <span style={{ fontSize: 11, fontFamily: 'var(--font-ui)', color: 'var(--text-muted)' }}>
+                        Total ↑ <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, color: '#38bdf8' }}>{fmtGB(totalReadMb / 1024)}</span>
+                      </span>
+                    )}
+                    {totalWriteMb > 0 && (
+                      <span style={{ fontSize: 11, fontFamily: 'var(--font-ui)', color: 'var(--text-muted)' }}>
+                        Total ↓ <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, color: '#818cf8' }}>{fmtGB(totalWriteMb / 1024)}</span>
+                      </span>
+                    )}
+                    {selFill && selFill.rateGbDay > 0 && selFill.days > 0 && (
+                      <span style={{ fontSize: 11, fontFamily: 'var(--font-ui)', color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                        Est. full in <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, color: selFill.color }}>{fmtDays(selFill.days)}</span>
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
             </Panel>
 
             <Panel title="System Resources">
@@ -1058,15 +1227,17 @@ export default function Dashboard({
         );
 
       case 'activity-log': {
-        const liveEntries = Object.entries(scrubLive).filter(([, s]) => s.inProgress);
-        const totalEvents = liveEntries.length + logs.length;
+        const scrubEntries  = Object.entries(scrubLive).filter(([, s]) => s.inProgress);
+        const expandEntries = Object.entries(scrubLive).filter(([, s]) => s.expansionInProgress);
+        const liveCount = scrubEntries.length + expandEntries.length;
+        const totalEvents = liveCount + logs.length;
         return totalEvents > 0 ? (
           <Panel
             title="Recent Activity"
             right={<span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>{totalEvents} events</span>}
           >
             <div style={{ padding: '0 20px', maxHeight: 280, overflowY: 'auto' }} className="no-scrollbar">
-              {liveEntries.map(([poolName, s]) => (
+              {scrubEntries.map(([poolName, s]) => (
                 <div key={`scrub-${poolName}`} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--border-subtle)' }}>
                   <div style={{
                     flexShrink: 0, marginTop: 1, width: 36, height: 18,
@@ -1080,7 +1251,7 @@ export default function Dashboard({
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--accent)' }}>
-                      Scrubbing {poolName} — {s.progress.toFixed(1)}% complete{s.timeRemaining ? ` · ${s.timeRemaining} remaining` : ''}
+                      {s.isResilver ? 'Resilvering' : 'Scrubbing'} {poolName} — {s.progress.toFixed(1)}% complete{s.timeRemaining ? ` · ${s.timeRemaining} remaining` : ''}
                     </div>
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
                       Live · {poolName}
@@ -1088,7 +1259,29 @@ export default function Dashboard({
                   </div>
                 </div>
               ))}
-              {logs.slice(0, 20 - liveEntries.length).map((log, i) => <LogRow key={log.id || i} log={log} />)}
+              {expandEntries.map(([poolName, s]) => (
+                <div key={`expand-${poolName}`} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                  <div style={{
+                    flexShrink: 0, marginTop: 1, width: 36, height: 18,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', borderRadius: 3,
+                    fontSize: 9, fontFamily: 'var(--font-mono)', fontWeight: 700,
+                    color: 'var(--accent)', letterSpacing: '0.04em',
+                  }}>
+                    <span className="live-dot" style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent)', display: 'inline-block', marginRight: 3 }} />
+                    EXP
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--accent)' }}>
+                      Expanding {s.expansionVdev} in {poolName} — {s.expansionProgress.toFixed(2)}%{s.expansionEta ? ` · ${s.expansionEta} remaining` : ''}
+                    </div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                      Live · {poolName}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {logs.slice(0, 20 - liveCount).map((log, i) => <LogRow key={log.id || i} log={log} />)}
             </div>
           </Panel>
         ) : null;
@@ -1133,7 +1326,7 @@ export default function Dashboard({
       {/* Capacity banners */}
       {bannerPools.length > 0 && (
         <div style={{ marginBottom: 16 }}>
-          {bannerPools.map(p => <CapacityBanner key={p.name} pool={p} daysUntilFull={daysUntilFull} />)}
+          {bannerPools.map(p => <CapacityBanner key={p.name} pool={p} daysUntilFull={fillByPool[p.name]?.days ?? null} />)}
         </div>
       )}
 

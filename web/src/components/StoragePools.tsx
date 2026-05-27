@@ -26,6 +26,43 @@ interface ScrubProgress {
   progress: number;
   timeRemaining: string;
   scan: string;
+  scanDetail: string;
+  isResilver: boolean;
+  scanSpeed: string;
+}
+
+interface RewriteEntry {
+  name: string;
+  pool: string;
+  total_bytes: number;
+  elapsed_secs: number;
+}
+
+const REWRITE_SPEED_BPS = 100 * 1024 * 1024; // 100 MB/s estimate
+
+function fmtBytes(b: number): string {
+  if (b >= 1024 ** 4) return `${(b / 1024 ** 4).toFixed(2)} TB`;
+  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(2)} GB`;
+  if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(2)} MB`;
+  return `${(b / 1024).toFixed(2)} KB`;
+}
+
+function fmtSeconds(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  return [h, m, sec].map(v => String(v).padStart(2, '0')).join(':');
+}
+
+function computeRewrite(r: RewriteEntry) {
+  const total = r.total_bytes;
+  const done  = Math.min(r.elapsed_secs * REWRITE_SPEED_BPS, total * 0.99);
+  const pct   = total > 0 ? (done / total) * 100 : 0;
+  const remS  = total > 0 ? (total - done) / REWRITE_SPEED_BPS : 0;
+  return {
+    pct,
+    label: `Rewriting: ${fmtBytes(done)} / ${fmtBytes(total)} at 100 MB/s, ${pct.toFixed(2)}% done, ${fmtSeconds(remS)} to go`,
+  };
 }
 
 interface ExpansionProgress {
@@ -159,29 +196,36 @@ function DevicePicker({ onSelect, onClose, usedDisks = new Set<string>() }: {
 interface EnrichedDisk {
   name: string; size_bytes: number; size_human: string;
   in_use: boolean; pool: string | null; partitions: boolean;
-  model: string | null; serial: string | null;
+  model: string | null; serial: string | null; is_system: boolean;
 }
 
 function DiskStatusBadge({ disk }: { disk: EnrichedDisk }) {
-  if (!disk.in_use) return (
-    <span style={{ fontSize: 10, color: 'var(--success)', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 600, flexShrink: 0 }}>FREE</span>
-  );
-  if (disk.pool) return (
-    <span style={{ fontSize: 10, color: '#f87171', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 600, flexShrink: 0 }}>POOL: {disk.pool}</span>
-  );
   return (
-    <span style={{ fontSize: 10, color: 'var(--warning)', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 600, flexShrink: 0 }}>IN USE</span>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+      {disk.is_system && (
+        <span style={{ fontSize: 10, color: '#fb923c', background: 'rgba(251,146,60,0.15)', border: '1px solid rgba(251,146,60,0.4)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 700 }}>⚠ OS DISK</span>
+      )}
+      {!disk.in_use ? (
+        <span style={{ fontSize: 10, color: 'var(--success)', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 600 }}>FREE</span>
+      ) : disk.pool ? (
+        <span style={{ fontSize: 10, color: '#f87171', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 600 }}>POOL: {disk.pool}</span>
+      ) : (
+        <span style={{ fontSize: 10, color: 'var(--warning)', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 600 }}>IN USE</span>
+      )}
+    </span>
   );
 }
 
-function DiskPicker({ onSelect, onClose, selected }: {
+function DiskPicker({ onSelect, onClose, selected, addedDisks = [] }: {
   onSelect: (path: string) => void;
   onClose: () => void;
   selected?: string;
+  addedDisks?: string[];
 }) {
   const [disks, setDisks]             = useState<EnrichedDisk[]>([]);
   const [loading, setLoading]         = useState(true);
   const [confirmDisk, setConfirmDisk] = useState<EnrichedDisk | null>(null);
+  const addedSet = new Set(addedDisks.filter(Boolean));
 
   useEffect(() => {
     api.getEnrichedDisks()
@@ -191,8 +235,10 @@ function DiskPicker({ onSelect, onClose, selected }: {
   }, []);
 
   const handleClick = (disk: EnrichedDisk) => {
+    const path = `/dev/${disk.name}`;
+    if (addedSet.has(path)) return; // already added — no action
     if (disk.in_use) { setConfirmDisk(disk); return; }
-    onSelect(`/dev/${disk.name}`);
+    onSelect(path);
     onClose();
   };
 
@@ -242,25 +288,32 @@ function DiskPicker({ onSelect, onClose, selected }: {
             {disks.map((disk, i) => {
               const path = `/dev/${disk.name}`;
               const isSelected = selected === path;
+              const isAdded = addedSet.has(path);
+              const sysBorder = isAdded ? 'rgba(34,197,94,0.35)' : disk.is_system ? 'rgba(251,146,60,0.4)' : isSelected ? 'var(--accent-mid)' : 'var(--border)';
+              const sysBg = isAdded ? 'rgba(34,197,94,0.06)' : disk.is_system ? 'rgba(251,146,60,0.06)' : isSelected ? 'var(--accent-dim)' : 'var(--bg-elevated)';
               return (
               <button
                 key={i}
                 onClick={() => handleClick(disk)}
+                disabled={isAdded}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
-                  background: isSelected ? 'var(--accent-dim)' : 'var(--bg-elevated)',
-                  border: `1px solid ${isSelected ? 'var(--accent-mid)' : 'var(--border)'}`,
-                  borderRadius: 'var(--radius)', cursor: 'pointer', textAlign: 'left',
-                  opacity: disk.in_use && !isSelected ? 0.65 : 1, transition: 'all 0.12s',
+                  background: sysBg,
+                  border: `1px solid ${sysBorder}`,
+                  borderRadius: 'var(--radius)', cursor: isAdded ? 'default' : 'pointer', textAlign: 'left',
+                  opacity: (disk.in_use && !isSelected && !isAdded) ? 0.65 : 1, transition: 'all 0.12s',
                 }}
-                onMouseEnter={e => { if (!disk.in_use) (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = isSelected ? 'var(--accent-mid)' : 'var(--border)'; }}
+                onMouseEnter={e => { if (!disk.in_use && !isAdded) (e.currentTarget as HTMLElement).style.borderColor = disk.is_system ? 'rgba(251,146,60,0.7)' : 'var(--accent)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = sysBorder; }}
               >
-                <HardDrive size={16} style={{ color: disk.in_use ? 'var(--text-muted)' : 'var(--info)', flexShrink: 0 }} />
+                <HardDrive size={16} style={{ color: isAdded ? 'var(--success)' : disk.in_use ? 'var(--text-muted)' : 'var(--info)', flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>/dev/{disk.name}</span>
-                    <DiskStatusBadge disk={disk} />
+                    {isAdded && (
+                      <span style={{ fontSize: 10, color: 'var(--success)', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 4, padding: '1px 6px', fontWeight: 700, flexShrink: 0 }}>✓ ADDED</span>
+                    )}
+                    {!isAdded && <DiskStatusBadge disk={disk} />}
                   </div>
                   {(disk.model || disk.serial) && (
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2, fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -268,7 +321,7 @@ function DiskPicker({ onSelect, onClose, selected }: {
                     </div>
                   )}
                 </div>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: disk.in_use ? 'var(--text-muted)' : 'var(--text-secondary)', fontWeight: 600, minWidth: 60, textAlign: 'right', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: isAdded ? 'var(--success)' : disk.in_use ? 'var(--text-muted)' : 'var(--text-secondary)', fontWeight: 600, minWidth: 60, textAlign: 'right', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
                   {disk.size_human}
                 </span>
               </button>
@@ -333,15 +386,16 @@ function InlineDiskPicker({ selected, onSelect }: {
           {disks.map((disk, i) => {
             const path = `/dev/${disk.name}`;
             const isSelected = selected === path;
+            const sysAccent = 'rgba(251,146,60,0.7)';
             return (
               <button
                 key={i}
                 onClick={() => handleClick(disk)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px',
-                  background: isSelected ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                  background: disk.is_system ? 'rgba(251,146,60,0.05)' : isSelected ? 'var(--accent-dim)' : 'var(--bg-elevated)',
                   border: 'none', borderBottom: '1px solid var(--border)',
-                  borderLeft: `3px solid ${isSelected ? 'var(--accent)' : 'transparent'}`,
+                  borderLeft: `3px solid ${disk.is_system ? sysAccent : isSelected ? 'var(--accent)' : 'transparent'}`,
                   cursor: 'pointer', textAlign: 'left', width: '100%',
                   opacity: disk.in_use && !isSelected ? 0.65 : 1,
                 }}
@@ -823,6 +877,7 @@ function CreatePoolModal({ onClose, onSuccess, usedDisks = new Set<string>() }: 
           onSelect={path => { handlePickerSelect(path); setShowPicker(false); }}
           onClose={() => setShowPicker(false)}
           selected={pickerTarget !== null ? devices[pickerTarget] : undefined}
+          addedDisks={devices.filter((d, idx) => d.trim() && (pickerTarget === null || idx !== pickerTarget))}
         />
       )}
       <div style={S.modal.overlay} onClick={onClose}>
@@ -1487,9 +1542,11 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
   const [scrubState,       setScrubState]       = useState<Record<string, ScrubState>>({});
   const [scrubProgress,    setScrubProgress]    = useState<Record<string, ScrubProgress>>({});
   const [expansionProgress,setExpansionProgress] = useState<Record<string, ExpansionProgress>>({});
+  const [activeRewrites,   setActiveRewrites]   = useState<RewriteEntry[]>([]);
   const [expandedPool,  setExpandedPool]  = useState<string | null>(null);
   const [poolStatus,    setPoolStatus]    = useState<Record<string, string>>({});
   const [statusLoading, setStatusLoading] = useState<string | null>(null);
+  const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showCreate,    setShowCreate]    = useState(false);
   const [showImport,    setShowImport]    = useState(false);
   const [expandTarget,  setExpandTarget]  = useState<string | null>(null);
@@ -1550,12 +1607,22 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           setScrubProgress(p => ({ ...p, [pool.name]: {
             inProgress: true, done: false,
             progress: res.progress || 0, timeRemaining: res.time_remaining || '', scan: res.scan || '',
+            scanDetail: res.scan_detail || '', isResilver: !!(res.is_resilver),
+            scanSpeed: res.scan_speed || '',
           }}));
           startScrubPolling(pool.name);
         }
         if (res.expansion?.in_progress) {
-          setExpansionProgress(p => ({ ...p, [pool.name]: res.expansion }));
-          startScrubPolling(pool.name); // same polling interval fetches expansion too
+          setExpansionProgress(p => ({ ...p, [pool.name]: {
+            inProgress: true,
+            vdev: res.expansion.vdev || '',
+            progress: res.expansion.progress || 0,
+            eta: res.expansion.eta || '',
+            speed: res.expansion.speed || '',
+            copied: res.expansion.copied || '',
+            detail: res.expansion.detail || '',
+          }}));
+          startScrubPolling(pool.name);
         }
       }).catch(() => {});
     });
@@ -1595,10 +1662,19 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
         setScrubProgress(p => ({ ...p, [poolName]: {
           inProgress: res.in_progress, done: res.done,
           progress: res.progress, timeRemaining: res.time_remaining, scan: res.scan,
+          scanDetail: res.scan_detail || '', isResilver: !!(res.is_resilver),
+          scanSpeed: res.scan_speed || '',
         }}));
-        // Update expansion progress
         if (res.expansion) {
-          setExpansionProgress(p => ({ ...p, [poolName]: res.expansion }));
+          setExpansionProgress(p => ({ ...p, [poolName]: {
+            inProgress: res.expansion.in_progress || false,
+            vdev: res.expansion.vdev || '',
+            progress: res.expansion.progress || 0,
+            eta: res.expansion.eta || '',
+            speed: res.expansion.speed || '',
+            copied: res.expansion.copied || '',
+            detail: res.expansion.detail || '',
+          }}));
         }
         if (!res.in_progress && !res.expansion?.in_progress) {
           clearInterval(pollTimers.current[poolName]);
@@ -1610,8 +1686,17 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
         clearInterval(pollTimers.current[poolName]);
         delete pollTimers.current[poolName];
       }
-    }, 2000);
+    }, 1000);
   };
+
+  // Poll active rewrites every second
+  const rewritePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    const poll = () => api.getActiveRewrites().then(res => setActiveRewrites(res.active || [])).catch(() => {});
+    poll();
+    rewritePollRef.current = setInterval(poll, 1000);
+    return () => { if (rewritePollRef.current) clearInterval(rewritePollRef.current); };
+  }, []);
 
   useEffect(() => {
     return () => { Object.values(pollTimers.current).forEach(clearInterval); };
@@ -1623,7 +1708,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
       message: `Are you sure you want to start a ZFS scrub on pool "${poolName}"? A scrub validates the integrity of all data by reading every block and comparing its checksum. This can consume significant disk bandwidth and temporarily impact system performance.`,
       onConfirm: async () => {
         setScrubState(s => ({ ...s, [poolName]: 'running' }));
-        setScrubProgress(p => ({ ...p, [poolName]: { inProgress: true, done: false, progress: 0, timeRemaining: '', scan: '' } }));
+        setScrubProgress(p => ({ ...p, [poolName]: { inProgress: true, done: false, progress: 0, timeRemaining: '', scan: '', scanDetail: '', isResilver: false } }));
         try {
           await api.startScrub(poolName);
           showToast(`Scrub started on ${poolName}`, 'success');
@@ -1655,18 +1740,29 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
   };
 
   const handleToggleStatus = async (poolName: string) => {
-    if (expandedPool === poolName) { setExpandedPool(null); return; }
+    if (expandedPool === poolName) {
+      setExpandedPool(null);
+      if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; }
+      return;
+    }
     setExpandedPool(poolName);
-    if (!poolStatus[poolName]) {
-      setStatusLoading(poolName);
+    setStatusLoading(poolName);
+    const fetchStatus = async () => {
       try {
         const res = await api.getPoolStatus(poolName);
         setPoolStatus(s => ({ ...s, [poolName]: res.status }));
       } catch (err: any) {
-        setPoolStatus(s => ({ ...s, [poolName]: `Error: ${err.message}` }));
+        setPoolStatus(s => ({ ...s, [poolName]: `Error: ${(err as any).message}` }));
       } finally { setStatusLoading(null); }
-    }
+    };
+    await fetchStatus();
+    if (statusPollRef.current) clearInterval(statusPollRef.current);
+    statusPollRef.current = setInterval(fetchStatus, 1000);
   };
+
+  useEffect(() => {
+    return () => { if (statusPollRef.current) clearInterval(statusPollRef.current); };
+  }, []);
 
   return (
     <PageTransition>
@@ -1847,23 +1943,59 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                   </div>
                 ))}
 
-                {/* Scrub progress */}
+                {/* Scrub or Resilver progress */}
                 {state === 'running' && progress && (
-                  <div style={{ flex: 1, minWidth: 200, padding: '10px 20px', background: 'rgba(245,158,11,0.04)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                      <span style={{ fontSize: 11, color: 'var(--warning)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> Scrubbing
-                      </span>
-                      <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-                        {progress.timeRemaining && <span style={{ color: 'var(--text-muted)' }}>{progress.timeRemaining} rem</span>}
-                        <span style={{ color: 'var(--warning)', fontWeight: 700 }}>{progress.progress.toFixed(1)}%</span>
+                  progress.isResilver ? (
+                    <div style={{ flex: 1, minWidth: 200, padding: '10px 20px', background: 'rgba(20,184,166,0.04)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, color: 'var(--success)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> Resilvering
+                        </span>
+                        <span style={{ fontSize: 11, color: 'var(--success)', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{progress.progress.toFixed(2)}%</span>
+                      </div>
+                      <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${progress.progress}%`, background: 'var(--success)', borderRadius: 9999, transition: 'width 0.5s' }} />
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
+                        Resilvering: {progress.progress.toFixed(2)}% done{progress.timeRemaining ? `, ${progress.timeRemaining} to go` : ''}{progress.scanSpeed ? ` at ${progress.scanSpeed}` : ''}
                       </div>
                     </div>
-                    <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${progress.progress}%`, background: 'var(--warning)', borderRadius: 9999, transition: 'width 0.5s' }} />
+                  ) : (
+                    <div style={{ flex: 1, minWidth: 200, padding: '10px 20px', background: 'rgba(245,158,11,0.04)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, color: 'var(--warning)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> Scrubbing
+                        </span>
+                        <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                          {progress.timeRemaining && <span style={{ color: 'var(--text-muted)' }}>{progress.timeRemaining} rem</span>}
+                          <span style={{ color: 'var(--warning)', fontWeight: 700 }}>{progress.progress.toFixed(1)}%</span>
+                        </div>
+                      </div>
+                      <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${progress.progress}%`, background: 'var(--warning)', borderRadius: 9999, transition: 'width 0.5s' }} />
+                      </div>
                     </div>
-                  </div>
+                  )
                 )}
+
+                {/* Rewrite progress (dataset-level rewrites for this pool) */}
+                {activeRewrites.filter(r => r.pool === pool.name).map(r => {
+                  const { pct, label } = computeRewrite(r);
+                  return (
+                    <div key={r.name} style={{ flex: 1, minWidth: 200, padding: '10px 20px', background: 'rgba(56,189,248,0.04)', borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, color: 'var(--info)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> Rewriting
+                        </span>
+                        <span style={{ fontSize: 11, color: 'var(--info)', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{pct.toFixed(2)}%</span>
+                      </div>
+                      <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${Math.min(pct, 100)}%`, background: 'var(--info)', borderRadius: 9999, transition: 'width 1s' }} />
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>{label}</div>
+                    </div>
+                  );
+                })}
 
                 {/* RAIDZ Expansion progress */}
                 {expansionProg?.inProgress && (
@@ -1874,7 +2006,6 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                         Expanding {expansionProg.vdev}
                       </span>
                       <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-                        {expansionProg.speed && <span style={{ color: 'var(--text-muted)' }}>{expansionProg.speed}</span>}
                         {expansionProg.eta && <span style={{ color: 'var(--text-muted)' }}>{expansionProg.eta} rem</span>}
                         <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{expansionProg.progress.toFixed(2)}%</span>
                       </div>
@@ -1882,9 +2013,9 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                     <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
                       <div style={{ height: '100%', width: `${expansionProg.progress}%`, background: 'var(--accent)', borderRadius: 9999, transition: 'width 1s' }} />
                     </div>
-                    {expansionProg.copied && (
+                    {expansionProg.detail && (
                       <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
-                        {expansionProg.copied} copied
+                        Expanding {expansionProg.vdev}: {expansionProg.detail.replace(' copied', '')}
                       </div>
                     )}
                   </div>
