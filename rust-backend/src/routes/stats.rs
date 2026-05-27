@@ -302,35 +302,50 @@ fn format_size_human(bytes: u64) -> String {
     format!("{} B", bytes)
 }
 
-fn detect_system_disks() -> std::collections::HashSet<String> {
+fn lsblk_has_system_mount(node: &serde_json::Value) -> bool {
+    if let Some(mounts) = node["mountpoints"].as_array() {
+        for m in mounts {
+            if let Some(mp) = m.as_str() {
+                if mp == "/" || mp.starts_with("/boot") {
+                    return true;
+                }
+            }
+        }
+    }
+    if let Some(children) = node["children"].as_array() {
+        for child in children {
+            if lsblk_has_system_mount(child) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+async fn detect_system_disks() -> std::collections::HashSet<String> {
     let mut system_disks = std::collections::HashSet::new();
-    // Read /proc/mounts to find which block devices back / and /boot
-    if let Ok(contents) = std::fs::read_to_string("/proc/mounts") {
-        for line in contents.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() < 2 { continue; }
-            let dev = parts[0];
-            let mnt = parts[1];
-            if mnt != "/" && mnt != "/boot" && mnt != "/boot/efi" && !mnt.starts_with("/boot") { continue; }
-            if !dev.starts_with("/dev/") { continue; }
-            // Resolve symlinks (handles /dev/disk/by-id/... etc.)
-            let resolved = std::fs::canonicalize(dev)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| dev.to_string());
-            let short = resolved.trim_start_matches("/dev/");
-            // Strip partition suffix to get base disk (sda1 → sda, nvme0n1p1 → nvme0n1)
-            let base = if short.contains("nvme") || short.contains("mmcblk") {
-                // NVMe: nvme0n1p1 → nvme0n1
-                let re: Vec<&str> = short.splitn(2, 'p').collect();
-                if re.len() == 2 && re[1].chars().all(|c| c.is_ascii_digit()) {
-                    re[0].to_string()
-                } else { short.to_string() }
-            } else {
-                // SATA/SCSI: sda1 → sda, vda2 → vda
-                short.trim_end_matches(|c: char| c.is_ascii_digit()).to_string()
-            };
-            if !base.is_empty() {
-                system_disks.insert(base);
+    let output = tokio::process::Command::new("lsblk")
+        .args(["-J", "-o", "NAME,MOUNTPOINTS,TYPE,PKNAME"])
+        .output()
+        .await;
+    let out = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return system_disks,
+    };
+    let json: serde_json::Value = match serde_json::from_slice(&out.stdout) {
+        Ok(v) => v,
+        Err(_) => return system_disks,
+    };
+    if let Some(blockdevices) = json["blockdevices"].as_array() {
+        for dev in blockdevices {
+            // Only top-level disks (type=disk, pkname=null/absent)
+            if dev["type"].as_str() != Some("disk") { continue; }
+            if dev["pkname"].is_string() { continue; } // has a parent — skip
+            if lsblk_has_system_mount(dev) {
+                let name = dev["name"].as_str().unwrap_or("").to_string();
+                if !name.is_empty() {
+                    system_disks.insert(name);
+                }
             }
         }
     }
@@ -338,8 +353,8 @@ fn detect_system_disks() -> std::collections::HashSet<String> {
 }
 
 async fn list_enriched_disks(State(_state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    // Detect which disks back the OS (/ and /boot mounts)
-    let system_disk_names = detect_system_disks();
+    // Detect which disks back the OS — walks lsblk tree recursively
+    let system_disk_names = detect_system_disks().await;
 
     // Build ZFS pool membership map — ZFS is the single source of truth for in_use.
     // Using `zpool status -P` gives full /dev/... paths which we normalize to short
