@@ -291,18 +291,15 @@ async fn rewrite_dataset(
     drop(lock);
 
     let ds_name = body.name.clone();
-    let mount_path = mountpoint.clone();
     let state_clone = state.clone();
     
-    // Spawn background task running on the mountpoint path!
+    // Spawn background task — use dataset name (not mount path) so nsenter can find it in the host ZFS namespace
     tokio::spawn(async move {
-        // Try running via nsenter first (to access host mount namespace)
-        let res = executor::command("nsenter", &["-t", "1", "-m", "--", "zfs", "rewrite", "-r", &mount_path]).await;
+        let res = executor::command("nsenter", &["-t", "1", "-m", "--", "zfs", "rewrite", "-r", &ds_name]).await;
         let mut final_res = res;
         if let Err(ref e) = final_res {
             error!("Failed to run zfs rewrite via nsenter: {:?}. Falling back to direct execution.", e);
-            // Fallback: run directly inside the container (if mountpoints are mapped)
-            final_res = executor::command("zfs", &["rewrite", "-r", &mount_path]).await;
+            final_res = executor::command("zfs", &["rewrite", "-r", &ds_name]).await;
         }
 
         match final_res {
@@ -328,7 +325,7 @@ async fn rewrite_dataset(
         lock.remove(&ds_name);
     });
 
-    Ok(Json(json!({ "message": format!("Rewrite started in background for '{}' at '{}'", body.name, mountpoint) })))
+    Ok(Json(json!({ "message": format!("Rewrite started in background for '{}'", body.name) })))
 }
 
 #[derive(Deserialize)]
