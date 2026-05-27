@@ -452,7 +452,7 @@ async fn stop_scrub(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
 
 async fn scrub_status(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "pool")?;
-    let raw = executor::zpool(&["status", &name]).await?;
+    let raw = executor::zpool_status_host(&name).await?;
 
     let lines: Vec<&str> = raw.lines().collect();
     let mut scan_line   = String::new();
@@ -491,6 +491,7 @@ async fn scrub_status(Path(name): Path<String>) -> Result<Json<Value>, ApiError>
     }
 
     let in_progress = scan_line.contains("in progress");
+    let is_resilver = scan_line.contains("resilver in progress");
     let done        = scan_line.contains("repaired") || scan_line.contains("canceled");
 
     let progress = if in_progress { parse_scan_progress(&scan_detail) }
@@ -547,6 +548,7 @@ async fn scrub_status(Path(name): Path<String>) -> Result<Json<Value>, ApiError>
     Ok(Json(json!({
         "name":           name,
         "in_progress":    in_progress,
+        "is_resilver":    is_resilver,
         "done":           done,
         "progress":       progress,
         "scan":           scan_line,
