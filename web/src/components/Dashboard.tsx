@@ -310,6 +310,33 @@ function StatCard({ label, value, sub, fillLine, icon: Icon, color, minHeight = 
   );
 }
 
+/* ── Rewrite helpers (used in PoolCard) ── */
+const REWRITE_SPEED_BPS_DASH = 100 * 1024 * 1024;
+
+function fmtBytesDash(b: number): string {
+  if (b >= 1024 ** 4) return `${(b / 1024 ** 4).toFixed(2)}T`;
+  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(2)}G`;
+  if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(2)}M`;
+  return `${(b / 1024).toFixed(2)}K`;
+}
+
+function fmtSecsDash(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  return [h, m, sec].map(v => String(v).padStart(2, '0')).join(':');
+}
+
+interface RewriteEntryDash { name: string; pool: string; total_bytes: number; elapsed_secs: number; }
+
+function computeRewriteDash(r: RewriteEntryDash) {
+  const total = r.total_bytes;
+  const done  = Math.min(r.elapsed_secs * REWRITE_SPEED_BPS_DASH, total * 0.99);
+  const pct   = total > 0 ? (done / total) * 100 : 0;
+  const remS  = total > 0 ? (total - done) / REWRITE_SPEED_BPS_DASH : 0;
+  return { pct, label: `Rewriting: ${fmtBytesDash(done)} / ${fmtBytesDash(total)} at 100 MB/s, ${pct.toFixed(2)}% done, ${fmtSecsDash(remS)} to go` };
+}
+
 /* ── Pool card ── */
 function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: number | null }) {
   const animCap  = useCounter(pool.cap);
@@ -317,8 +344,9 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
   const capColor = pool.cap > 90 ? 'var(--danger)' : pool.cap > 80 ? 'var(--warning)' : 'var(--success)';
 
   const [scrubState,  setScrubState]  = useState<'idle' | 'running' | 'success' | 'error'>('idle');
-  const [scrubProg,   setScrubProg]   = useState<{ progress: number; timeRemaining: string; isResilver: boolean; scanDetail: string }>({ progress: 0, timeRemaining: '', isResilver: false, scanDetail: '' });
+  const [scrubProg,   setScrubProg]   = useState<{ progress: number; timeRemaining: string; isResilver: boolean; scanDetail: string; scanSpeed: string }>({ progress: 0, timeRemaining: '', isResilver: false, scanDetail: '', scanSpeed: '' });
   const [expansionProg, setExpansionProg] = useState<{ inProgress: boolean; vdev: string; progress: number; eta: string; detail: string } | null>(null);
+  const [rewriteActive, setRewriteActive] = useState<RewriteEntryDash[]>([]);
   const [showSnap,    setShowSnap]    = useState(false);
   const [snapName,    setSnapName]    = useState('');
   const [snapError,   setSnapError]   = useState('');
@@ -332,7 +360,7 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
     api.getScrubStatus(pool.name).then(res => {
       if (res.in_progress) {
         setScrubState('running');
-        setScrubProg({ progress: res.progress || 0, timeRemaining: res.time_remaining || '', isResilver: !!(res.is_resilver), scanDetail: res.scan_detail || '' });
+        setScrubProg({ progress: res.progress || 0, timeRemaining: res.time_remaining || '', isResilver: !!(res.is_resilver), scanDetail: res.scan_detail || '', scanSpeed: res.scan_speed || '' });
         startPoll();
       }
       if (res.expansion?.in_progress) {
@@ -340,7 +368,11 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
         startPoll();
       }
     }).catch(() => {});
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    // Poll active rewrites for this pool
+    const pollRew = () => api.getActiveRewrites().then(r => setRewriteActive((r.active || []).filter((e: RewriteEntryDash) => e.pool === pool.name))).catch(() => {});
+    pollRew();
+    const rewId = setInterval(pollRew, 1000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); clearInterval(rewId); };
   }, [pool.name]);
 
   useEffect(() => {
@@ -358,7 +390,7 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
       try {
         const res = await api.getScrubStatus(pool.name);
         if (res.in_progress) {
-          setScrubProg({ progress: res.progress || 0, timeRemaining: res.time_remaining || '', isResilver: !!(res.is_resilver), scanDetail: res.scan_detail || '' });
+          setScrubProg({ progress: res.progress || 0, timeRemaining: res.time_remaining || '', isResilver: !!(res.is_resilver), scanDetail: res.scan_detail || '', scanSpeed: res.scan_speed || '' });
         }
         if (res.expansion) {
           setExpansionProg(res.expansion.in_progress ? res.expansion : null);
@@ -483,19 +515,14 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
               <span style={{ fontSize: 11, color: 'var(--success)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ width: 10, height: 10, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.2)', borderTopColor: 'var(--success)', animation: 'spin 0.7s linear infinite' }} /> Resilvering
               </span>
-              <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-                {scrubProg.timeRemaining && <span style={{ color: 'var(--text-muted)' }}>{scrubProg.timeRemaining} rem</span>}
-                <span style={{ color: 'var(--success)', fontWeight: 700 }}>{scrubProg.progress.toFixed(1)}%</span>
-              </div>
+              <span style={{ fontSize: 11, color: 'var(--success)', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{scrubProg.progress.toFixed(2)}%</span>
             </div>
             <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${scrubProg.progress}%`, background: 'var(--success)', borderRadius: 9999, transition: 'width 0.5s' }} />
             </div>
-            {scrubProg.scanDetail && (
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
-                {scrubProg.scanDetail.replace(' scanned', '')}
-              </div>
-            )}
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
+              Resilvering: {scrubProg.progress.toFixed(2)}% done{scrubProg.timeRemaining ? `, ${scrubProg.timeRemaining} to go` : ''}{scrubProg.scanSpeed ? ` at ${scrubProg.scanSpeed}` : ''}
+            </div>
           </div>
         ) : (
           <div style={{ marginBottom: 16, padding: '10px 14px', background: 'rgba(245,158,11,0.04)', borderRadius: 'var(--radius)', border: '1px solid rgba(245,158,11,0.2)' }}>
@@ -514,6 +541,24 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
           </div>
         )
       )}
+
+      {rewriteActive.map(r => {
+        const { pct, label } = computeRewriteDash(r);
+        return (
+          <div key={r.name} style={{ marginBottom: 16, padding: '10px 14px', background: 'rgba(56,189,248,0.04)', borderRadius: 'var(--radius)', border: '1px solid rgba(56,189,248,0.2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 11, color: 'var(--info)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ width: 10, height: 10, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.2)', borderTopColor: 'var(--info)', animation: 'spin 0.7s linear infinite' }} /> Rewriting
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--info)', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{pct.toFixed(2)}%</span>
+            </div>
+            <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${Math.min(pct, 100)}%`, background: 'var(--info)', borderRadius: 9999, transition: 'width 1s' }} />
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>{label}</div>
+          </div>
+        );
+      })}
 
       {expansionProg?.inProgress && (
         <div style={{ marginBottom: 16, padding: '10px 14px', background: 'rgba(99,102,241,0.06)', borderRadius: 'var(--radius)', border: '1px solid rgba(99,102,241,0.2)' }}>

@@ -139,6 +139,8 @@ export const api = {
     request<any>('/datasets/rewrite', { method: 'POST', body: JSON.stringify({ name: datasetName }) }),
   getRewriteStatus: (datasetName: string) =>
     request<{ in_progress: boolean, name: string }>(`/datasets/rewrite/status?name=${encodeURIComponent(datasetName)}`),
+  getActiveRewrites: () =>
+    request<{ active: Array<{ name: string; pool: string; total_bytes: number; elapsed_secs: number }> }>('/datasets/rewrite/active'),
 
   // ── Dataset Properties ─────────────────────────────────────────────────────
   getDatasetProperties: (name: string, props?: string) =>

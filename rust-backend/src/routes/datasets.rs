@@ -6,16 +6,28 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::{error::ApiError, executor, state::AppState};
 use tracing::{error, info};
 
-fn active_rewrites() -> &'static TokioMutex<HashSet<String>> {
-    static REWRITES: OnceLock<TokioMutex<HashSet<String>>> = OnceLock::new();
-    REWRITES.get_or_init(|| TokioMutex::new(HashSet::new()))
+struct RewriteInfo {
+    total_bytes: u64,
+    started_at_secs: u64,
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn active_rewrites() -> &'static TokioMutex<HashMap<String, RewriteInfo>> {
+    static REWRITES: OnceLock<TokioMutex<HashMap<String, RewriteInfo>>> = OnceLock::new();
+    REWRITES.get_or_init(|| TokioMutex::new(HashMap::new()))
 }
 
 pub fn router(state: AppState) -> Router {
@@ -31,6 +43,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/datasets/space",  get(dataset_space))
         .route("/api/v1/datasets/rewrite", post(rewrite_dataset))
         .route("/api/v1/datasets/rewrite/status", get(rewrite_status))
+        .route("/api/v1/datasets/rewrite/active", get(list_active_rewrites))
         .with_state(state)
 }
 
@@ -263,11 +276,18 @@ async fn rewrite_dataset(
         )));
     }
 
+    // Get dataset refer size for progress estimation
+    let total_bytes: u64 = executor::zfs(&["get", "-H", "-p", "-o", "value", "refer", &body.name])
+        .await
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
+
     let mut lock = active_rewrites().lock().await;
-    if lock.contains(&body.name) {
+    if lock.contains_key(&body.name) {
         return Ok(Json(json!({ "message": format!("Rewrite already running for '{}'", body.name) })));
     }
-    lock.insert(body.name.clone());
+    lock.insert(body.name.clone(), RewriteInfo { total_bytes, started_at_secs: now_secs() });
     drop(lock);
 
     let ds_name = body.name.clone();
@@ -321,10 +341,27 @@ async fn rewrite_status(Query(q): Query<StatusQuery>) -> Result<Json<Value>, Api
         return Err(ApiError::BadRequest("query param 'name' is required".into()));
     }
     let lock = active_rewrites().lock().await;
-    let is_running = lock.contains(&q.name);
-    
+    let is_running = lock.contains_key(&q.name);
+
     Ok(Json(json!({
         "in_progress": is_running,
         "name": q.name,
     })))
+}
+
+async fn list_active_rewrites() -> Result<Json<Value>, ApiError> {
+    let now = now_secs();
+    let lock = active_rewrites().lock().await;
+    let active: Vec<Value> = lock.iter().map(|(name, info)| {
+        let pool = name.split('/').next().unwrap_or(name);
+        let elapsed_secs = now.saturating_sub(info.started_at_secs);
+        json!({
+            "name":         name,
+            "pool":         pool,
+            "total_bytes":  info.total_bytes,
+            "elapsed_secs": elapsed_secs,
+        })
+    }).collect();
+
+    Ok(Json(json!({ "active": active })))
 }

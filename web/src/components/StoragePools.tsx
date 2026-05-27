@@ -28,6 +28,41 @@ interface ScrubProgress {
   scan: string;
   scanDetail: string;
   isResilver: boolean;
+  scanSpeed: string;
+}
+
+interface RewriteEntry {
+  name: string;
+  pool: string;
+  total_bytes: number;
+  elapsed_secs: number;
+}
+
+const REWRITE_SPEED_BPS = 100 * 1024 * 1024; // 100 MB/s estimate
+
+function fmtBytes(b: number): string {
+  if (b >= 1024 ** 4) return `${(b / 1024 ** 4).toFixed(2)}T`;
+  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(2)}G`;
+  if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(2)}M`;
+  return `${(b / 1024).toFixed(2)}K`;
+}
+
+function fmtSeconds(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  return [h, m, sec].map(v => String(v).padStart(2, '0')).join(':');
+}
+
+function computeRewrite(r: RewriteEntry) {
+  const total = r.total_bytes;
+  const done  = Math.min(r.elapsed_secs * REWRITE_SPEED_BPS, total * 0.99);
+  const pct   = total > 0 ? (done / total) * 100 : 0;
+  const remS  = total > 0 ? (total - done) / REWRITE_SPEED_BPS : 0;
+  return {
+    pct,
+    label: `Rewriting: ${fmtBytes(done)} / ${fmtBytes(total)} at 100 MB/s, ${pct.toFixed(2)}% done, ${fmtSeconds(remS)} to go`,
+  };
 }
 
 interface ExpansionProgress {
@@ -1489,9 +1524,11 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
   const [scrubState,       setScrubState]       = useState<Record<string, ScrubState>>({});
   const [scrubProgress,    setScrubProgress]    = useState<Record<string, ScrubProgress>>({});
   const [expansionProgress,setExpansionProgress] = useState<Record<string, ExpansionProgress>>({});
+  const [activeRewrites,   setActiveRewrites]   = useState<RewriteEntry[]>([]);
   const [expandedPool,  setExpandedPool]  = useState<string | null>(null);
   const [poolStatus,    setPoolStatus]    = useState<Record<string, string>>({});
   const [statusLoading, setStatusLoading] = useState<string | null>(null);
+  const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showCreate,    setShowCreate]    = useState(false);
   const [showImport,    setShowImport]    = useState(false);
   const [expandTarget,  setExpandTarget]  = useState<string | null>(null);
@@ -1553,12 +1590,13 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
             inProgress: true, done: false,
             progress: res.progress || 0, timeRemaining: res.time_remaining || '', scan: res.scan || '',
             scanDetail: res.scan_detail || '', isResilver: !!(res.is_resilver),
+            scanSpeed: res.scan_speed || '',
           }}));
           startScrubPolling(pool.name);
         }
         if (res.expansion?.in_progress) {
           setExpansionProgress(p => ({ ...p, [pool.name]: res.expansion }));
-          startScrubPolling(pool.name); // same polling interval fetches expansion too
+          startScrubPolling(pool.name);
         }
       }).catch(() => {});
     });
@@ -1599,8 +1637,8 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           inProgress: res.in_progress, done: res.done,
           progress: res.progress, timeRemaining: res.time_remaining, scan: res.scan,
           scanDetail: res.scan_detail || '', isResilver: !!(res.is_resilver),
+          scanSpeed: res.scan_speed || '',
         }}));
-        // Update expansion progress
         if (res.expansion) {
           setExpansionProgress(p => ({ ...p, [poolName]: res.expansion }));
         }
@@ -1616,6 +1654,15 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
       }
     }, 1000);
   };
+
+  // Poll active rewrites every second
+  const rewritePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    const poll = () => api.getActiveRewrites().then(res => setActiveRewrites(res.active || [])).catch(() => {});
+    poll();
+    rewritePollRef.current = setInterval(poll, 1000);
+    return () => { if (rewritePollRef.current) clearInterval(rewritePollRef.current); };
+  }, []);
 
   useEffect(() => {
     return () => { Object.values(pollTimers.current).forEach(clearInterval); };
@@ -1659,18 +1706,29 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
   };
 
   const handleToggleStatus = async (poolName: string) => {
-    if (expandedPool === poolName) { setExpandedPool(null); return; }
+    if (expandedPool === poolName) {
+      setExpandedPool(null);
+      if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; }
+      return;
+    }
     setExpandedPool(poolName);
-    if (!poolStatus[poolName]) {
-      setStatusLoading(poolName);
+    setStatusLoading(poolName);
+    const fetchStatus = async () => {
       try {
         const res = await api.getPoolStatus(poolName);
         setPoolStatus(s => ({ ...s, [poolName]: res.status }));
       } catch (err: any) {
-        setPoolStatus(s => ({ ...s, [poolName]: `Error: ${err.message}` }));
+        setPoolStatus(s => ({ ...s, [poolName]: `Error: ${(err as any).message}` }));
       } finally { setStatusLoading(null); }
-    }
+    };
+    await fetchStatus();
+    if (statusPollRef.current) clearInterval(statusPollRef.current);
+    statusPollRef.current = setInterval(fetchStatus, 1000);
   };
+
+  useEffect(() => {
+    return () => { if (statusPollRef.current) clearInterval(statusPollRef.current); };
+  }, []);
 
   return (
     <PageTransition>
@@ -1859,19 +1917,14 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                         <span style={{ fontSize: 11, color: 'var(--success)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
                           <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> Resilvering
                         </span>
-                        <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-                          {progress.timeRemaining && <span style={{ color: 'var(--text-muted)' }}>{progress.timeRemaining} rem</span>}
-                          <span style={{ color: 'var(--success)', fontWeight: 700 }}>{progress.progress.toFixed(1)}%</span>
-                        </div>
+                        <span style={{ fontSize: 11, color: 'var(--success)', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{progress.progress.toFixed(2)}%</span>
                       </div>
                       <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
                         <div style={{ height: '100%', width: `${progress.progress}%`, background: 'var(--success)', borderRadius: 9999, transition: 'width 0.5s' }} />
                       </div>
-                      {progress.scanDetail && (
-                        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
-                          {progress.scanDetail.replace(' scanned', '')}
-                        </div>
-                      )}
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
+                        Resilvering: {progress.progress.toFixed(2)}% done{progress.timeRemaining ? `, ${progress.timeRemaining} to go` : ''}{progress.scanSpeed ? ` at ${progress.scanSpeed}` : ''}
+                      </div>
                     </div>
                   ) : (
                     <div style={{ flex: 1, minWidth: 200, padding: '10px 20px', background: 'rgba(245,158,11,0.04)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
@@ -1890,6 +1943,25 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                     </div>
                   )
                 )}
+
+                {/* Rewrite progress (dataset-level rewrites for this pool) */}
+                {activeRewrites.filter(r => r.pool === pool.name).map(r => {
+                  const { pct, label } = computeRewrite(r);
+                  return (
+                    <div key={r.name} style={{ flex: 1, minWidth: 200, padding: '10px 20px', background: 'rgba(56,189,248,0.04)', borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, color: 'var(--info)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> Rewriting
+                        </span>
+                        <span style={{ fontSize: 11, color: 'var(--info)', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{pct.toFixed(2)}%</span>
+                      </div>
+                      <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${Math.min(pct, 100)}%`, background: 'var(--info)', borderRadius: 9999, transition: 'width 1s' }} />
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>{label}</div>
+                    </div>
+                  );
+                })}
 
                 {/* RAIDZ Expansion progress */}
                 {expansionProg?.inProgress && (
