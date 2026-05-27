@@ -95,17 +95,28 @@ function colorVar(c: string): string {
   return 'var(--text-muted)';
 }
 
+type PoolFillInfo = { days: number; rateGbDay: number; fillDate: string; color: string };
+
 // Fill prediction from the shared backend endpoint (longest window auto-selected)
 function useFillPrediction() {
   const [prediction, setPrediction] = React.useState<{
     text: string; color: string; timeText: string;
   } | null>(null);
+  const [byPool, setByPool] = React.useState<Record<string, PoolFillInfo>>({});
   const loaded = React.useRef(false);
 
   React.useEffect(() => {
     if (loaded.current) return;
     loaded.current = true;
     api.getFillPrediction('auto').then(res => {
+      const map: Record<string, PoolFillInfo> = {};
+      for (const pred of res.predictions) {
+        const rate = parseFloat(pred.rate_gb_day);
+        const days = rate > 0 ? pred.free_gb / rate : 0;
+        map[pred.pool] = { days, rateGbDay: rate, fillDate: pred.fill_date, color: colorVar(pred.color) };
+      }
+      setByPool(map);
+
       if (res.predictions.length > 0) {
         const earliest = res.predictions.reduce((min, pred) => {
           if (pred.fill_date === '–') return min;
@@ -131,7 +142,7 @@ function useFillPrediction() {
     });
   }, []);
 
-  return prediction;
+  return { prediction, byPool };
 }
 
 /* ── Chart config ── */
@@ -338,7 +349,8 @@ function computeRewriteDash(r: RewriteEntryDash) {
 }
 
 /* ── Pool card ── */
-function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: number | null }) {
+function PoolCard({ pool, fillInfo }: { pool: ZFSPool; fillInfo?: PoolFillInfo }) {
+  const daysUntilFull = fillInfo && fillInfo.days > 0 ? fillInfo.days : null;
   const animCap  = useCounter(pool.cap);
   const isOnline = pool.health === 'ONLINE';
   const capColor = pool.cap > 90 ? 'var(--danger)' : pool.cap > 80 ? 'var(--warning)' : 'var(--success)';
@@ -511,12 +523,26 @@ function PoolCard({ pool, daysUntilFull }: { pool: ZFSPool; daysUntilFull: numbe
         </div>
       </div>
 
-      {daysUntilFull !== null && (
+      {fillInfo && fillInfo.rateGbDay > 0 && (
         <div style={{
           fontSize: 11, fontFamily: 'var(--font-ui)', marginBottom: 14,
-          color: daysUntilFull < 14 ? 'var(--danger)' : daysUntilFull < 30 ? 'var(--warning)' : 'var(--text-muted)',
+          color: fillInfo.color,
+          display: 'flex', gap: 8, flexWrap: 'wrap',
         }}>
-          Full in <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{fmtDays(daysUntilFull)}</span> at current write rate
+          <span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+              +{fillInfo.rateGbDay >= 1000
+                ? `${(fillInfo.rateGbDay / 1024).toFixed(2)} TB/day`
+                : fillInfo.rateGbDay >= 1
+                  ? `${fillInfo.rateGbDay.toFixed(2)} GB/day`
+                  : `${(fillInfo.rateGbDay * 1024).toFixed(0)} MB/day`}
+            </span>
+          </span>
+          {daysUntilFull !== null && (
+            <span>
+              · Full in <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{fmtDays(daysUntilFull)}</span>
+            </span>
+          )}
         </div>
       )}
 
@@ -827,8 +853,7 @@ export default function Dashboard({
   const rawPct = selRawCap > 0 ? (selRawUsed / selRawCap) * 100 : 0;
 
   // Fill prediction from shared backend endpoint
-  const fillPrediction = useFillPrediction();
-  const daysUntilFull  = null;
+  const { prediction: fillPrediction, byPool: fillByPool } = useFillPrediction();
 
   useEffect(() => {
     const fetchChartData = () => {
@@ -1104,7 +1129,7 @@ export default function Dashboard({
               Storage Pools
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
-              {displayPools.map((pool, i) => <PoolCard key={i} pool={pool} daysUntilFull={daysUntilFull} />)}
+              {displayPools.map((pool, i) => <PoolCard key={i} pool={pool} fillInfo={fillByPool[pool.name]} />)}
             </div>
           </div>
         ) : null;
@@ -1276,7 +1301,7 @@ export default function Dashboard({
       {/* Capacity banners */}
       {bannerPools.length > 0 && (
         <div style={{ marginBottom: 16 }}>
-          {bannerPools.map(p => <CapacityBanner key={p.name} pool={p} daysUntilFull={daysUntilFull} />)}
+          {bannerPools.map(p => <CapacityBanner key={p.name} pool={p} daysUntilFull={fillByPool[p.name]?.days ?? null} />)}
         </div>
       )}
 
