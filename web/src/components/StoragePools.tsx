@@ -26,6 +26,8 @@ interface ScrubProgress {
   progress: number;
   timeRemaining: string;
   scan: string;
+  scanDetail: string;
+  isResilver: boolean;
 }
 
 interface ExpansionProgress {
@@ -1550,6 +1552,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           setScrubProgress(p => ({ ...p, [pool.name]: {
             inProgress: true, done: false,
             progress: res.progress || 0, timeRemaining: res.time_remaining || '', scan: res.scan || '',
+            scanDetail: res.scan_detail || '', isResilver: !!(res.is_resilver),
           }}));
           startScrubPolling(pool.name);
         }
@@ -1595,6 +1598,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
         setScrubProgress(p => ({ ...p, [poolName]: {
           inProgress: res.in_progress, done: res.done,
           progress: res.progress, timeRemaining: res.time_remaining, scan: res.scan,
+          scanDetail: res.scan_detail || '', isResilver: !!(res.is_resilver),
         }}));
         // Update expansion progress
         if (res.expansion) {
@@ -1610,7 +1614,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
         clearInterval(pollTimers.current[poolName]);
         delete pollTimers.current[poolName];
       }
-    }, 2000);
+    }, 1000);
   };
 
   useEffect(() => {
@@ -1623,7 +1627,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
       message: `Are you sure you want to start a ZFS scrub on pool "${poolName}"? A scrub validates the integrity of all data by reading every block and comparing its checksum. This can consume significant disk bandwidth and temporarily impact system performance.`,
       onConfirm: async () => {
         setScrubState(s => ({ ...s, [poolName]: 'running' }));
-        setScrubProgress(p => ({ ...p, [poolName]: { inProgress: true, done: false, progress: 0, timeRemaining: '', scan: '' } }));
+        setScrubProgress(p => ({ ...p, [poolName]: { inProgress: true, done: false, progress: 0, timeRemaining: '', scan: '', scanDetail: '', isResilver: false } }));
         try {
           await api.startScrub(poolName);
           showToast(`Scrub started on ${poolName}`, 'success');
@@ -1847,22 +1851,44 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                   </div>
                 ))}
 
-                {/* Scrub progress */}
+                {/* Scrub or Resilver progress */}
                 {state === 'running' && progress && (
-                  <div style={{ flex: 1, minWidth: 200, padding: '10px 20px', background: 'rgba(245,158,11,0.04)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                      <span style={{ fontSize: 11, color: 'var(--warning)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> Scrubbing
-                      </span>
-                      <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-                        {progress.timeRemaining && <span style={{ color: 'var(--text-muted)' }}>{progress.timeRemaining} rem</span>}
-                        <span style={{ color: 'var(--warning)', fontWeight: 700 }}>{progress.progress.toFixed(1)}%</span>
+                  progress.isResilver ? (
+                    <div style={{ flex: 1, minWidth: 200, padding: '10px 20px', background: 'rgba(20,184,166,0.04)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, color: 'var(--success)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> Resilvering
+                        </span>
+                        <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                          {progress.timeRemaining && <span style={{ color: 'var(--text-muted)' }}>{progress.timeRemaining} rem</span>}
+                          <span style={{ color: 'var(--success)', fontWeight: 700 }}>{progress.progress.toFixed(1)}%</span>
+                        </div>
+                      </div>
+                      <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${progress.progress}%`, background: 'var(--success)', borderRadius: 9999, transition: 'width 0.5s' }} />
+                      </div>
+                      {progress.scanDetail && (
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
+                          {progress.scanDetail.replace(' scanned', '')}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ flex: 1, minWidth: 200, padding: '10px 20px', background: 'rgba(245,158,11,0.04)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, color: 'var(--warning)', fontFamily: 'var(--font-ui)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> Scrubbing
+                        </span>
+                        <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                          {progress.timeRemaining && <span style={{ color: 'var(--text-muted)' }}>{progress.timeRemaining} rem</span>}
+                          <span style={{ color: 'var(--warning)', fontWeight: 700 }}>{progress.progress.toFixed(1)}%</span>
+                        </div>
+                      </div>
+                      <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${progress.progress}%`, background: 'var(--warning)', borderRadius: 9999, transition: 'width 0.5s' }} />
                       </div>
                     </div>
-                    <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${progress.progress}%`, background: 'var(--warning)', borderRadius: 9999, transition: 'width 0.5s' }} />
-                    </div>
-                  </div>
+                  )
                 )}
 
                 {/* RAIDZ Expansion progress */}
@@ -1874,7 +1900,6 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                         Expanding {expansionProg.vdev}
                       </span>
                       <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-                        {expansionProg.speed && <span style={{ color: 'var(--text-muted)' }}>{expansionProg.speed}</span>}
                         {expansionProg.eta && <span style={{ color: 'var(--text-muted)' }}>{expansionProg.eta} rem</span>}
                         <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{expansionProg.progress.toFixed(2)}%</span>
                       </div>
@@ -1882,9 +1907,9 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                     <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 9999, overflow: 'hidden' }}>
                       <div style={{ height: '100%', width: `${expansionProg.progress}%`, background: 'var(--accent)', borderRadius: 9999, transition: 'width 1s' }} />
                     </div>
-                    {expansionProg.copied && (
+                    {expansionProg.detail && (
                       <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
-                        {expansionProg.copied} copied
+                        Expanding {expansionProg.vdev}: {expansionProg.detail.replace(' copied', '')}
                       </div>
                     )}
                   </div>
