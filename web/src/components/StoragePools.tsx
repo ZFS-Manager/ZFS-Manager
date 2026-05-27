@@ -41,10 +41,10 @@ interface RewriteEntry {
 const REWRITE_SPEED_BPS = 100 * 1024 * 1024; // 100 MB/s estimate
 
 function fmtBytes(b: number): string {
-  if (b >= 1024 ** 4) return `${(b / 1024 ** 4).toFixed(2)}T`;
-  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(2)}G`;
-  if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(2)}M`;
-  return `${(b / 1024).toFixed(2)}K`;
+  if (b >= 1024 ** 4) return `${(b / 1024 ** 4).toFixed(2)} TB`;
+  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(2)} GB`;
+  if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(2)} MB`;
+  return `${(b / 1024).toFixed(2)} KB`;
 }
 
 function fmtSeconds(s: number): string {
