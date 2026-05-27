@@ -31,6 +31,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/pools/:name/settings",     get(get_pool_settings).put(set_pool_setting))
         .route("/api/v1/pools/:name/feature/raidz_expansion",        get(get_raidz_expansion_feature))
         .route("/api/v1/pools/:name/feature/raidz_expansion/enable", post(enable_raidz_expansion_feature))
+        .route("/api/v1/pools/:name/features",                        get(list_pool_features))
         .with_state(state)
 }
 
@@ -647,6 +648,29 @@ async fn resilver_pool(Path(name): Path<String>) -> Result<Json<Value>, ApiError
         }
         Err(e) => Err(e),
     }
+}
+
+async fn list_pool_features(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
+    executor::validate_zfs_name(&name, "pool")?;
+    let raw = executor::zpool_host(&["get", "-H", "all", &name]).await?;
+    let features: Vec<Value> = raw.lines()
+        .filter_map(|line| {
+            let cols: Vec<&str> = line.splitn(4, '\t').collect();
+            if cols.len() < 3 { return None; }
+            let prop = cols[1].trim();
+            if !prop.starts_with("feature@") { return None; }
+            let feature_name = prop.strip_prefix("feature@").unwrap_or(prop);
+            let value = cols[2].trim();
+            let enabled = matches!(value, "active" | "enabled");
+            Some(json!({
+                "name":     feature_name,
+                "property": prop,
+                "value":    value,
+                "enabled":  enabled,
+            }))
+        })
+        .collect();
+    Ok(Json(json!({ "pool": name, "features": features })))
 }
 
 async fn pool_events(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {

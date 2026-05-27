@@ -227,6 +227,11 @@ export const api = {
       { method: 'PUT', body: JSON.stringify({ scope, prop, value }) },
     ),
 
+  getPoolFeatures: (name: string) =>
+    request<{ pool: string; features: Array<{ name: string; property: string; value: string; enabled: boolean }> }>(
+      `/pools/${encodeURIComponent(name)}/features`
+    ),
+
   getRaidzExpansionFeature: (name: string) =>
     request<{ pool: string; feature: string; value: string; enabled: boolean }>(
       `/pools/${encodeURIComponent(name)}/feature/raidz_expansion`

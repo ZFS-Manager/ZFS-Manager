@@ -847,25 +847,29 @@ function ExpandPoolModal({ poolName, poolVdevs, zfsVersion, onClose, onSuccess }
 }
 
 /* ── Pool Features Modal ──────────────────────────────────────────────────────── */
+type FeatureEntry = { name: string; property: string; value: string; enabled: boolean };
+
 function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () => void }) {
   const { notify } = useNotifications();
-  const [raidzFeature,   setRaidzFeature]   = useState<{ value: string; enabled: boolean } | null>(null);
-  const [loading,        setLoading]        = useState(true);
-  const [enabling,       setEnabling]       = useState(false);
-  const [pendingEnable,  setPendingEnable]  = useState(false);
+  const [features,      setFeatures]      = useState<FeatureEntry[]>([]);
+  const [loading,       setLoading]       = useState(true);
+  const [enabling,      setEnabling]      = useState(false);
+  const [pendingEnable, setPendingEnable] = useState(false);
 
   useEffect(() => {
-    api.getRaidzExpansionFeature(poolName)
-      .then(res => setRaidzFeature({ value: res.value, enabled: res.enabled }))
-      .catch(() => setRaidzFeature(null))
+    api.getPoolFeatures(poolName)
+      .then(res => setFeatures(res.features || []))
+      .catch(() => setFeatures([]))
       .finally(() => setLoading(false));
   }, [poolName]);
+
+  const raidz = features.find(f => f.name === 'raidz_expansion');
 
   const handleConfirmEnable = async () => {
     setEnabling(true);
     try {
       await api.enableRaidzExpansionFeature(poolName);
-      setRaidzFeature({ value: 'enabled', enabled: true });
+      setFeatures(prev => prev.map(f => f.name === 'raidz_expansion' ? { ...f, value: 'enabled', enabled: true } : f));
       setPendingEnable(false);
       notify({ type: 'success', title: 'Feature Enabled', message: `raidz_expansion enabled on pool "${poolName}"` });
     } catch (err: any) {
@@ -873,84 +877,114 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
     } finally { setEnabling(false); }
   };
 
+  const statusColor = (v: string) =>
+    v === 'active'   ? 'var(--success)' :
+    v === 'enabled'  ? 'var(--info)'    : 'var(--text-muted)';
+  const statusBg = (v: string) =>
+    v === 'active'   ? 'rgba(34,197,94,0.1)'   :
+    v === 'enabled'  ? 'rgba(56,189,248,0.1)'   : 'var(--bg-elevated)';
+  const statusBorder = (v: string) =>
+    v === 'active'   ? 'rgba(34,197,94,0.25)'   :
+    v === 'enabled'  ? 'rgba(56,189,248,0.25)'   : 'var(--border)';
+
+  const sorted = [...features].sort((a, b) => {
+    const order = (v: string) => v === 'active' ? 0 : v === 'enabled' ? 1 : 2;
+    return order(a.value) - order(b.value) || a.name.localeCompare(b.name);
+  });
+
   return (
     <div style={S.modal.overlay} onClick={onClose}>
-      <div style={{ ...S.modal.box, maxWidth: 440 }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+      <div style={{ ...S.modal.box, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <div>
             <h3 style={S.modal.title}>Pool Features</h3>
-            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>{poolName}</p>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>{poolName} · {features.length} features</p>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
         </div>
 
-        {loading ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '24px 0', justifyContent: 'center' }}>
-            <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)' }} />
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading features…</span>
-          </div>
-        ) : raidzFeature === null ? (
-          <div style={{ padding: '16px 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
-            Could not load pool features.
-          </div>
-        ) : (
-          <div style={{ borderTop: '1px solid var(--border)' }}>
-            <div style={{ padding: '16px 0', borderBottom: '1px solid var(--border)' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)' }}>RAIDZ Expansion</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.4 }}>
-                    Allows adding disks to an existing RAIDZ vdev to grow its capacity
+        {/* RAIDZ Expansion toggle — special control */}
+        {raidz && (
+          <div style={{ marginBottom: 12, padding: '12px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)' }}>RAIDZ Expansion</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Allows adding disks to an existing RAIDZ vdev</div>
+                {raidz.enabled && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 4 }}>
+                    <Info size={10} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Permanent — cannot be disabled once enabled</span>
                   </div>
-                  {raidzFeature.enabled && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 6 }}>
-                      <Info size={10} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Permanent — ZFS features cannot be disabled once enabled</span>
-                    </div>
-                  )}
-                </div>
-                {enabling ? (
-                  <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)', flexShrink: 0, marginTop: 3 }} />
-                ) : (
-                  <button
-                    onClick={raidzFeature.enabled ? () => {} : () => setPendingEnable(p => !p)}
-                    title={raidzFeature.enabled ? 'ZFS features cannot be disabled once enabled' : 'Enable RAIDZ Expansion'}
-                    style={{
-                      width: 44, height: 22, borderRadius: 11, flexShrink: 0, marginTop: 3,
-                      background: raidzFeature.enabled ? 'var(--success)' : 'var(--bg-elevated)',
-                      border: `1px solid ${raidzFeature.enabled ? 'var(--success)' : 'var(--border)'}`,
-                      position: 'relative', cursor: raidzFeature.enabled ? 'default' : 'pointer',
-                      transition: 'all 0.2s', opacity: raidzFeature.enabled ? 0.75 : 1,
-                    }}
-                  >
-                    <div style={{ position: 'absolute', top: 2, left: raidzFeature.enabled ? 22 : 2, width: 16, height: 16, borderRadius: 8, background: '#fff', transition: 'left 0.2s' }} />
-                  </button>
                 )}
               </div>
-              {pendingEnable && !raidzFeature.enabled && (
-                <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
-                    <AlertTriangle size={13} style={{ color: 'var(--danger)', flexShrink: 0, marginTop: 1 }} />
-                    <span style={{ fontSize: 12, color: 'var(--danger)', lineHeight: 1.4 }}>
-                      This is <strong>permanent</strong>. ZFS features cannot be disabled once enabled.
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button className="btn btn-secondary" style={{ flex: 1, fontSize: 11 }} onClick={() => setPendingEnable(false)}>Cancel</button>
-                    <button className="btn btn-primary" style={{ flex: 1, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleConfirmEnable} disabled={enabling}>
-                      {enabling && <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} />}
-                      Confirm Enable
-                    </button>
-                  </div>
-                </div>
+              {enabling ? (
+                <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)', flexShrink: 0, marginTop: 2 }} />
+              ) : (
+                <button onClick={raidz.enabled ? () => {} : () => setPendingEnable(p => !p)}
+                  title={raidz.enabled ? 'Cannot be disabled once enabled' : 'Enable RAIDZ Expansion'}
+                  style={{ width: 44, height: 22, borderRadius: 11, flexShrink: 0, marginTop: 2,
+                    background: raidz.enabled ? 'var(--success)' : 'var(--bg-elevated)',
+                    border: `1px solid ${raidz.enabled ? 'var(--success)' : 'var(--border)'}`,
+                    position: 'relative', cursor: raidz.enabled ? 'default' : 'pointer',
+                    transition: 'all 0.2s', opacity: raidz.enabled ? 0.75 : 1 }}>
+                  <div style={{ position: 'absolute', top: 2, left: raidz.enabled ? 22 : 2, width: 16, height: 16, borderRadius: 8, background: '#fff', transition: 'left 0.2s' }} />
+                </button>
               )}
             </div>
+            {pendingEnable && !raidz.enabled && (
+              <div style={{ marginTop: 10, padding: '10px 12px', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
+                  <AlertTriangle size={13} style={{ color: 'var(--danger)', flexShrink: 0, marginTop: 1 }} />
+                  <span style={{ fontSize: 12, color: 'var(--danger)', lineHeight: 1.4 }}>
+                    <strong>Permanent</strong> — ZFS features cannot be disabled once enabled.
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn btn-secondary" style={{ flex: 1, fontSize: 11 }} onClick={() => setPendingEnable(false)}>Cancel</button>
+                  <button className="btn btn-primary" style={{ flex: 1, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleConfirmEnable} disabled={enabling}>
+                    {enabling && <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} />}
+                    Confirm Enable
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        <div style={{ marginTop: 20 }}>
-          <button className="btn btn-secondary" style={{ width: '100%' }} onClick={onClose}>Close</button>
+        {/* All features list */}
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '32px 0', justifyContent: 'center' }}>
+            <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)' }} />
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading features…</span>
+          </div>
+        ) : features.length === 0 ? (
+          <div style={{ padding: '20px 0', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>No features returned.</div>
+        ) : (
+          <div style={{ maxHeight: 360, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }} className="no-scrollbar">
+            {sorted.map(f => (
+              <div key={f.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 10px', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)' }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 999, flexShrink: 0, marginLeft: 8,
+                  color: statusColor(f.value), background: statusBg(f.value), border: `1px solid ${statusBorder(f.value)}` }}>
+                  {f.value}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ marginTop: 14, display: 'flex', gap: 12, fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--success)', display: 'inline-block' }} /> active — in use
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--info)', display: 'inline-block' }} /> enabled — on, not yet active
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--border)', display: 'inline-block' }} /> disabled
+          </span>
         </div>
+        <button className="btn btn-secondary" style={{ width: '100%', marginTop: 12 }} onClick={onClose}>Close</button>
       </div>
     </div>
   );
@@ -2091,7 +2125,17 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                   { label: 'RAID Type',     value: raidType,                       color: rc },
                 ].map(({ label, value, color }) => (
                   <div key={label} style={{ padding: '14px 20px', borderRight: '1px solid var(--border)', minWidth: 120 }}>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', fontFamily: 'var(--font-ui)', marginBottom: 4 }}>{label}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', fontFamily: 'var(--font-ui)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      {label}
+                      {label === 'Fragmentation' && (
+                        <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }} className="frag-info-wrap">
+                          <Info size={10} style={{ color: 'var(--text-muted)', cursor: 'help', flexShrink: 0 }} />
+                          <span className="frag-tooltip">
+                            Fragmentation measures how scattered free space is within the pool's metadata. High fragmentation (&gt;20%) can reduce write performance and increase memory usage. It does not affect data integrity. Running a scrub or having contiguous free space reduces it over time.
+                          </span>
+                        </span>
+                      )}
+                    </div>
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600, color }}>{value}</div>
                   </div>
                 ))}
