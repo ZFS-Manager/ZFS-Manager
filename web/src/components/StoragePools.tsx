@@ -759,39 +759,57 @@ function ExpandPoolModal({ poolName, poolVdevs, onClose, onSuccess }: {
             </div>
           )}
 
-          {featureStatus === 'disabled' && (
-            <div style={{ padding: '12px 14px', background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 'var(--radius)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                <AlertTriangle size={13} style={{ color: 'var(--warning)', flexShrink: 0 }} />
-                <span style={{ fontSize: 12, color: 'var(--warning)', fontWeight: 600 }}>raidz_expansion is not enabled</span>
+          {(featureStatus === 'disabled' || featureStatus === 'enabled') && (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+              padding: '10px 14px',
+              background: featureStatus === 'enabled' ? 'rgba(34,197,94,0.06)' : 'rgba(245,158,11,0.06)',
+              border: `1px solid ${featureStatus === 'enabled' ? 'rgba(34,197,94,0.2)' : 'rgba(245,158,11,0.3)'}`,
+              borderRadius: 'var(--radius)',
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: featureStatus === 'enabled' ? 'var(--success)' : 'var(--warning)', fontFamily: 'var(--font-ui)', marginBottom: 2 }}>
+                  raidz_expansion
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', lineHeight: 1.4 }}>
+                  {featureStatus === 'enabled'
+                    ? 'Enabled — you can now expand the pool'
+                    : 'Not enabled on this pool. You must enable it before expanding.'}
+                </div>
+                {featureStatus === 'enabled' && (
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                    Permanent — ZFS features cannot be disabled once enabled
+                  </div>
+                )}
+                {featureError && (
+                  <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 6 }}>{featureError}</div>
+                )}
               </div>
-              <p style={{ fontSize: 11, color: 'var(--text-secondary)', margin: '0 0 10px 0', lineHeight: 1.5 }}>
-                raidz_expansion is not enabled on this pool. You must enable it before expanding.
-              </p>
-              {featureError && (
-                <div style={{ fontSize: 11, color: 'var(--danger)', marginBottom: 8 }}>{featureError}</div>
+              {featureEnabling ? (
+                <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)', flexShrink: 0 }} />
+              ) : (
+                <button
+                  title={featureStatus === 'enabled' ? 'ZFS features cannot be disabled once enabled' : 'Enable raidz_expansion'}
+                  onClick={featureStatus === 'enabled'
+                    ? () => notify({ type: 'error', title: 'Cannot Disable', message: 'ZFS features cannot be disabled once enabled. This is permanent.' })
+                    : handleEnableFeature
+                  }
+                  style={{
+                    width: 44, height: 22, borderRadius: 11, flexShrink: 0,
+                    background: featureStatus === 'enabled' ? 'var(--success)' : 'var(--bg-elevated)',
+                    border: `1px solid ${featureStatus === 'enabled' ? 'var(--success)' : 'var(--border)'}`,
+                    position: 'relative', cursor: 'pointer', transition: 'all 0.2s',
+                    opacity: featureStatus === 'enabled' ? 0.75 : 1,
+                  }}
+                >
+                  <div style={{
+                    position: 'absolute', top: 2,
+                    left: featureStatus === 'enabled' ? 22 : 2,
+                    width: 16, height: 16, borderRadius: 8,
+                    background: '#fff', transition: 'left 0.2s',
+                  }} />
+                </button>
               )}
-              <button
-                onClick={handleEnableFeature}
-                disabled={featureEnabling}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '6px 14px', fontSize: 11, fontFamily: 'var(--font-ui)',
-                  background: 'var(--accent)', color: '#fff',
-                  border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
-                  cursor: featureEnabling ? 'not-allowed' : 'pointer', opacity: featureEnabling ? 0.7 : 1,
-                }}
-              >
-                {featureEnabling ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> : <CheckCircle size={11} />}
-                {featureEnabling ? 'Enabling…' : 'Enable raidz_expansion'}
-              </button>
-            </div>
-          )}
-
-          {featureStatus === 'enabled' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: 'var(--radius)' }}>
-              <CheckCircle size={12} style={{ color: 'var(--success)', flexShrink: 0 }} />
-              <span style={{ fontSize: 11, color: 'var(--success)', fontFamily: 'var(--font-ui)' }}>raidz_expansion is enabled on this pool</span>
             </div>
           )}
 
@@ -1405,60 +1423,48 @@ function SettingsPopout({
               {raidzFeature !== null && (
                 <div style={{ paddingTop: 8 }}>
                   {sectionHeader('ZFS Features')}
-                  <div style={{ padding: '12px 0', borderBottom: '1px solid var(--border-subtle)' }}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)' }}>
-                          RAIDZ Expansion
-                        </div>
-                        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', marginTop: 2, lineHeight: 1.4 }}>
-                          Allows adding disks to an existing RAIDZ vdev to grow its capacity
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
-                          <span style={{
-                            fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
-                            color: raidzFeature.enabled ? 'var(--success)' : 'var(--text-muted)',
-                            background: raidzFeature.enabled ? 'rgba(34,197,94,0.12)' : 'var(--bg-elevated)',
-                            border: `1px solid ${raidzFeature.enabled ? 'rgba(34,197,94,0.3)' : 'var(--border)'}`,
-                            borderRadius: 4, padding: '1px 7px',
-                          }}>
-                            {raidzFeature.enabled ? 'Enabled' : 'Disabled'}
-                          </span>
-                          {raidzFeature.enabled && (
-                            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                              ({raidzFeature.value})
-                            </span>
-                          )}
-                        </div>
-                        {!raidzFeature.enabled && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 6 }}>
-                            <Info size={10} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', lineHeight: 1.3 }}>
-                              ZFS features cannot be disabled once enabled
-                            </span>
-                          </div>
-                        )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)' }}>
+                        RAIDZ Expansion
                       </div>
-                      {!raidzFeature.enabled ? (
-                        <button
-                          onClick={handleEnableRaidzExpansion}
-                          disabled={raidzEnabling}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
-                            padding: '5px 12px', fontSize: 11, fontFamily: 'var(--font-ui)',
-                            background: 'var(--accent)', color: '#fff',
-                            border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
-                            cursor: raidzEnabling ? 'not-allowed' : 'pointer', opacity: raidzEnabling ? 0.7 : 1,
-                            transition: 'opacity 0.15s',
-                          }}
-                        >
-                          {raidzEnabling ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> : <CheckCircle size={11} />}
-                          {raidzEnabling ? 'Enabling…' : 'Enable'}
-                        </button>
-                      ) : (
-                        <CheckCircle size={16} style={{ color: 'var(--success)', flexShrink: 0 }} />
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', marginTop: 2, lineHeight: 1.4 }}>
+                        Allows adding disks to an existing RAIDZ vdev to grow its capacity
+                      </div>
+                      {raidzFeature.enabled && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 5 }}>
+                          <Info size={10} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)' }}>
+                            Permanent — ZFS features cannot be disabled once enabled
+                          </span>
+                        </div>
                       )}
                     </div>
+                    {raidzEnabling ? (
+                      <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)', flexShrink: 0 }} />
+                    ) : (
+                      <button
+                        title={raidzFeature.enabled ? 'ZFS features cannot be disabled once enabled' : 'Enable RAIDZ Expansion'}
+                        onClick={raidzFeature.enabled
+                          ? () => notify({ type: 'error', title: 'Cannot Disable', message: 'ZFS features cannot be disabled once enabled. This is permanent.' })
+                          : handleEnableRaidzExpansion
+                        }
+                        style={{
+                          width: 44, height: 22, borderRadius: 11, flexShrink: 0,
+                          background: raidzFeature.enabled ? 'var(--success)' : 'var(--bg-elevated)',
+                          border: `1px solid ${raidzFeature.enabled ? 'var(--success)' : 'var(--border)'}`,
+                          position: 'relative', cursor: 'pointer', transition: 'all 0.2s',
+                          opacity: raidzFeature.enabled ? 0.75 : 1,
+                        }}
+                      >
+                        <div style={{
+                          position: 'absolute', top: 2,
+                          left: raidzFeature.enabled ? 22 : 2,
+                          width: 16, height: 16, borderRadius: 8,
+                          background: '#fff', transition: 'left 0.2s',
+                        }} />
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
