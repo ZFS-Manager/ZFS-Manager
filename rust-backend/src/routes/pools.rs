@@ -948,7 +948,9 @@ async fn set_pool_setting(
 
 async fn get_raidz_expansion_feature(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "pool")?;
-    let raw = executor::zpool(&["get", "-H", "feature@raidz_expansion", &name]).await?;
+    // Use host ZFS tools via nsenter — the container's Alpine zpool may be older
+    // and return wrong results or not support newer features like raidz_expansion.
+    let raw = executor::zpool_host(&["get", "-H", "feature@raidz_expansion", &name]).await?;
     let value = raw.lines()
         .next()
         .and_then(|line| {
@@ -967,7 +969,9 @@ async fn get_raidz_expansion_feature(Path(name): Path<String>) -> Result<Json<Va
 
 async fn enable_raidz_expansion_feature(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "pool")?;
-    executor::zpool(&["set", "feature@raidz_expansion=enabled", &name]).await?;
+    // Use host ZFS tools via nsenter so newer features unsupported by the container's
+    // Alpine zpool binary (e.g. feature@raidz_expansion) can be set correctly.
+    executor::zpool_host(&["set", "feature@raidz_expansion=enabled", &name]).await?;
     Ok(Json(json!({
         "message": format!("raidz_expansion feature enabled on pool '{name}'"),
         "pool":    name,

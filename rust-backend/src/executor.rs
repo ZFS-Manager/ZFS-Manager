@@ -60,6 +60,21 @@ pub async fn zpool_status_host(pool: &str) -> Result<String, ApiError> {
     }
 }
 
+/// Run any `zpool` subcommand via the host's ZFS tools (nsenter into the host mount namespace).
+/// This is required for features that the container's older zpool binary does not support
+/// (e.g. feature@raidz_expansion). Falls back to container's zpool on nsenter failure.
+pub async fn zpool_host(args: &[&str]) -> Result<String, ApiError> {
+    for arg in args {
+        validate_arg(arg)?;
+    }
+    let mut nsenter_args: Vec<&str> = vec!["-t", "1", "-m", "--", "zpool"];
+    nsenter_args.extend_from_slice(args);
+    match command("nsenter", &nsenter_args).await {
+        Ok(out) => Ok(out),
+        Err(_) => command("zpool", args).await,
+    }
+}
+
 pub async fn command(bin: &str, args: &[&str]) -> Result<String, ApiError> {
     debug!("Executing: {} {:?}", bin, args);
     let output = Command::new(bin).args(args).output().await?;
