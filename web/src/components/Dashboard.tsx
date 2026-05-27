@@ -1154,6 +1154,31 @@ export default function Dashboard({
                   </div>
                 ))}
               </div>
+              {(() => {
+                const totalReadMb  = liveMetrics?.total_read_mb  ?? 0;
+                const totalWriteMb = liveMetrics?.total_write_mb ?? 0;
+                const selFill = fillByPool[effectivePoolName];
+                if (totalReadMb === 0 && totalWriteMb === 0 && !selFill) return null;
+                return (
+                  <div style={{ borderTop: '1px solid var(--border)', padding: '10px 18px', display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {totalReadMb > 0 && (
+                      <span style={{ fontSize: 11, fontFamily: 'var(--font-ui)', color: 'var(--text-muted)' }}>
+                        Total ↑ <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, color: '#38bdf8' }}>{fmtGB(totalReadMb / 1024)}</span>
+                      </span>
+                    )}
+                    {totalWriteMb > 0 && (
+                      <span style={{ fontSize: 11, fontFamily: 'var(--font-ui)', color: 'var(--text-muted)' }}>
+                        Total ↓ <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, color: '#818cf8' }}>{fmtGB(totalWriteMb / 1024)}</span>
+                      </span>
+                    )}
+                    {selFill && selFill.rateGbDay > 0 && selFill.days > 0 && (
+                      <span style={{ fontSize: 11, fontFamily: 'var(--font-ui)', color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                        Est. full in <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, color: selFill.color }}>{fmtDays(selFill.days)}</span>
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
             </Panel>
 
             <Panel title="System Resources">
