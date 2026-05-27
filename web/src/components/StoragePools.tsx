@@ -196,18 +196,23 @@ function DevicePicker({ onSelect, onClose, usedDisks = new Set<string>() }: {
 interface EnrichedDisk {
   name: string; size_bytes: number; size_human: string;
   in_use: boolean; pool: string | null; partitions: boolean;
-  model: string | null; serial: string | null;
+  model: string | null; serial: string | null; is_system: boolean;
 }
 
 function DiskStatusBadge({ disk }: { disk: EnrichedDisk }) {
-  if (!disk.in_use) return (
-    <span style={{ fontSize: 10, color: 'var(--success)', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 600, flexShrink: 0 }}>FREE</span>
-  );
-  if (disk.pool) return (
-    <span style={{ fontSize: 10, color: '#f87171', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 600, flexShrink: 0 }}>POOL: {disk.pool}</span>
-  );
   return (
-    <span style={{ fontSize: 10, color: 'var(--warning)', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 600, flexShrink: 0 }}>IN USE</span>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+      {disk.is_system && (
+        <span style={{ fontSize: 10, color: '#fb923c', background: 'rgba(251,146,60,0.15)', border: '1px solid rgba(251,146,60,0.4)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 700 }}>⚠ OS DISK</span>
+      )}
+      {!disk.in_use ? (
+        <span style={{ fontSize: 10, color: 'var(--success)', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 600 }}>FREE</span>
+      ) : disk.pool ? (
+        <span style={{ fontSize: 10, color: '#f87171', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 600 }}>POOL: {disk.pool}</span>
+      ) : (
+        <span style={{ fontSize: 10, color: 'var(--warning)', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 600 }}>IN USE</span>
+      )}
+    </span>
   );
 }
 
@@ -279,19 +284,21 @@ function DiskPicker({ onSelect, onClose, selected }: {
             {disks.map((disk, i) => {
               const path = `/dev/${disk.name}`;
               const isSelected = selected === path;
+              const sysBorder = disk.is_system ? 'rgba(251,146,60,0.4)' : isSelected ? 'var(--accent-mid)' : 'var(--border)';
+              const sysBg = disk.is_system ? 'rgba(251,146,60,0.06)' : isSelected ? 'var(--accent-dim)' : 'var(--bg-elevated)';
               return (
               <button
                 key={i}
                 onClick={() => handleClick(disk)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
-                  background: isSelected ? 'var(--accent-dim)' : 'var(--bg-elevated)',
-                  border: `1px solid ${isSelected ? 'var(--accent-mid)' : 'var(--border)'}`,
+                  background: sysBg,
+                  border: `1px solid ${sysBorder}`,
                   borderRadius: 'var(--radius)', cursor: 'pointer', textAlign: 'left',
                   opacity: disk.in_use && !isSelected ? 0.65 : 1, transition: 'all 0.12s',
                 }}
-                onMouseEnter={e => { if (!disk.in_use) (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = isSelected ? 'var(--accent-mid)' : 'var(--border)'; }}
+                onMouseEnter={e => { if (!disk.in_use) (e.currentTarget as HTMLElement).style.borderColor = disk.is_system ? 'rgba(251,146,60,0.7)' : 'var(--accent)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = sysBorder; }}
               >
                 <HardDrive size={16} style={{ color: disk.in_use ? 'var(--text-muted)' : 'var(--info)', flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -370,15 +377,16 @@ function InlineDiskPicker({ selected, onSelect }: {
           {disks.map((disk, i) => {
             const path = `/dev/${disk.name}`;
             const isSelected = selected === path;
+            const sysAccent = 'rgba(251,146,60,0.7)';
             return (
               <button
                 key={i}
                 onClick={() => handleClick(disk)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px',
-                  background: isSelected ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                  background: disk.is_system ? 'rgba(251,146,60,0.05)' : isSelected ? 'var(--accent-dim)' : 'var(--bg-elevated)',
                   border: 'none', borderBottom: '1px solid var(--border)',
-                  borderLeft: `3px solid ${isSelected ? 'var(--accent)' : 'transparent'}`,
+                  borderLeft: `3px solid ${disk.is_system ? sysAccent : isSelected ? 'var(--accent)' : 'transparent'}`,
                   cursor: 'pointer', textAlign: 'left', width: '100%',
                   opacity: disk.in_use && !isSelected ? 0.65 : 1,
                 }}

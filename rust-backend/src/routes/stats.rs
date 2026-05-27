@@ -302,7 +302,45 @@ fn format_size_human(bytes: u64) -> String {
     format!("{} B", bytes)
 }
 
+fn detect_system_disks() -> std::collections::HashSet<String> {
+    let mut system_disks = std::collections::HashSet::new();
+    // Read /proc/mounts to find which block devices back / and /boot
+    if let Ok(contents) = std::fs::read_to_string("/proc/mounts") {
+        for line in contents.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 2 { continue; }
+            let dev = parts[0];
+            let mnt = parts[1];
+            if mnt != "/" && mnt != "/boot" && mnt != "/boot/efi" && !mnt.starts_with("/boot") { continue; }
+            if !dev.starts_with("/dev/") { continue; }
+            // Resolve symlinks (handles /dev/disk/by-id/... etc.)
+            let resolved = std::fs::canonicalize(dev)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| dev.to_string());
+            let short = resolved.trim_start_matches("/dev/");
+            // Strip partition suffix to get base disk (sda1 → sda, nvme0n1p1 → nvme0n1)
+            let base = if short.contains("nvme") || short.contains("mmcblk") {
+                // NVMe: nvme0n1p1 → nvme0n1
+                let re: Vec<&str> = short.splitn(2, 'p').collect();
+                if re.len() == 2 && re[1].chars().all(|c| c.is_ascii_digit()) {
+                    re[0].to_string()
+                } else { short.to_string() }
+            } else {
+                // SATA/SCSI: sda1 → sda, vda2 → vda
+                short.trim_end_matches(|c: char| c.is_ascii_digit()).to_string()
+            };
+            if !base.is_empty() {
+                system_disks.insert(base);
+            }
+        }
+    }
+    system_disks
+}
+
 async fn list_enriched_disks(State(_state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    // Detect which disks back the OS (/ and /boot mounts)
+    let system_disk_names = detect_system_disks();
+
     // Build ZFS pool membership map — ZFS is the single source of truth for in_use.
     // Using `zpool status -P` gives full /dev/... paths which we normalize to short
     // kernel names (sda, loop10, nvme0n1) so they match lsblk output.
@@ -390,6 +428,7 @@ async fn list_enriched_disks(State(_state): State<AppState>) -> Result<Json<Valu
             // in_use is determined solely by ZFS pool membership — no lsblk FSTYPE / partition detection
             let pool = disk_pool_map.get(name).cloned();
             let in_use = pool.is_some();
+            let is_system = system_disk_names.contains(name);
 
             disks.push(json!({
                 "name":       name,
@@ -400,6 +439,7 @@ async fn list_enriched_disks(State(_state): State<AppState>) -> Result<Json<Valu
                 "partitions": false,  // kept for API compat; always false with ZFS-only detection
                 "model":      model,
                 "serial":     serial,
+                "is_system":  is_system,
             }));
         }
     }

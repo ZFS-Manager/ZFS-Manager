@@ -169,7 +169,7 @@ export const api = {
   getEnrichedDisks: () => request<{ disks: Array<{
     name: string; size_bytes: number; size_human: string;
     in_use: boolean; pool: string | null; partitions: boolean;
-    model: string | null; serial: string | null;
+    model: string | null; serial: string | null; is_system: boolean;
   }> }>('/disks'),
 
   // ── Metrics ────────────────────────────────────────────────────────────────
