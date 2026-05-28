@@ -45,7 +45,7 @@ export const formatBytes = (bytes: number | string, decimals = 2): string => {
   if (!n || isNaN(n)) return '0 B';
   const k = 1024;
   const dm = Math.max(0, decimals);
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
   const i = Math.floor(Math.log(n) / Math.log(k));
   return `${parseFloat((n / Math.pow(k, i)).toFixed(dm))} ${sizes[Math.min(i, sizes.length - 1)]}`;
 };
@@ -54,7 +54,7 @@ export const formatSpeed = (bytesPerSec: number, decimals = 2): string => {
   if (!bytesPerSec || isNaN(bytesPerSec) || bytesPerSec <= 0) return '0 B/s';
   const k = 1024;
   const dm = Math.max(0, decimals);
-  const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s', 'PB/s'];
+  const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s', 'PB/s', 'EB/s', 'ZB/s', 'YB/s'];
   const i = Math.floor(Math.log(bytesPerSec) / Math.log(k));
   return `${parseFloat((bytesPerSec / Math.pow(k, i)).toFixed(dm))} ${sizes[Math.min(i, sizes.length - 1)]}`;
 };

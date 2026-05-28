@@ -426,14 +426,18 @@ function SmartModal({ device, onClose }: { device: string; onClose: () => void }
     api.getSmartData(device).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
   }, [device]);
 
-  const passed = data?.smart_status?.passed;
-  const temp   = data?.temperature?.current;
-  const hours  = data?.power_on_time?.hours;
-  const attrs  = data?.ata_smart_attributes?.table || [];
+  const passed    = data?.smart_status?.passed;
+  const temp      = data?.temperature?.current;
+  const hours     = data?.power_on_time?.hours;
+  const attrs     = data?.ata_smart_attributes?.table || [];
+  const modelName = data?.model_name || data?.scsi_model_name || null;
+  const serial    = data?.serial_number || null;
+  const firmware  = data?.firmware_version || null;
+  const capacityBytes: number | null = data?.user_capacity?.bytes ?? null;
 
   return (
     <div style={S.modal.overlay} onClick={onClose}>
-      <div style={{ ...S.modal.box, maxWidth: 520, maxHeight: '80vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+      <div style={{ ...S.modal.box, maxWidth: 560, maxHeight: '85vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
             <h4 style={S.modal.title}>SMART Data</h4>
@@ -450,10 +454,42 @@ function SmartModal({ device, onClose }: { device: string; onClose: () => void }
           <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: '24px 0' }}>No SMART data available</p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+            {/* Hardware info row */}
+            {(modelName || serial || capacityBytes) && (
+              <div style={{ padding: '10px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {modelName && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Model</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{modelName}</span>
+                  </div>
+                )}
+                {serial && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Serial</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{serial}</span>
+                  </div>
+                )}
+                {firmware && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Firmware</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{firmware}</span>
+                  </div>
+                )}
+                {capacityBytes !== null && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Capacity</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{formatBytes(capacityBytes)}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Status tiles */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
               {[
                 { label: 'Status', value: passed === true ? 'PASSED' : 'FAILED', color: passed === true ? 'var(--success)' : 'var(--danger)' },
-                ...(temp !== undefined ? [{ label: 'Temp', value: `${temp}°C`, color: temp > 55 ? 'var(--danger)' : temp > 45 ? 'var(--warning)' : 'var(--text-primary)' }] : []),
+                ...(temp !== undefined && temp > 0 ? [{ label: 'Temp', value: `${temp}°C`, color: temp > 55 ? 'var(--danger)' : temp > 45 ? 'var(--warning)' : 'var(--text-primary)' }] : []),
                 ...(hours !== undefined ? [{ label: 'Power-On', value: hours >= 8760 ? `${(hours/8760).toFixed(1)}y` : `${(hours/24).toFixed(0)}d`, color: 'var(--text-primary)' }] : []),
               ].map(({ label, value, color }) => (
                 <div key={label} style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 14px', textAlign: 'center' }}>
@@ -462,11 +498,12 @@ function SmartModal({ device, onClose }: { device: string; onClose: () => void }
                 </div>
               ))}
             </div>
+
             {attrs.length > 0 && (
               <div>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Attributes</div>
-                <div style={{ maxHeight: 200, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  {attrs.slice(0, 12).map((a: any, i: number) => (
+                <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {attrs.map((a: any, i: number) => (
                     <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)' }}>
                       <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{a.name}</span>
                       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: a.thresh > 0 && a.value <= a.thresh ? 'var(--danger)' : 'var(--text-muted)', fontWeight: 600 }}>{a.raw?.value ?? a.value}</span>
@@ -493,6 +530,18 @@ function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuc
   const [replacing, setReplacing]     = useState(false);
   const [error, setError]             = useState('');
   const [step, setStep]               = useState<1 | 2>(preselectedDisk ? 2 : 1);
+  const [enrichedDisks, setEnrichedDisks] = useState<EnrichedDisk[]>([]);
+
+  useEffect(() => {
+    api.getEnrichedDisks()
+      .then(res => setEnrichedDisks(res.disks || []))
+      .catch(() => {});
+  }, []);
+
+  const getEnrichedInfo = (path: string): EnrichedDisk | null => {
+    const name = path.replace('/dev/', '');
+    return enrichedDisks.find(d => d.name === name) || null;
+  };
 
   const handleReplace = async () => {
     if (!selectedOld) { setError('Select the disk to replace'); return; }
@@ -524,7 +573,9 @@ function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuc
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>No disks found in pool</p>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {poolDisks.map((d, i) => (
+                  {poolDisks.map((d, i) => {
+                    const info = getEnrichedInfo(d.path);
+                    return (
                     <button key={i} onClick={() => setSelectedOld(d.path)} style={{
                       display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
                       background: selectedOld === d.path ? 'var(--warning-dim)' : 'var(--bg-elevated)',
@@ -532,13 +583,22 @@ function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuc
                       borderRadius: 'var(--radius)', cursor: 'pointer', textAlign: 'left', transition: 'all 0.12s',
                     }}>
                       <HardDrive size={14} style={{ color: selectedOld === d.path ? 'var(--warning)' : 'var(--text-muted)', flexShrink: 0 }} />
-                      <div style={{ flex: 1 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{d.path}</div>
                         <div style={{ fontSize: 10, color: d.state === 'ONLINE' ? 'var(--success)' : 'var(--danger)', textTransform: 'uppercase', marginTop: 2 }}>{d.state}</div>
+                        {(info?.model || info?.serial) && (
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {[info.model, info.serial].filter(Boolean).join(' · ')}
+                          </div>
+                        )}
                       </div>
-                      {selectedOld === d.path && <CheckCircle size={13} style={{ color: 'var(--warning)' }} />}
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, flexShrink: 0 }}>
+                        {info?.size_human && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>{info.size_human}</span>}
+                        {selectedOld === d.path && <CheckCircle size={13} style={{ color: 'var(--warning)' }} />}
+                      </div>
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               <div style={{ display: 'flex', gap: 10 }}>
@@ -1340,10 +1400,10 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
         )}
 
         {/* ── Body: two-column ─────────────────────────────────────────────── */}
-        <div style={{ display: 'flex', borderTop: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', borderTop: '1px solid var(--border)', height: 380 }}>
 
           {/* Left: scrollable feature list */}
-          <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', maxHeight: 380, borderRight: '1px solid var(--border)', paddingTop: 6, paddingBottom: 10 }} className="no-scrollbar">
+          <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', height: '100%', borderRight: '1px solid var(--border)', paddingTop: 6, paddingBottom: 10 }} className="no-scrollbar">
             {loading ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '48px 0', justifyContent: 'center' }}>
                 <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)' }} />
@@ -1361,7 +1421,7 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
           </div>
 
           {/* Right: description panel */}
-          <div style={{ width: 260, flexShrink: 0, padding: '20px', display: 'flex', flexDirection: 'column', background: 'var(--bg-elevated)' }}>
+          <div style={{ width: 260, flexShrink: 0, padding: '20px', display: 'flex', flexDirection: 'column', background: 'var(--bg-elevated)', height: '100%', overflowY: 'auto' }}>
             {hovered ? (
               <>
                 <div style={{ marginBottom: 12 }}>
@@ -2450,7 +2510,17 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           poolDisks={getPoolDisks(replaceTarget.pool)}
           preselectedDisk={replaceTarget.preselectedDisk}
           onClose={() => setReplaceTarget(null)}
-          onSuccess={() => { showToast('Disk replacement started', 'success'); refreshPoolVdevs(replaceTarget.pool); setReplaceTarget(null); onRefresh(); startPostOpPoll(); startScrubPolling(replaceTarget.pool); }}
+          onSuccess={() => {
+            const pName = replaceTarget.pool;
+            showToast('Disk replacement started', 'success');
+            refreshPoolVdevs(pName);
+            setScrubState(s => ({ ...s, [pName]: 'running' }));
+            setScrubProgress(p => ({ ...p, [pName]: { inProgress: true, done: false, progress: 0, timeRemaining: '', scan: '', scanDetail: '', isResilver: true, scanSpeed: '' } }));
+            setReplaceTarget(null);
+            onRefresh();
+            startPostOpPoll();
+            startScrubPolling(pName);
+          }}
         />
       )}
       {smartTarget && <SmartModal device={smartTarget} onClose={() => setSmartTarget(null)} />}
@@ -2557,7 +2627,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                       {state === 'success' && <CheckCircle size={13} />}
                       {state === 'error'   && <XCircle size={13} />}
                       {state === 'idle'    && <Activity size={13} />}
-                      {state === 'running' ? 'Scrubbing…' : state === 'success' ? 'Done' : state === 'error' ? 'Failed' : 'Scrub'}
+                      {state === 'running' ? (progress?.isResilver ? 'Replacing…' : 'Scrubbing…') : state === 'success' ? 'Done' : state === 'error' ? 'Failed' : 'Scrub'}
                     </button>
                     <button className="btn btn-secondary" onClick={() => setReplaceTarget({ pool: pool.name })} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <ArrowLeftRight size={13} /> Replace Disk
