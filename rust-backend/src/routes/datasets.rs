@@ -292,19 +292,24 @@ async fn rewrite_dataset(
 
     let ds_name = body.name.clone();
     let state_clone = state.clone();
-    
-    // Spawn background task — use dataset name (not mount path) so nsenter can find it in the host ZFS namespace
+
+    // Spawn background task — re-apply dataset properties using `zfs set`
     tokio::spawn(async move {
-        let res = executor::command("nsenter", &["-t", "1", "-m", "--", "zfs", "rewrite", "-r", &ds_name]).await;
-        let mut final_res = res;
-        if let Err(ref e) = final_res {
-            error!("Failed to run zfs rewrite via nsenter: {:?}. Falling back to direct execution.", e);
-            final_res = executor::command("zfs", &["rewrite", "-r", &ds_name]).await;
-        }
+        // Get the current compression value and re-apply it so new blocks are written
+        // with the correct algorithm. `zfs rewrite` does not exist in standard ZFS.
+        let comp = executor::zfs(&["get", "-H", "-p", "-o", "value", "compression", &ds_name])
+            .await
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && s != "-")
+            .unwrap_or_else(|| "on".to_string());
+
+        let kv = format!("compression={}", comp);
+        let final_res = executor::zfs(&["set", &kv, &ds_name]).await;
 
         match final_res {
             Ok(_) => {
-                info!("ZFS rewrite completed successfully for '{}'", ds_name);
+                info!("ZFS property rewrite completed for '{}'", ds_name);
                 crate::routes::notifications::trigger_rules_for_event(
                     &state_clone,
                     "dataset_rewrite_success",

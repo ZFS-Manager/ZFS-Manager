@@ -2,6 +2,28 @@ use std::fs;
 use std::process::Command;
 use tracing::{info, warn, error};
 
+pub async fn run_startup_pool_imports() {
+    use crate::routes::pools::{load_import_configs, execute_pool_import};
+
+    let configs = load_import_configs();
+    let startup_configs: Vec<_> = configs.into_iter()
+        .filter(|c| c.enabled && c.import_on_startup)
+        .collect();
+
+    if startup_configs.is_empty() {
+        return;
+    }
+
+    info!("Running {} startup pool import(s)...", startup_configs.len());
+    for config in &startup_configs {
+        info!("  → Importing pool '{}'...", config.name);
+        match execute_pool_import(config).await {
+            Ok(_) => info!("  ✅ Pool '{}' import completed", config.name),
+            Err(e) => error!("  ❌ Pool '{}' import failed: {:?}", config.name, e),
+        }
+    }
+}
+
 pub async fn run_startup_checks() {
     info!("🚀 Starting ZFS-Manager Diagnostic Checks...");
 

@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Database, RefreshCw, ChevronDown, CheckCircle, XCircle,
+  Database, RefreshCw, ChevronDown, CheckCircle, XCircle, Check,
   Loader2, Plus, Trash2, AlertTriangle, X, HardDrive,
   ArrowLeftRight, Download, Expand, RotateCcw, ChevronRight,
-  Activity, Info, Cpu, Settings, Layers,
+  Activity, Info, Cpu, Settings, Layers, Search,
 } from 'lucide-react';
 import { ZFSPool } from '../types';
 import { api, formatBytes } from '../api';
@@ -40,12 +40,7 @@ interface RewriteEntry {
 
 const REWRITE_SPEED_BPS = 100 * 1024 * 1024; // 100 MB/s estimate
 
-function fmtBytes(b: number): string {
-  if (b >= 1024 ** 4) return `${(b / 1024 ** 4).toFixed(2)} TB`;
-  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(2)} GB`;
-  if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(2)} MB`;
-  return `${(b / 1024).toFixed(2)} KB`;
-}
+function fmtBytes(b: number): string { return formatBytes(b); }
 
 function fmtSeconds(s: number): string {
   const h = Math.floor(s / 3600);
@@ -592,79 +587,295 @@ function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuc
 }
 
 /* ── Import Pool Modal ────────────────────────────────────────────────────────── */
+interface ImportConfig {
+  name: string;
+  key_file?: string;
+  encrypted: boolean;
+  import_on_startup: boolean;
+  enabled: boolean;
+  bind_mounts: Array<{ source: string; target: string }>;
+}
+
 function ImportPoolModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
+  const [tab, setTab] = useState<'import' | 'configs'>('import');
+
+  // Import tab state
   const [importable, setImportable] = useState<any[]>([]);
-  const [loading, setLoading]       = useState(true);
+  const [scanning, setScanning]     = useState(true);
   const [poolName, setPoolName]     = useState('');
   const [dir, setDir]               = useState('');
   const [importing, setImporting]   = useState(false);
-  const [error, setError]           = useState('');
+  const [importError, setImportError] = useState('');
+
+  // Config tab state
+  const [configs, setConfigs]             = useState<ImportConfig[]>([]);
+  const [configsLoading, setConfigsLoading] = useState(true);
+  const [editingConfig, setEditingConfig] = useState<ImportConfig | null>(null);
+  const [cfgName, setCfgName]             = useState('');
+  const [cfgEncrypted, setCfgEncrypted]   = useState(false);
+  const [cfgKeyFile, setCfgKeyFile]       = useState('');
+  const [cfgOnStartup, setCfgOnStartup]   = useState(true);
+  const [cfgEnabled, setCfgEnabled]       = useState(true);
+  const [cfgBindMounts, setCfgBindMounts] = useState<Array<{ source: string; target: string }>>([]);
+  const [cfgSaving, setCfgSaving]         = useState(false);
+  const [cfgError, setCfgError]           = useState('');
+  const [showCfgForm, setShowCfgForm]     = useState(false);
+  const [runningConfig, setRunningConfig] = useState<string | null>(null);
 
   useEffect(() => {
     api.getImportablePools()
       .then(res => setImportable(res.pools || []))
       .catch(() => setImportable([]))
-      .finally(() => setLoading(false));
+      .finally(() => setScanning(false));
+    loadConfigs();
   }, []);
 
+  const loadConfigs = () => {
+    setConfigsLoading(true);
+    api.getImportConfigs()
+      .then(res => setConfigs(res.configs || []))
+      .catch(() => setConfigs([]))
+      .finally(() => setConfigsLoading(false));
+  };
+
   const handleImport = async () => {
-    if (!poolName.trim()) { setError('Pool name is required'); return; }
-    setImporting(true); setError('');
+    if (!poolName.trim()) { setImportError('Pool name is required'); return; }
+    setImporting(true); setImportError('');
     try { await api.importPool(poolName.trim(), dir.trim() || undefined); onSuccess(); }
-    catch (err: any) { setError(err.message || 'Import failed'); }
+    catch (err: any) { setImportError(err.message || 'Import failed'); }
     finally { setImporting(false); }
   };
 
+  const openNewConfig = () => {
+    setEditingConfig(null);
+    setCfgName(''); setCfgEncrypted(false); setCfgKeyFile('');
+    setCfgOnStartup(true); setCfgEnabled(true); setCfgBindMounts([]);
+    setCfgError(''); setShowCfgForm(true);
+  };
+
+  const openEditConfig = (c: ImportConfig) => {
+    setEditingConfig(c);
+    setCfgName(c.name); setCfgEncrypted(c.encrypted); setCfgKeyFile(c.key_file || '');
+    setCfgOnStartup(c.import_on_startup); setCfgEnabled(c.enabled);
+    setCfgBindMounts(c.bind_mounts.map(b => ({ ...b })));
+    setCfgError(''); setShowCfgForm(true);
+  };
+
+  const saveConfig = async () => {
+    if (!cfgName.trim()) { setCfgError('Pool name is required'); return; }
+    setCfgSaving(true); setCfgError('');
+    const payload: ImportConfig = {
+      name: cfgName.trim(), encrypted: cfgEncrypted,
+      key_file: cfgEncrypted && cfgKeyFile.trim() ? cfgKeyFile.trim() : undefined,
+      import_on_startup: cfgOnStartup, enabled: cfgEnabled,
+      bind_mounts: cfgBindMounts.filter(b => b.source.trim() && b.target.trim()),
+    };
+    try {
+      if (editingConfig) await api.updateImportConfig(editingConfig.name, payload);
+      else               await api.saveImportConfig(payload);
+      setShowCfgForm(false); loadConfigs();
+    } catch (err: any) { setCfgError(err.message || 'Save failed'); }
+    finally { setCfgSaving(false); }
+  };
+
+  const deleteConfig = async (name: string) => {
+    try { await api.deleteImportConfig(name); loadConfigs(); } catch { /* ignore */ }
+  };
+
+  const runConfig = async (name: string) => {
+    setRunningConfig(name);
+    try { await api.runImportConfig(name); onSuccess(); }
+    catch { /* ignore */ }
+    finally { setRunningConfig(null); }
+  };
+
+  const addBindMount = () => setCfgBindMounts(b => [...b, { source: '', target: '' }]);
+  const removeBindMount = (i: number) => setCfgBindMounts(b => b.filter((_, j) => j !== i));
+  const updateBindMount = (i: number, field: 'source' | 'target', val: string) =>
+    setCfgBindMounts(b => b.map((bm, j) => j === i ? { ...bm, [field]: val } : bm));
+
+  const tabBtn = (active: boolean): React.CSSProperties => ({
+    padding: '6px 14px', fontSize: 12, fontFamily: 'var(--font-ui)',
+    background: active ? 'var(--accent-dim)' : 'transparent',
+    border: active ? '1px solid var(--accent-mid)' : '1px solid transparent',
+    borderRadius: 'var(--radius)', cursor: 'pointer',
+    color: active ? 'var(--accent)' : 'var(--text-muted)', fontWeight: active ? 600 : 400,
+  });
+
   return (
     <div style={S.modal.overlay} onClick={onClose}>
-      <div style={S.modal.box} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+      <div style={{ ...S.modal.box, maxWidth: 560, width: '100%', maxHeight: '85vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <h3 style={S.modal.title}>Import Pool</h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {loading ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 0', justifyContent: 'center', color: 'var(--text-muted)' }}>
-              <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
-              <span style={{ fontSize: 12 }}>Scanning for importable pools…</span>
-            </div>
-          ) : importable.length > 0 && (
+
+        <div style={{ display: 'flex', gap: 6, marginBottom: 20 }}>
+          <button style={tabBtn(tab === 'import')}  onClick={() => setTab('import')}>One-time Import</button>
+          <button style={tabBtn(tab === 'configs')} onClick={() => setTab('configs')}>Import Configs</button>
+        </div>
+
+        {tab === 'import' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {scanning ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 0', justifyContent: 'center', color: 'var(--text-muted)' }}>
+                <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                <span style={{ fontSize: 12 }}>Scanning for importable pools…</span>
+              </div>
+            ) : importable.length > 0 && (
+              <div>
+                <label style={S.modal.label}>Detected Pools</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {importable.map((p, i) => (
+                    <button key={i} onClick={() => setPoolName(p.name)} style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px',
+                      background: poolName === p.name ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                      border: `1px solid ${poolName === p.name ? 'var(--accent-mid)' : 'var(--border)'}`,
+                      borderRadius: 'var(--radius)', cursor: 'pointer', transition: 'all 0.12s',
+                    }}>
+                      <span style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>{p.name}</span>
+                      <span className={p.state === 'ONLINE' ? 'badge badge-success' : 'badge badge-warning'}>{p.state || 'UNKNOWN'}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div>
-              <label style={S.modal.label}>Detected Pools</label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {importable.map((p, i) => (
-                  <button key={i} onClick={() => setPoolName(p.name)} style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px',
-                    background: poolName === p.name ? 'var(--accent-dim)' : 'var(--bg-elevated)',
-                    border: `1px solid ${poolName === p.name ? 'var(--accent-mid)' : 'var(--border)'}`,
-                    borderRadius: 'var(--radius)', cursor: 'pointer', transition: 'all 0.12s',
-                  }}>
-                    <span style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>{p.name}</span>
-                    <span className={p.state === 'ONLINE' ? 'badge badge-success' : 'badge badge-warning'}>{p.state || 'UNKNOWN'}</span>
-                  </button>
+              <label style={S.modal.label}>Pool Name</label>
+              <input style={S.modal.input} type="text" placeholder="e.g. tank" value={poolName} onChange={e => setPoolName(e.target.value)} />
+            </div>
+            <div>
+              <label style={S.modal.label}>Search Directory (optional)</label>
+              <input style={{ ...S.modal.input, fontFamily: 'var(--font-mono)' }} type="text" placeholder="/mnt/disk1" value={dir} onChange={e => setDir(e.target.value)} />
+            </div>
+            {importError && (
+              <div style={{ padding: '10px 14px', background: 'var(--danger-dim)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--danger)' }}>{importError}</div>
+            )}
+            <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+              <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
+              <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleImport} disabled={importing || !poolName.trim()}>
+                {importing ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={14} />}
+                {importing ? 'Importing…' : 'Import Pool'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {tab === 'configs' && !showCfgForm && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {configsLoading ? (
+              <div style={{ display: 'flex', justifyContent: 'center', padding: '16px 0', color: 'var(--text-muted)' }}>
+                <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+              </div>
+            ) : configs.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: 13 }}>No import configs yet</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {configs.map(c => (
+                  <div key={c.name} style={{ padding: '12px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{c.name}</span>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button className="btn btn-secondary" style={{ padding: '3px 10px', fontSize: 11 }} onClick={() => runConfig(c.name)} disabled={runningConfig === c.name}>
+                          {runningConfig === c.name ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> : 'Run'}
+                        </button>
+                        <button className="btn btn-secondary" style={{ padding: '3px 10px', fontSize: 11 }} onClick={() => openEditConfig(c)}>Edit</button>
+                        <button className="btn btn-secondary" style={{ padding: '3px 10px', fontSize: 11, color: 'var(--danger)' }} onClick={() => deleteConfig(c.name)}>
+                          <Trash2 size={11} />
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <span className={c.enabled ? 'badge badge-success' : 'badge'}>{c.enabled ? 'Enabled' : 'Disabled'}</span>
+                      {c.import_on_startup && <span className="badge badge-info">Auto-import</span>}
+                      {c.encrypted && <span className="badge badge-warning">Encrypted</span>}
+                      {c.bind_mounts.length > 0 && <span className="badge">{c.bind_mounts.length} bind mount{c.bind_mounts.length !== 1 ? 's' : ''}</span>}
+                    </div>
+                  </div>
                 ))}
               </div>
+            )}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Close</button>
+              <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={openNewConfig}>
+                <Plus size={13} /> New Config
+              </button>
             </div>
-          )}
-          <div>
-            <label style={S.modal.label}>Pool Name</label>
-            <input style={S.modal.input} type="text" placeholder="e.g. tank" value={poolName} onChange={e => setPoolName(e.target.value)} />
           </div>
-          <div>
-            <label style={S.modal.label}>Search Directory (optional)</label>
-            <input style={{ ...S.modal.input, fontFamily: 'var(--font-mono)' }} type="text" placeholder="/mnt/disk1" value={dir} onChange={e => setDir(e.target.value)} />
+        )}
+
+        {tab === 'configs' && showCfgForm && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>
+              {editingConfig ? `Edit: ${editingConfig.name}` : 'New Import Config'}
+            </div>
+            <div>
+              <label style={S.modal.label}>Pool Name</label>
+              <input style={S.modal.input} type="text" placeholder="e.g. tank" value={cfgName} onChange={e => setCfgName(e.target.value)} disabled={!!editingConfig} />
+            </div>
+            <div style={{ display: 'flex', gap: 20 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-primary)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={cfgEnabled} onChange={e => setCfgEnabled(e.target.checked)} /> Enabled
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-primary)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={cfgOnStartup} onChange={e => setCfgOnStartup(e.target.checked)} /> Auto-import on startup
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-primary)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={cfgEncrypted} onChange={e => setCfgEncrypted(e.target.checked)} /> Encrypted
+              </label>
+            </div>
+            {cfgEncrypted && (
+              <div>
+                <label style={S.modal.label}>Key File Path (optional)</label>
+                <input style={{ ...S.modal.input, fontFamily: 'var(--font-mono)' }} type="text" placeholder="/etc/zfs/keys/tank.key" value={cfgKeyFile} onChange={e => setCfgKeyFile(e.target.value)} />
+              </div>
+            )}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <label style={S.modal.label}>Bind Mounts</label>
+                <button className="btn btn-secondary" style={{ padding: '3px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }} onClick={addBindMount}>
+                  <Plus size={11} /> Add
+                </button>
+              </div>
+              {cfgBindMounts.length === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>None configured</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {cfgBindMounts.map((bm, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <input
+                        style={{ ...S.modal.input, flex: 1, fontFamily: 'var(--font-mono)', fontSize: 11 }}
+                        placeholder="source"
+                        value={bm.source}
+                        onChange={e => updateBindMount(i, 'source', e.target.value)}
+                      />
+                      <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>→</span>
+                      <input
+                        style={{ ...S.modal.input, flex: 1, fontFamily: 'var(--font-mono)', fontSize: 11 }}
+                        placeholder="target"
+                        value={bm.target}
+                        onChange={e => updateBindMount(i, 'target', e.target.value)}
+                      />
+                      <button onClick={() => removeBindMount(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', padding: 4 }}>
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {cfgError && (
+              <div style={{ padding: '10px 14px', background: 'var(--danger-dim)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--danger)' }}>{cfgError}</div>
+            )}
+            <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+              <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setShowCfgForm(false)}>Back</button>
+              <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={saveConfig} disabled={cfgSaving || !cfgName.trim()}>
+                {cfgSaving ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={13} />}
+                {cfgSaving ? 'Saving…' : 'Save Config'}
+              </button>
+            </div>
           </div>
-          {error && (
-            <div style={{ padding: '10px 14px', background: 'var(--danger-dim)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--danger)' }}>{error}</div>
-          )}
-          <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-            <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleImport} disabled={importing || !poolName.trim()}>
-              {importing ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={14} />}
-              {importing ? 'Importing…' : 'Import Pool'}
-            </button>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -1948,6 +2159,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
   const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showCreate,    setShowCreate]    = useState(false);
   const [showImport,    setShowImport]    = useState(false);
+  const [searchQuery,   setSearchQuery]   = useState('');
   const [expandTarget,  setExpandTarget]  = useState<string | null>(null);
   const [replaceTarget, setReplaceTarget] = useState<{ pool: string; preselectedDisk?: string } | null>(null);
   const [smartTarget,   setSmartTarget]   = useState<string | null>(null);
@@ -2231,7 +2443,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
       )}
 
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             {pools.length} pool{pools.length !== 1 ? 's' : ''}
@@ -2253,9 +2465,27 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
         </div>
       </div>
 
+      {/* Search bar */}
+      <div style={{ position: 'relative', marginBottom: 20 }}>
+        <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+        <input
+          type="text"
+          placeholder="Filter pools by name…"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          style={{
+            width: '100%', boxSizing: 'border-box',
+            paddingLeft: 30, paddingRight: 10, paddingTop: 7, paddingBottom: 7,
+            background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)', color: 'var(--text-primary)',
+            fontSize: 13, fontFamily: 'var(--font-ui)', outline: 'none',
+          }}
+        />
+      </div>
+
       {/* Pool cards */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {pools.map((pool, pi) => {
+        {pools.filter(p => !searchQuery.trim() || p.name.toLowerCase().includes(searchQuery.trim().toLowerCase())).map((pool, pi) => {
           const state        = scrubState[pool.name] || 'idle';
           const progress     = scrubProgress[pool.name];
           const expansionProg = expansionProgress[pool.name];

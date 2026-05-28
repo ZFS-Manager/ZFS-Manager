@@ -4,16 +4,71 @@ use axum::{
     Json, Router,
 };
 use redis::AsyncCommands;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{error::ApiError, executor, state::AppState};
+
+// ── Pool import config storage ────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BindMount {
+    pub source: String,
+    pub target: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PoolImportConfig {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_file: Option<String>,
+    #[serde(default)]
+    pub encrypted: bool,
+    #[serde(default)]
+    pub import_on_startup: bool,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub bind_mounts: Vec<BindMount>,
+}
+
+fn default_true() -> bool { true }
+
+pub fn get_imports_file() -> String {
+    let data_dir = std::env::var("ZFS_MANAGER_DATA")
+        .unwrap_or_else(|_| "/home/docker/zfs-manager".to_string());
+    format!("{}/pool_imports.json", data_dir)
+}
+
+pub fn load_import_configs() -> Vec<PoolImportConfig> {
+    let path = get_imports_file();
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_import_configs(configs: &[PoolImportConfig]) -> Result<(), ApiError> {
+    let path = get_imports_file();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| ApiError::InternalError(format!("Cannot create data dir: {e}")))?;
+    }
+    let json = serde_json::to_string_pretty(configs)
+        .map_err(|e| ApiError::InternalError(format!("Serialize error: {e}")))?;
+    std::fs::write(&path, json)
+        .map_err(|e| ApiError::InternalError(format!("Write error: {e}")))?;
+    Ok(())
+}
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/v1/pools", get(list_pools).post(create_pool))
         // Static routes BEFORE dynamic ones
-        .route("/api/v1/pools/importable", get(list_importable_pools))
+        .route("/api/v1/pools/importable",                              get(list_importable_pools))
+        .route("/api/v1/pools/import-configs",                          get(list_import_configs).post(save_import_config))
+        .route("/api/v1/pools/import-configs/:config_name",             put(update_import_config).delete(delete_import_config))
+        .route("/api/v1/pools/import-configs/:config_name/run",         post(run_import_config_now))
         .route("/api/v1/pools/:name", get(get_pool).delete(destroy_pool))
         .route("/api/v1/pools/:name/status",      get(pool_status))
         .route("/api/v1/pools/:name/vdevs",        get(pool_vdevs))
@@ -29,7 +84,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/pools/:name/replace",      post(replace_disk))
         .route("/api/v1/pools/:name/events",       get(pool_events))
         .route("/api/v1/pools/:name/settings",     get(get_pool_settings).put(set_pool_setting))
-        .route("/api/v1/pools/:name/feature/raidz_expansion",        get(get_raidz_expansion_feature))
+        // raidz_expansion static route handles both GET and PUT (fixes 405 when toggling feature)
+        .route("/api/v1/pools/:name/feature/raidz_expansion",
+            get(get_raidz_expansion_feature).put(toggle_raidz_expansion))
         .route("/api/v1/pools/:name/feature/raidz_expansion/enable", post(enable_raidz_expansion_feature))
         .route("/api/v1/pools/:name/features",                        get(list_pool_features))
         .route("/api/v1/pools/:name/feature/:feature_name",           put(toggle_pool_feature))
@@ -971,7 +1028,123 @@ async fn set_pool_setting(
     })))
 }
 
+// ── Pool import configs ───────────────────────────────────────────────────────
+
+async fn list_import_configs() -> Result<Json<Value>, ApiError> {
+    let configs = load_import_configs();
+    Ok(Json(json!({ "configs": configs })))
+}
+
+async fn save_import_config(
+    Json(body): Json<PoolImportConfig>,
+) -> Result<Json<Value>, ApiError> {
+    if body.name.is_empty() {
+        return Err(ApiError::BadRequest("'name' is required".into()));
+    }
+    executor::validate_zfs_name(&body.name, "pool")?;
+    let mut configs = load_import_configs();
+    // Upsert by name
+    if let Some(pos) = configs.iter().position(|c| c.name == body.name) {
+        configs[pos] = body.clone();
+    } else {
+        configs.push(body.clone());
+    }
+    save_import_configs(&configs)?;
+    Ok(Json(json!({ "message": format!("Import config '{}' saved", body.name), "config": body })))
+}
+
+async fn update_import_config(
+    Path(config_name): Path<String>,
+    Json(body): Json<PoolImportConfig>,
+) -> Result<Json<Value>, ApiError> {
+    let mut configs = load_import_configs();
+    match configs.iter().position(|c| c.name == config_name) {
+        Some(pos) => {
+            configs[pos] = body.clone();
+            save_import_configs(&configs)?;
+            Ok(Json(json!({ "message": format!("Import config '{}' updated", config_name), "config": body })))
+        }
+        None => Err(ApiError::NotFound(format!("Import config '{}' not found", config_name))),
+    }
+}
+
+async fn delete_import_config(
+    Path(config_name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let mut configs = load_import_configs();
+    let len_before = configs.len();
+    configs.retain(|c| c.name != config_name);
+    if configs.len() == len_before {
+        return Err(ApiError::NotFound(format!("Import config '{}' not found", config_name)));
+    }
+    save_import_configs(&configs)?;
+    Ok(Json(json!({ "message": format!("Import config '{}' deleted", config_name) })))
+}
+
+async fn run_import_config_now(
+    Path(config_name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let configs = load_import_configs();
+    let config = configs.iter().find(|c| c.name == config_name)
+        .ok_or_else(|| ApiError::NotFound(format!("Import config '{}' not found", config_name)))?
+        .clone();
+
+    execute_pool_import(&config).await?;
+    Ok(Json(json!({ "message": format!("Import executed for pool '{}'", config_name) })))
+}
+
+pub async fn execute_pool_import(config: &PoolImportConfig) -> Result<(), ApiError> {
+    use tracing::{info, warn};
+
+    // Check if pool is already imported
+    let already_imported = executor::zpool(&["list", &config.name]).await
+        .map(|out| !out.trim().is_empty())
+        .unwrap_or(false);
+
+    if !already_imported {
+        executor::zpool(&["import", &config.name]).await?;
+        info!("Imported pool '{}'", config.name);
+    } else {
+        info!("Pool '{}' already imported, skipping", config.name);
+    }
+
+    // Load encryption key if needed
+    if config.encrypted {
+        if let Some(ref kf) = config.key_file {
+            let key_loc = format!("file://{}", kf);
+            executor::zfs(&["load-key", "-L", &key_loc, &config.name]).await
+                .unwrap_or_else(|e| { warn!("load-key failed for '{}': {:?}", config.name, e); String::new() });
+        }
+    }
+
+    // Mount all datasets
+    executor::zfs(&["mount", "-a"]).await
+        .unwrap_or_else(|e| { warn!("zfs mount -a failed: {:?}", e); String::new() });
+
+    // Apply bind mounts
+    for bm in &config.bind_mounts {
+        if bm.source.is_empty() || bm.target.is_empty() { continue; }
+        let _ = std::fs::create_dir_all(&bm.target);
+        let _ = tokio::process::Command::new("mount")
+            .args(["--rbind", &bm.source, &bm.target])
+            .output()
+            .await;
+        info!("Bind mounted {} → {}", bm.source, bm.target);
+    }
+
+    Ok(())
+}
+
 // ── RAIDZ Expansion feature ───────────────────────────────────────────────────
+
+// Delegates to toggle_pool_feature with hardcoded feature name — needed so the
+// static route "/feature/raidz_expansion" can serve PUT without returning 405.
+async fn toggle_raidz_expansion(
+    Path(name): Path<String>,
+    Json(body): Json<ToggleFeatureBody>,
+) -> Result<Json<Value>, ApiError> {
+    toggle_pool_feature(Path((name, "raidz_expansion".to_string())), Json(body)).await
+}
 
 async fn get_raidz_expansion_feature(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "pool")?;

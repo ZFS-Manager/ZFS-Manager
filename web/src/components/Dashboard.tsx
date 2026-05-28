@@ -9,7 +9,7 @@ import {
   ArrowUp, ArrowDown, Edit2, Check, Plus,
 } from 'lucide-react';
 import { ZFSPool, ZFSDataset, ZFSLog } from '../types';
-import { formatBytes, api } from '../api';
+import { formatBytes, formatSpeed, api } from '../api';
 import { useLayout } from '../hooks/useLayout';
 import WidgetShell from './WidgetShell';
 import PageTransition from './PageTransition';
@@ -55,14 +55,10 @@ function useCounter(target: number, duration = 600) {
 }
 
 function fmtBw(v: number): string {
-  if (v >= 1000) return `${(v / 1000).toFixed(2)} GB/s`;
-  if (v >= 1)    return `${v.toFixed(2)} MB/s`;
-  return `${(v * 1024).toFixed(0)} KB/s`;
+  return formatSpeed(v * 1048576);
 }
 function fmtGB(v: number): string {
-  if (v >= 1000) return `${(v / 1000).toFixed(2)} TB`;
-  if (v >= 1)    return `${v.toFixed(2)} GB`;
-  return `${(v * 1024).toFixed(0)} MB`;
+  return formatBytes(v * 1073741824);
 }
 
 function fmtDays(d: number): string {
@@ -82,10 +78,7 @@ function fmtTimeUntilFull(days: number): string {
 
 function fmtUsableSpace(bytes: number): string {
   if (!bytes) return '—';
-  const tb = bytes / (1024 ** 4);
-  if (tb >= 1) return `${tb.toFixed(2)} TB`;
-  const gb = bytes / (1024 ** 3);
-  return `${gb.toFixed(2)} GB`;
+  return formatBytes(bytes);
 }
 
 function colorVar(c: string): string {

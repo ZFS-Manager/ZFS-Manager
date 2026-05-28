@@ -4,7 +4,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { Activity, HardDrive, Edit2, Check, Plus } from 'lucide-react';
-import { api } from '../api';
+import { api, formatBytes, formatSpeed } from '../api';
 import { useLayout } from '../hooks/useLayout';
 import WidgetShell from './WidgetShell';
 import PageTransition from './PageTransition';
@@ -94,26 +94,18 @@ const AXIS_TICK  = { fill: '#52525b', fontSize: 10 };
 const GRID_PROPS = { strokeDasharray: '3 6' as const, stroke: 'rgba(255,255,255,0.15)', vertical: false };
 
 function getBwScale(maxMB: number): { unit: string; fmt: (v: number) => string } {
-  if (maxMB >= 1000) return { unit: 'GB/s', fmt: v => `${(v / 1000).toFixed(1)} GB/s` };
-  if (maxMB >= 1)    return { unit: 'MB/s', fmt: v => `${v.toFixed(0)} MB/s` };
-  return { unit: 'KB/s', fmt: v => `${(v * 1024).toFixed(0)} KB/s` };
+  if (maxMB >= 1000) return { unit: 'GB/s', fmt: v => formatSpeed(v * 1048576) };
+  if (maxMB >= 1)    return { unit: 'MB/s', fmt: v => formatSpeed(v * 1048576) };
+  return { unit: 'KB/s', fmt: v => formatSpeed(v * 1048576) };
 }
 
 function getGbScale(maxGB: number): { unit: string; fmt: (v: number) => string } {
-  if (maxGB >= 1000) return { unit: 'TB', fmt: v => `${(v / 1000).toFixed(1)} TB` };
-  return { unit: 'GB', fmt: v => `${v.toFixed(0)} GB` };
+  if (maxGB >= 1000) return { unit: 'TB', fmt: v => formatBytes(v * 1073741824) };
+  return { unit: 'GB', fmt: v => formatBytes(v * 1073741824) };
 }
 
-function fmtBw(v: number) {
-  if (v >= 1000) return `${(v / 1000).toFixed(2)} GB/s`;
-  if (v >= 1)    return `${v.toFixed(2)} MB/s`;
-  return `${(v * 1024).toFixed(0)} KB/s`;
-}
-function fmtGB(v: number) {
-  if (v >= 1000) return `${(v / 1000).toFixed(2)} TB`;
-  if (v >= 1)    return `${v.toFixed(2)} GB`;
-  return `${(v * 1024).toFixed(0)} MB`;
-}
+function fmtBw(v: number) { return formatSpeed(v * 1048576); }
+function fmtGB(v: number) { return formatBytes(v * 1073741824); }
 
 function fmtTs(iso: string, iv: Interval) {
   if (!iso) return '';
