@@ -318,10 +318,7 @@ function StatCard({ label, value, sub, fillLine, icon: Icon, color, minHeight = 
 const REWRITE_SPEED_BPS_DASH = 100 * 1024 * 1024;
 
 function fmtBytesDash(b: number): string {
-  if (b >= 1024 ** 4) return `${(b / 1024 ** 4).toFixed(2)}T`;
-  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(2)}G`;
-  if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(2)}M`;
-  return `${(b / 1024).toFixed(2)}K`;
+  return formatBytes(b);
 }
 
 function fmtSecsDash(s: number): string {
@@ -524,11 +521,7 @@ function PoolCard({ pool, fillInfo }: { pool: ZFSPool; fillInfo?: PoolFillInfo }
         }}>
           <span>
             <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
-              +{fillInfo.rateGbDay >= 1000
-                ? `${(fillInfo.rateGbDay / 1024).toFixed(2)} TB/day`
-                : fillInfo.rateGbDay >= 1
-                  ? `${fillInfo.rateGbDay.toFixed(2)} GB/day`
-                  : `${(fillInfo.rateGbDay * 1024).toFixed(0)} MB/day`}
+              +{formatBytes(fillInfo.rateGbDay * 1_073_741_824)}/day
             </span>
           </span>
           {daysUntilFull !== null && (
@@ -1057,15 +1050,12 @@ export default function Dashboard({
                         <CartesianGrid {...GRID_PROPS} />
                         <XAxis dataKey="timestamp" axisLine={false} tickLine={false} tick={AXIS_TICK} minTickGap={48} />
                         <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK}
-                          tickFormatter={v => {
-                            const maxV = ioData.reduce((m: number, d: any) => Math.max(m, d.read || 0, d.write || 0), 0);
-                            return maxV >= 1000 ? `${(v/1000).toFixed(1)} GB/s` : `${v.toFixed(0)} MB/s`;
-                          }}
+                          tickFormatter={v => formatSpeed(v * 1_048_576)}
                           tickCount={MAX_TICKS}
                           width={85}
                         />
                         <Tooltip {...TOOLTIP_STYLE} formatter={(v: number, n: string) => [
-                          v >= 1000 ? `${(v/1000).toFixed(2)} GB/s` : `${v.toFixed(2)} MB/s`,
+                          formatSpeed(v * 1_048_576),
                           n === 'read' ? '↑ Read' : '↓ Write',
                         ]} />
                         {ioShowRead  && <Line type="monotone" dataKey="read"  stroke="#38bdf8" strokeWidth={1.5} dot={false} isAnimationActive={false} activeDot={{ r: 3, strokeWidth: 0 }} />}
@@ -1078,13 +1068,13 @@ export default function Dashboard({
                     const totalR = ioData.reduce((s, d) => s + (d.read  || 0), 0) * secsPerPoint;
                     const totalW = ioData.reduce((s, d) => s + (d.write || 0), 0) * secsPerPoint;
                     const peakW  = ioData.reduce((m, d) => Math.max(m, d.write || 0), 0);
-                    const fmtData = (v: number) => v >= 1024 ? `${(v/1024).toFixed(1)} TB` : `${v.toFixed(1)} GB`;
-                    const fmtBwLocal = (v: number) => v >= 1000 ? `${(v/1000).toFixed(2)} GB/s` : `${v.toFixed(0)} MB/s`;
+                    const fmtData = (v: number) => formatBytes(v * 1_048_576);
+                    const fmtBwLocal = (v: number) => formatSpeed(v * 1_048_576);
                     return (
                       <div style={{ display: 'flex', gap: 32, marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
                         {[
-                          { label: '↑ Read total',  value: fmtData(totalR / 1024), color: '#38bdf8' },
-                          { label: '↓ Write total', value: fmtData(totalW / 1024), color: '#818cf8' },
+                          { label: '↑ Read total',  value: fmtData(totalR), color: '#38bdf8' },
+                          { label: '↓ Write total', value: fmtData(totalW), color: '#818cf8' },
                           { label: 'Peak write',    value: fmtBwLocal(peakW),       color: 'var(--text-muted)' },
                         ].map(({ label, value, color }) => (
                           <div key={label}>
