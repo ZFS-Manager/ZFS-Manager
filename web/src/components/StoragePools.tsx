@@ -712,9 +712,20 @@ function AutoMountModal({ poolName, onClose, onSuccess }: { poolName: string; on
 
   const handleRunNow = async () => {
     setRunning(true); setError('');
+    const payload: ImportConfig = {
+      name: poolName,
+      encrypted,
+      key_file: encrypted && keyFile.trim() ? keyFile.trim() : undefined,
+      import_on_startup: onStartup,
+      enabled,
+      bind_mounts: bindMounts.filter(b => b.source.trim() && b.target.trim()),
+      dataset_keys: datasetKeys.filter(d => d.dataset.trim() && d.key_file.trim()),
+    };
     try {
+      if (existing) await api.updateImportConfig(poolName, payload);
+      else          await api.saveImportConfig(payload);
       await api.runImportConfig(poolName);
-      notify({ type: 'success', title: 'Mount Executed', message: `Pool "${poolName}" mounted successfully` });
+      notify({ type: 'success', title: 'Mount Executed', message: `Config saved and pool "${poolName}" mounted successfully` });
       onSuccess();
     } catch (err: any) { setError(err.message || 'Mount failed'); }
     finally { setRunning(false); }
