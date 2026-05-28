@@ -742,7 +742,10 @@ function AutoMountModal({ poolName, onClose, onSuccess }: { poolName: string; on
       <div style={{ ...S.modal.box, maxWidth: 540, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
-            <h3 style={S.modal.title}>Auto-Mount Config</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <h3 style={S.modal.title}>Auto-Mount Config</h3>
+              <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: '#ef4444', borderRadius: 4, padding: '2px 6px', letterSpacing: '0.05em', fontFamily: 'var(--font-ui)' }}>BETA</span>
+            </div>
             <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>{poolName}</p>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
