@@ -394,11 +394,11 @@ html, body, #root {
   /* Always show row actions on mobile (no hover) */
   .data-table tbody tr .row-actions { opacity: 1; }
 
-  /* Touch targets: minimum 44px per Apple HIG */
-  .btn { min-height: 44px; height: auto; padding: 10px 14px; font-size: 12px; }
+  /* Touch targets — primary/secondary buttons only, not icon/tab buttons */
+  .btn-primary, .btn-secondary { min-height: 40px; height: auto; padding: 9px 14px; font-size: 12px; }
 
   /* Input full-width */
-  .input { font-size: 12px; }
+  .input { font-size: 16px; } /* 16px prevents iOS zoom on focus */
 
   /* Toast: full width on mobile */
   .toast-container {
@@ -418,14 +418,25 @@ html, body, #root {
     border-radius: 0 !important;
   }
 
-  /* Pool card action buttons: wrap on mobile */
-  .pool-actions { flex-wrap: wrap !important; }
-  .pool-action-btn { flex: 1 1 auto; min-width: 0; }
+  /* Pool card action buttons: compact on mobile, all fit in one line */
+  .pool-actions { flex-wrap: wrap !important; gap: 5px !important; }
+  .pool-action-btn {
+    flex: 1 1 auto; min-width: 0;
+    min-height: 36px !important; height: 36px !important;
+    padding: 0 8px !important; font-size: 11px !important;
+  }
 
   /* Settings: stack sidebar + content vertically */
   .settings-layout { flex-direction: column !important; }
   .settings-sidebar { width: 100% !important; flex-shrink: 1 !important; }
-  .settings-sidebar button { border-bottom: 1px solid var(--border); }
+
+  /* Settings tab buttons – compact, no min-height override */
+  .settings-sidebar button {
+    min-height: 52px !important;
+    height: auto !important;
+    padding: 8px 4px !important;
+    border-bottom: none !important;
+  }
 
   /* Reduce excessive padding inside panels on mobile */
   .panel-body { padding: 12px !important; }

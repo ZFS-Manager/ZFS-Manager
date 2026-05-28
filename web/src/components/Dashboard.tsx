@@ -1123,19 +1123,21 @@ export default function Dashboard({
         return (
           <div className="two-col">
             <Panel title="Live I/O" sub={multiPool ? `Pool: ${effectivePoolName} · 1s refresh` : 'Current throughput · 1s refresh'}>
-              <div style={{ display: 'flex' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)' }}>
                 {[
                   { label: '↑ Read',       value: fmtBw(poolLiveRead),      color: '#38bdf8' },
                   { label: '↓ Write',      value: fmtBw(poolLiveWrite),     color: '#818cf8' },
-                  { label: '↑ Read IOPS',  value: `${poolLiveReadIops.toFixed(0)} ops/s`,  color: '#38bdf8' },
-                  { label: '↓ Write IOPS', value: `${poolLiveWriteIops.toFixed(0)} ops/s`, color: '#818cf8' },
-                ].map(({ label, value, color }, i, arr) => (
-                  <div key={label} style={{ flex: 1, padding: '16px 18px', borderRight: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
-                      <span style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>{label}</span>
+                  { label: '↑ IOPS Read',  value: `${poolLiveReadIops.toFixed(0)}`,  sub: 'ops/s', color: '#38bdf8' },
+                  { label: '↓ IOPS Write', value: `${poolLiveWriteIops.toFixed(0)}`, sub: 'ops/s', color: '#818cf8' },
+                ].map(({ label, value, color, sub }: any, i) => (
+                  <div key={label} style={{ padding: isMobile ? '12px 10px' : '16px 18px', borderRight: isMobile ? (i % 2 === 0 ? '1px solid var(--border)' : 'none') : (i < 3 ? '1px solid var(--border)' : 'none'), borderBottom: isMobile && i < 2 ? '1px solid var(--border)' : 'none' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 8 }}>
+                      <span style={{ width: 5, height: 5, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
+                      <span style={{ fontFamily: 'var(--font-ui)', fontSize: isMobile ? 10 : 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>{label}</span>
                     </div>
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1, letterSpacing: '-0.02em' }}>{value}</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: isMobile ? 16 : 22, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1, letterSpacing: '-0.02em' }}>
+                      {value}{sub && <span style={{ fontSize: isMobile ? 10 : 12, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 3 }}>{sub}</span>}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1174,11 +1176,11 @@ export default function Dashboard({
                   { label: 'ARC Hit', pct: arcHit, value: `${arcHit.toFixed(1)}%`, color: 'var(--success)' },
                 ].map(({ label, pct, value, color }) => (
                   <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', width: 64, flexShrink: 0 }}>{label}</div>
+                    <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', width: isMobile ? 44 : 64, flexShrink: 0 }}>{label}</div>
                     <div className="progress-track" style={{ flex: 1 }}>
                       <div className="progress-fill" style={{ width: `${Math.min(pct, 100)}%`, background: color }} />
                     </div>
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)', width: 96, textAlign: 'right', flexShrink: 0 }}>{value}</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: isMobile ? 10 : 11, color: 'var(--text-secondary)', width: isMobile ? 72 : 96, textAlign: 'right', flexShrink: 0 }}>{value}</div>
                   </div>
                 ))}
 

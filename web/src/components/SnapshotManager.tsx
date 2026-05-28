@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { ZFSDataset, ZFSPool } from '../types';
 import { api, formatUnixTimestamp, formatBytes } from '../api';
+import { useIsMobile } from '../hooks/useBreakpoint';
 
 interface SnapshotManagerProps {
   snapshots: any[];
@@ -157,6 +158,7 @@ const inputStyle: React.CSSProperties = {
 
 /* ── Main component ── */
 export default function SnapshotManager({ snapshots, datasets, pools = [], onRefresh, selectedPool, onSelectPool }: SnapshotManagerProps) {
+  const isMobile = useIsMobile();
   const [search, setSearch]                   = useState('');
   const [showCreate, setShowCreate]           = useState(false);
   const [createDataset, setCreateDataset]     = useState('');
@@ -441,30 +443,30 @@ export default function SnapshotManager({ snapshots, datasets, pools = [], onRef
       </AnimatePresence>
 
       {/* Page header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)', letterSpacing: '-0.01em', margin: 0 }}>
+          <h1 style={{ fontSize: isMobile ? 18 : 22, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)', letterSpacing: '-0.01em', margin: 0 }}>
             Snapshots
           </h1>
           <p style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', marginTop: 4, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
             {snapshots.length} point-in-time snapshot{snapshots.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', flex: isMobile ? 1 : undefined, minWidth: 0 }}>
           {multiPool && onSelectPool && (
             <PoolSelector pools={pools} selected={effectivePool} onSelect={onSelectPool} />
           )}
-          <div style={{ position: 'relative' }}>
+          <div style={{ position: 'relative', flex: isMobile ? 1 : undefined, minWidth: 0 }}>
             <Search size={13} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
             <input
-              type="text" className="input" placeholder="Filter snapshots…"
+              type="text" className="input" placeholder="Filter…"
               value={search} onChange={e => setSearch(e.target.value)}
-              style={{ paddingLeft: 34, width: 220 }}
+              style={{ paddingLeft: 34, width: isMobile ? '100%' : 200 }}
             />
           </div>
           <button
             className="btn btn-primary"
-            style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', flexShrink: 0 }}
             onClick={() => {
               const d = datasetOptions[0] || '';
               setCreateDataset(d);
@@ -473,7 +475,7 @@ export default function SnapshotManager({ snapshots, datasets, pools = [], onRef
             }}
           >
             <Plus size={14} strokeWidth={2.5} />
-            Create Snapshot
+            {isMobile ? 'New' : 'Create Snapshot'}
           </button>
         </div>
       </div>

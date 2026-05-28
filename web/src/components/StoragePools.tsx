@@ -2898,7 +2898,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                 {/* Usage bar */}
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                    <span style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--text-muted)' }}>Storage usage</span>
+                    <span style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--text-muted)' }}>Usage</span>
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: capColor, fontWeight: 700 }}>{pool.cap}%</span>
                   </div>
                   <div className="progress-track" style={{ height: 6 }}>
@@ -2906,7 +2906,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5 }}>
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>{pool.alloc} used</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>{pool.free} free of {pool.size}</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>{pool.free} / {pool.size}</span>
                   </div>
                 </div>
               </div>
@@ -2941,7 +2941,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                   { label: 'Disks',         value: disks.length > 0 ? String(disks.length) : '—', color: 'var(--text-primary)' },
                   { label: 'RAID Type',     value: raidType,                       color: rc },
                 ].map(({ label, value, color }) => (
-                  <div key={label} style={{ padding: '14px 20px', borderRight: '1px solid var(--border)', minWidth: 120 }}>
+                  <div key={label} style={{ padding: isMobile ? '10px 14px' : '14px 20px', borderRight: '1px solid var(--border)', flex: '1 1 auto', minWidth: isMobile ? '50%' : 120, boxSizing: 'border-box' as const }}>
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', fontFamily: 'var(--font-ui)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
                       {label}
                       {label === 'Fragmentation' && (
