@@ -94,17 +94,24 @@ const AXIS_TICK  = { fill: '#52525b', fontSize: 10 };
 const GRID_PROPS = { strokeDasharray: '3 6' as const, stroke: 'rgba(255,255,255,0.15)', vertical: false };
 
 function getBwScale(maxMB: number): { unit: string; fmt: (v: number) => string } {
-  if (maxMB >= 1e9)  return { unit: 'PB/s', fmt: v => formatSpeed(v * 1048576) };
-  if (maxMB >= 1e6)  return { unit: 'TB/s', fmt: v => formatSpeed(v * 1048576) };
-  if (maxMB >= 1000) return { unit: 'GB/s', fmt: v => formatSpeed(v * 1048576) };
-  if (maxMB >= 1)    return { unit: 'MB/s', fmt: v => formatSpeed(v * 1048576) };
+  // 1 GB = 1024 MB, 1 TB = ~1.05e6 MB, 1 PB = ~1.07e9 MB, 1 EB = ~1.10e12 MB, 1 ZB = ~1.13e15 MB, 1 YB = ~1.16e18 MB
+  if (maxMB >= 1.16e18) return { unit: 'YB/s', fmt: v => formatSpeed(v * 1048576) };
+  if (maxMB >= 1.13e15) return { unit: 'ZB/s', fmt: v => formatSpeed(v * 1048576) };
+  if (maxMB >= 1.10e12) return { unit: 'EB/s', fmt: v => formatSpeed(v * 1048576) };
+  if (maxMB >= 1.07e9)  return { unit: 'PB/s', fmt: v => formatSpeed(v * 1048576) };
+  if (maxMB >= 1.05e6)  return { unit: 'TB/s', fmt: v => formatSpeed(v * 1048576) };
+  if (maxMB >= 1024)    return { unit: 'GB/s', fmt: v => formatSpeed(v * 1048576) };
+  if (maxMB >= 1)       return { unit: 'MB/s', fmt: v => formatSpeed(v * 1048576) };
   return { unit: 'KB/s', fmt: v => formatSpeed(v * 1048576) };
 }
 
 function getGbScale(maxGB: number): { unit: string; fmt: (v: number) => string } {
-  if (maxGB >= 1e9)  return { unit: 'EB', fmt: v => formatBytes(v * 1073741824) };
-  if (maxGB >= 1e6)  return { unit: 'PB', fmt: v => formatBytes(v * 1073741824) };
-  if (maxGB >= 1000) return { unit: 'TB', fmt: v => formatBytes(v * 1073741824) };
+  // 1 TB = 1024 GB, 1 PB = ~1.05e6 GB, 1 EB = ~1.07e9 GB, 1 ZB = ~1.10e12 GB, 1 YB = ~1.13e15 GB
+  if (maxGB >= 1.13e15) return { unit: 'YB', fmt: v => formatBytes(v * 1073741824) };
+  if (maxGB >= 1.10e12) return { unit: 'ZB', fmt: v => formatBytes(v * 1073741824) };
+  if (maxGB >= 1.07e9)  return { unit: 'EB', fmt: v => formatBytes(v * 1073741824) };
+  if (maxGB >= 1.05e6)  return { unit: 'PB', fmt: v => formatBytes(v * 1073741824) };
+  if (maxGB >= 1024)    return { unit: 'TB', fmt: v => formatBytes(v * 1073741824) };
   return { unit: 'GB', fmt: v => formatBytes(v * 1073741824) };
 }
 
@@ -196,12 +203,8 @@ function fmtGrowthRate(diffGb: number, timeSec: number): string {
 }
 
 function fmtRateGbDay(gbPerDay: number): string {
-  if (gbPerDay >= 1e9)  return `${(gbPerDay / 1073741824).toFixed(1)} PB/day`;
-  if (gbPerDay >= 1e6)  return `${(gbPerDay / 1048576).toFixed(1)} TB/day`;
-  if (gbPerDay >= 1000) return `${(gbPerDay / 1024).toFixed(1)} TB/day`;
-  if (gbPerDay >= 1)    return `${gbPerDay.toFixed(2)} GB/day`;
-  if (gbPerDay >= 0.001) return `${(gbPerDay * 1024).toFixed(1)} MB/day`;
-  return '< 1 MB/day';
+  if (!gbPerDay || gbPerDay < 0.001) return '< 1 MB/day';
+  return `${formatBytes(gbPerDay * 1_073_741_824)}/day`;
 }
 
 function getIntervalLabel(iv: Interval): string {

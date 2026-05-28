@@ -654,6 +654,216 @@ interface ImportConfig {
   import_on_startup: boolean;
   enabled: boolean;
   bind_mounts: Array<{ source: string; target: string }>;
+  dataset_keys: Array<{ dataset: string; key_file: string }>;
+}
+
+/* ── Auto-Mount Config Modal (per-pool) ─────────────────────────────────────── */
+function AutoMountModal({ poolName, onClose, onSuccess }: { poolName: string; onClose: () => void; onSuccess: () => void }) {
+  const { notify } = useNotifications();
+  const [loading, setLoading]         = useState(true);
+  const [existing, setExisting]       = useState<ImportConfig | null>(null);
+  const [enabled, setEnabled]         = useState(true);
+  const [onStartup, setOnStartup]     = useState(true);
+  const [encrypted, setEncrypted]     = useState(false);
+  const [keyFile, setKeyFile]         = useState('');
+  const [datasetKeys, setDatasetKeys] = useState<Array<{ dataset: string; key_file: string }>>([]);
+  const [bindMounts, setBindMounts]   = useState<Array<{ source: string; target: string }>>([]);
+  const [saving, setSaving]           = useState(false);
+  const [running, setRunning]         = useState(false);
+  const [error, setError]             = useState('');
+
+  useEffect(() => {
+    api.getImportConfigs()
+      .then(res => {
+        const found = (res.configs || []).find((c: ImportConfig) => c.name === poolName);
+        if (found) {
+          setExisting(found);
+          setEnabled(found.enabled);
+          setOnStartup(found.import_on_startup);
+          setEncrypted(found.encrypted);
+          setKeyFile(found.key_file || '');
+          setDatasetKeys(found.dataset_keys?.map(d => ({ ...d })) || []);
+          setBindMounts(found.bind_mounts?.map(b => ({ ...b })) || []);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [poolName]);
+
+  const handleSave = async () => {
+    setSaving(true); setError('');
+    const payload: ImportConfig = {
+      name: poolName,
+      encrypted,
+      key_file: encrypted && keyFile.trim() ? keyFile.trim() : undefined,
+      import_on_startup: onStartup,
+      enabled,
+      bind_mounts: bindMounts.filter(b => b.source.trim() && b.target.trim()),
+      dataset_keys: datasetKeys.filter(d => d.dataset.trim() && d.key_file.trim()),
+    };
+    try {
+      if (existing) await api.updateImportConfig(poolName, payload);
+      else          await api.saveImportConfig(payload);
+      notify({ type: 'success', title: 'Mount Config Saved', message: `Auto-mount config for "${poolName}" saved` });
+      onSuccess();
+    } catch (err: any) { setError(err.message || 'Save failed'); }
+    finally { setSaving(false); }
+  };
+
+  const handleRunNow = async () => {
+    setRunning(true); setError('');
+    try {
+      await api.runImportConfig(poolName);
+      notify({ type: 'success', title: 'Mount Executed', message: `Pool "${poolName}" mounted successfully` });
+      onSuccess();
+    } catch (err: any) { setError(err.message || 'Mount failed'); }
+    finally { setRunning(false); }
+  };
+
+  const toggleEl = (value: boolean, onChange: (v: boolean) => void) => (
+    <button onClick={() => onChange(!value)} style={{ width: 36, height: 20, borderRadius: 10, background: value ? 'var(--accent)' : 'var(--bg-elevated)', border: `1px solid ${value ? 'var(--accent)' : 'var(--border)'}`, position: 'relative', cursor: 'pointer', transition: 'all 0.2s', flexShrink: 0 }}>
+      <div style={{ position: 'absolute', top: 2, left: value ? 17 : 2, width: 14, height: 14, borderRadius: 7, background: '#fff', transition: 'left 0.2s' }} />
+    </button>
+  );
+
+  return (
+    <div style={S.modal.overlay} onClick={onClose}>
+      <div style={{ ...S.modal.box, maxWidth: 540, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+          <div>
+            <h3 style={S.modal.title}>Auto-Mount Config</h3>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>{poolName}</p>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
+        </div>
+
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '32px 0', justifyContent: 'center', color: 'var(--text-muted)' }}>
+            <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+            <span style={{ fontSize: 12 }}>Loading config…</span>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Toggles */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+              {[
+                { label: 'Enabled',             desc: 'Include this pool in startup mount sequence', val: enabled,   set: setEnabled },
+                { label: 'Import on startup',   desc: 'Run zpool import if pool is not yet imported', val: onStartup, set: setOnStartup },
+                { label: 'Encrypted dataset',   desc: 'Load encryption keys before mounting',          val: encrypted, set: setEncrypted },
+              ].map(({ label, desc, val, set }, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderBottom: i < 2 ? '1px solid var(--border)' : 'none' }}>
+                  <div>
+                    <div style={{ fontSize: 13, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)' }}>{label}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', marginTop: 2 }}>{desc}</div>
+                  </div>
+                  {toggleEl(val, set)}
+                </div>
+              ))}
+            </div>
+
+            {/* Pool key file */}
+            {encrypted && (
+              <div>
+                <label style={S.modal.label}>Pool key file path</label>
+                <input style={{ ...S.modal.input, fontFamily: 'var(--font-mono)' }} type="text" placeholder="/root/pool.key" value={keyFile} onChange={e => setKeyFile(e.target.value)} />
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>Loaded with: zfs load-key -L file://…</div>
+              </div>
+            )}
+
+            {/* Dataset keys */}
+            {encrypted && (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <label style={{ ...S.modal.label, marginBottom: 0 }}>Dataset key files</label>
+                  <button className="btn btn-secondary" style={{ padding: '3px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
+                    onClick={() => setDatasetKeys(d => [...d, { dataset: `${poolName}/`, key_file: '' }])}>
+                    <Plus size={11} /> Add Dataset
+                  </button>
+                </div>
+                {datasetKeys.length === 0 ? (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>No per-dataset keys configured</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {datasetKeys.map((dk, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <input style={{ ...S.modal.input, flex: 1.2, fontFamily: 'var(--font-mono)', fontSize: 11 }} placeholder={`${poolName}/dataset`} value={dk.dataset} onChange={e => setDatasetKeys(d => d.map((v, j) => j === i ? { ...v, dataset: e.target.value } : v))} />
+                        <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>→</span>
+                        <input style={{ ...S.modal.input, flex: 1, fontFamily: 'var(--font-mono)', fontSize: 11 }} placeholder="/root/dataset.key" value={dk.key_file} onChange={e => setDatasetKeys(d => d.map((v, j) => j === i ? { ...v, key_file: e.target.value } : v))} />
+                        <button onClick={() => setDatasetKeys(d => d.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', padding: 4 }}>
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Bind mounts */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <label style={{ ...S.modal.label, marginBottom: 0 }}>Bind mounts (mount --rbind)</label>
+                <button className="btn btn-secondary" style={{ padding: '3px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
+                  onClick={() => setBindMounts(b => [...b, { source: '', target: '' }])}>
+                  <Plus size={11} /> Add
+                </button>
+              </div>
+              {bindMounts.length === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>No bind mounts configured</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {bindMounts.map((bm, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <input style={{ ...S.modal.input, flex: 1, fontFamily: 'var(--font-mono)', fontSize: 11 }} placeholder="source" value={bm.source} onChange={e => setBindMounts(b => b.map((v, j) => j === i ? { ...v, source: e.target.value } : v))} />
+                      <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>→</span>
+                      <input style={{ ...S.modal.input, flex: 1, fontFamily: 'var(--font-mono)', fontSize: 11 }} placeholder="target" value={bm.target} onChange={e => setBindMounts(b => b.map((v, j) => j === i ? { ...v, target: e.target.value } : v))} />
+                      <button onClick={() => setBindMounts(b => b.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', padding: 4 }}>
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Script preview */}
+            <div style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 14px' }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Script preview</div>
+              <pre style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+{`#!/bin/bash
+# zpool import if not already imported
+if ! zpool list "${poolName}" >/dev/null 2>&1; then
+  zpool import "${poolName}"
+fi
+${encrypted && keyFile ? `\n# Load pool encryption key\nzfs load-key -L file://${keyFile} "${poolName}"` : ''}${datasetKeys.filter(d => d.dataset && d.key_file).map(d => `\nzfs load-key -L file://${d.key_file} "${d.dataset}"`).join('')}${encrypted || datasetKeys.length > 0 ? '\n' : ''}
+# Mount all datasets
+zfs mount -a
+${bindMounts.filter(b => b.source && b.target).map(b => `\n# Bind mount\nmkdir -p "${b.target}"\nmount --rbind "${b.source}" "${b.target}"`).join('')}`}
+              </pre>
+            </div>
+
+            {error && (
+              <div style={{ padding: '10px 14px', background: 'var(--danger-dim)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--danger)' }}>{error}</div>
+            )}
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-secondary" onClick={onClose} style={{ flex: 1 }}>Cancel</button>
+              {existing && (
+                <button className="btn btn-secondary" onClick={handleRunNow} disabled={running} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                  {running ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={13} />}
+                  {running ? 'Mounting…' : 'Run Now'}
+                </button>
+              )}
+              <button className="btn btn-primary" onClick={handleSave} disabled={saving} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                {saving ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={13} />}
+                {saving ? 'Saving…' : 'Save Config'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function ImportPoolModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
@@ -729,6 +939,7 @@ function ImportPoolModal({ onClose, onSuccess }: { onClose: () => void; onSucces
       key_file: cfgEncrypted && cfgKeyFile.trim() ? cfgKeyFile.trim() : undefined,
       import_on_startup: cfgOnStartup, enabled: cfgEnabled,
       bind_mounts: cfgBindMounts.filter(b => b.source.trim() && b.target.trim()),
+      dataset_keys: [],
     };
     try {
       if (editingConfig) await api.updateImportConfig(editingConfig.name, payload);
@@ -2244,8 +2455,9 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
   const [replaceTarget, setReplaceTarget] = useState<{ pool: string; preselectedDisk?: string } | null>(null);
   const [smartTarget,   setSmartTarget]   = useState<string | null>(null);
   const [poolVdevs,     setPoolVdevs]     = useState<Record<string, any[]>>({});
-  const [settingsOpenFor,  setSettingsOpenFor]  = useState<string | null>(null);
-  const [featuresOpenFor,  setFeaturesOpenFor]  = useState<string | null>(null);
+  const [settingsOpenFor,    setSettingsOpenFor]    = useState<string | null>(null);
+  const [featuresOpenFor,    setFeaturesOpenFor]    = useState<string | null>(null);
+  const [autoMountOpenFor,   setAutoMountOpenFor]   = useState<string | null>(null);
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
@@ -2524,6 +2736,13 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
         />
       )}
       {smartTarget && <SmartModal device={smartTarget} onClose={() => setSmartTarget(null)} />}
+      {autoMountOpenFor && (
+        <AutoMountModal
+          poolName={autoMountOpenFor}
+          onClose={() => setAutoMountOpenFor(null)}
+          onSuccess={() => { setAutoMountOpenFor(null); }}
+        />
+      )}
       {settingsOpenFor && (
         <SettingsPopout
           poolName={settingsOpenFor}
@@ -2627,10 +2846,13 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                       {state === 'success' && <CheckCircle size={13} />}
                       {state === 'error'   && <XCircle size={13} />}
                       {state === 'idle'    && <Activity size={13} />}
-                      {state === 'running' ? (progress?.isResilver ? 'Replacing…' : 'Scrubbing…') : state === 'success' ? 'Done' : state === 'error' ? 'Failed' : 'Scrub'}
+                      {state === 'running' ? 'Scrubbing…' : state === 'success' ? 'Done' : state === 'error' ? 'Failed' : 'Scrub'}
                     </button>
                     <button className="btn btn-secondary" onClick={() => setReplaceTarget({ pool: pool.name })} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <ArrowLeftRight size={13} /> Replace Disk
+                    </button>
+                    <button className="btn btn-secondary" onClick={() => setAutoMountOpenFor(pool.name)} style={{ display: 'flex', alignItems: 'center', gap: 6 }} title="Auto-mount / import config">
+                      <Download size={13} /> Mount Config
                     </button>
                     <button
                       className="btn btn-secondary"

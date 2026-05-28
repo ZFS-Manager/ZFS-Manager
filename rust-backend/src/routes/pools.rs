@@ -17,6 +17,12 @@ pub struct BindMount {
     pub target: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DatasetKey {
+    pub dataset: String,
+    pub key_file: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoolImportConfig {
     pub name: String,
@@ -30,6 +36,8 @@ pub struct PoolImportConfig {
     pub enabled: bool,
     #[serde(default)]
     pub bind_mounts: Vec<BindMount>,
+    #[serde(default)]
+    pub dataset_keys: Vec<DatasetKey>,
 }
 
 fn default_true() -> bool { true }
@@ -1108,13 +1116,22 @@ pub async fn execute_pool_import(config: &PoolImportConfig) -> Result<(), ApiErr
         info!("Pool '{}' already imported, skipping", config.name);
     }
 
-    // Load encryption key if needed
+    // Load pool-level encryption key if needed
     if config.encrypted {
         if let Some(ref kf) = config.key_file {
             let key_loc = format!("file://{}", kf);
             executor::zfs(&["load-key", "-L", &key_loc, &config.name]).await
                 .unwrap_or_else(|e| { warn!("load-key failed for '{}': {:?}", config.name, e); String::new() });
         }
+    }
+
+    // Load per-dataset encryption keys (e.g. pool/nas, pool/s3)
+    for dk in &config.dataset_keys {
+        if dk.dataset.is_empty() || dk.key_file.is_empty() { continue; }
+        let key_loc = format!("file://{}", dk.key_file);
+        executor::zfs(&["load-key", "-L", &key_loc, &dk.dataset]).await
+            .unwrap_or_else(|e| { warn!("load-key failed for dataset '{}': {:?}", dk.dataset, e); String::new() });
+        info!("Loaded key for dataset '{}'", dk.dataset);
     }
 
     // Mount all datasets
