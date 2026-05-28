@@ -2768,23 +2768,25 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
       )}
 
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>
             {pools.length} pool{pools.length !== 1 ? 's' : ''}
           </span>
           {zfsVersion && (
-            <span className="badge">{zfsVersion.replace('zfs-', '')}</span>
+            <span className="badge" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>
+              {zfsVersion.replace('zfs-', '')}
+            </span>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
           <button className="btn btn-secondary" onClick={onRefresh} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <RefreshCw size={13} /> Refresh
           </button>
           <button className="btn btn-secondary" onClick={() => setShowImport(true)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <Download size={13} /> Import
           </button>
-          <button className="btn btn-primary" onClick={() => setShowCreate(true)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button className="btn btn-primary" onClick={() => setShowCreate(true)} style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
             <Plus size={13} /> Create Pool
           </button>
         </div>
@@ -3071,7 +3073,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
               {/* Expanded status */}
               {isExpanded && (
                 <div style={{ padding: '20px 24px', borderTop: '1px solid var(--border)', background: 'rgba(0,0,0,0.2)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
                     <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', fontFamily: 'var(--font-mono)' }}>
                       zpool status {pool.name}
                     </span>
@@ -3086,9 +3088,32 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                       <span style={{ fontSize: 12 }}>Fetching status…</span>
                     </div>
                   ) : (
-                    <pre style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
-                      {poolStatus[pool.name] || 'No data available'}
-                    </pre>
+                    <div style={{
+                      fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.8,
+                      background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius)', padding: '12px 14px',
+                      overflowX: 'auto',
+                    }}>
+                      {(poolStatus[pool.name] || 'No data available').split('\n').map((line, li) => {
+                        const stateColor = line.match(/\bONLINE\b/) ? 'var(--success)'
+                          : line.match(/\bDEGRADED\b/) ? '#f59e0b'
+                          : line.match(/\bFAULTED\b|\bUNAVAIL\b|\bREMOVED\b|\bOFFLINE\b/) ? 'var(--danger)'
+                          : undefined;
+                        const labelMatch = line.match(/^(\s*\w[\w ]*?:\s*)(.*)/);
+                        return (
+                          <div key={li} style={{ display: 'flex', gap: 0, color: stateColor || 'var(--text-secondary)', minHeight: '1.4em' }}>
+                            {labelMatch ? (
+                              <>
+                                <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>{labelMatch[1]}</span>
+                                <span style={{ color: stateColor || 'var(--text-primary)' }}>{labelMatch[2]}</span>
+                              </>
+                            ) : (
+                              <span style={{ whiteSpace: 'pre' }}>{line || ' '}</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
               )}

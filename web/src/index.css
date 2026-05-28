@@ -426,8 +426,8 @@ html, body, #root {
     padding: 0 8px !important; font-size: 11px !important;
   }
 
-  /* Settings: stack sidebar + content vertically */
-  .settings-layout { flex-direction: column !important; }
+  /* Settings: stack sidebar + content vertically, stretch children to full width */
+  .settings-layout { flex-direction: column !important; align-items: stretch !important; }
   .settings-sidebar { width: 100% !important; flex-shrink: 1 !important; }
 
   /* Settings tab buttons – compact, no min-height override */

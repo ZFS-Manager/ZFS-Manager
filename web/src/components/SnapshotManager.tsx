@@ -456,12 +456,12 @@ export default function SnapshotManager({ snapshots, datasets, pools = [], onRef
           {multiPool && onSelectPool && (
             <PoolSelector pools={pools} selected={effectivePool} onSelect={onSelectPool} />
           )}
-          <div style={{ position: 'relative', flex: isMobile ? 1 : undefined, minWidth: 0 }}>
+          <div style={{ position: 'relative', flex: isMobile ? '1 1 auto' : undefined, minWidth: isMobile ? 80 : 160 }}>
             <Search size={13} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
             <input
               type="text" className="input" placeholder="Filter…"
               value={search} onChange={e => setSearch(e.target.value)}
-              style={{ paddingLeft: 34, width: isMobile ? '100%' : 200 }}
+              style={{ paddingLeft: 34, width: '100%' }}
             />
           </div>
           <button
