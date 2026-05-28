@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Key, Lock, Plus, Trash2, Eye, EyeOff, CheckCircle, XCircle, Copy, AlertTriangle, Monitor, Database, Shield, Zap } from 'lucide-react';
 import { api } from '../api';
 import PageTransition from './PageTransition';
+import { useIsMobile } from '../hooks/useBreakpoint';
 
 interface SettingsProps {
   onPasswordChanged?: () => void;
@@ -393,6 +394,7 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode; desc: string }[] = 
 
 /* ── Main Settings page ── */
 export default function Settings({ onPasswordChanged, pools = [], selectedPool, onSelectPool }: SettingsProps) {
+  const isMobile = useIsMobile();
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>('security');
 
@@ -426,17 +428,30 @@ export default function Settings({ onPasswordChanged, pools = [], selectedPool, 
       </div>
 
       {/* Layout: sidebar + content */}
-      <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
+      <div className="settings-layout" style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
 
-        {/* Sidebar nav */}
-        <div style={{ width: 220, flexShrink: 0, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+        {/* Sidebar nav — horizontal tab bar on mobile, vertical sidebar on desktop */}
+        <div
+          className="settings-sidebar"
+          style={isMobile
+            ? { width: '100%', flexShrink: 1, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden', display: 'flex' }
+            : { width: 220, flexShrink: 0, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }
+          }
+        >
           {visibleTabs.map(tab => {
             const active = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                style={{
+                style={isMobile ? {
+                  flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4,
+                  padding: '12px 8px', textAlign: 'center',
+                  background: active ? 'var(--accent-dim)' : 'transparent',
+                  border: 'none',
+                  borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+                  cursor: 'pointer', transition: 'all 0.12s',
+                } : {
                   width: '100%', display: 'flex', alignItems: 'center', gap: 12,
                   padding: '14px 16px', textAlign: 'left',
                   background: active ? 'var(--accent-dim)' : 'transparent',
@@ -447,17 +462,21 @@ export default function Settings({ onPasswordChanged, pools = [], selectedPool, 
                 }}
               >
                 <span style={{ color: active ? 'var(--accent)' : 'var(--text-muted)', flexShrink: 0 }}>{tab.icon}</span>
-                <div>
-                  <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: active ? 600 : 400, color: active ? 'var(--accent)' : 'var(--text-primary)' }}>{tab.label}</div>
-                  <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{tab.desc}</div>
-                </div>
+                {isMobile ? (
+                  <span style={{ fontFamily: 'var(--font-ui)', fontSize: 10, fontWeight: active ? 600 : 400, color: active ? 'var(--accent)' : 'var(--text-muted)' }}>{tab.label}</span>
+                ) : (
+                  <div>
+                    <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: active ? 600 : 400, color: active ? 'var(--accent)' : 'var(--text-primary)' }}>{tab.label}</div>
+                    <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{tab.desc}</div>
+                  </div>
+                )}
               </button>
             );
           })}
         </div>
 
         {/* Content area */}
-        <div style={{ flex: 1, minWidth: 0, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 28 }}>
+        <div style={{ flex: 1, minWidth: 0, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: isMobile ? 16 : 28 }}>
           {/* Section title */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24, paddingBottom: 16, borderBottom: '1px solid var(--border)' }}>
             <div style={{ width: 36, height: 36, borderRadius: 'var(--radius)', background: 'rgba(99,179,237,0.1)', border: '1px solid rgba(99,179,237,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent)' }}>

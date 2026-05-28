@@ -14,6 +14,7 @@ import { useLayout } from '../hooks/useLayout';
 import WidgetShell from './WidgetShell';
 import PageTransition from './PageTransition';
 import PhysicalDisksTable from './PhysicalDisksTable';
+import { useIsMobile } from '../hooks/useBreakpoint';
 
 interface DashboardProps {
   pools: ZFSPool[];
@@ -774,6 +775,7 @@ export default function Dashboard({
   selectedPool,
   onSelectPool,
 }: DashboardProps) {
+  const isMobile = useIsMobile();
   const { widgets, loaded, setVisible, reorder, toast } = useLayout('dashboard');
   const [editMode, setEditMode] = useState(false);
   const [dragFrom, setDragFrom] = useState<string | null>(null);
@@ -1044,7 +1046,7 @@ export default function Dashboard({
             <div style={{ padding: '16px 20px' }}>
               {ioData.length > 1 ? (
                 <>
-                  <div style={{ height: 180, marginLeft: 8, overflow: 'visible' }}>
+                  <div style={{ height: isMobile ? 140 : 180, marginLeft: isMobile ? 0 : 8, overflow: 'visible' }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={ioData} margin={CHART_MARGIN}>
                         <CartesianGrid {...GRID_PROPS} />
@@ -1111,7 +1113,7 @@ export default function Dashboard({
             <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>
               Storage Pools
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: displayPools.length === 1 ? '1fr' : displayPools.length === 2 || displayPools.length === 4 ? '1fr 1fr' : 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : displayPools.length === 1 ? '1fr' : displayPools.length === 2 || displayPools.length === 4 ? '1fr 1fr' : 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
               {displayPools.map((pool, i) => <PoolCard key={i} pool={pool} fillInfo={fillByPool[pool.name]} />)}
             </div>
           </div>
@@ -1293,17 +1295,19 @@ export default function Dashboard({
       )}
 
       {/* Toolbar — pool selector (right) + Edit Layout button */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
         {multiPool && onSelectPool && (
           <PoolSelector pools={pools} selected={effectivePoolName} onSelect={onSelectPool} />
         )}
-        <button
-          onClick={() => setEditMode(m => !m)}
-          className="btn btn-secondary"
-          style={{ gap: 6 }}
-        >
-          {editMode ? <><Check size={13} /> Done</> : <><Edit2 size={13} /> Edit Layout</>}
-        </button>
+        {!isMobile && (
+          <button
+            onClick={() => setEditMode(m => !m)}
+            className="btn btn-secondary"
+            style={{ gap: 6 }}
+          >
+            {editMode ? <><Check size={13} /> Done</> : <><Edit2 size={13} /> Edit Layout</>}
+          </button>
+        )}
       </div>
 
       {/* Capacity banners */}

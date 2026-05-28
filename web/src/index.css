@@ -313,6 +313,33 @@ html, body, #root {
   .two-col { grid-template-columns: 1fr; }
 }
 
+/* ── Mobile modal: bottom sheet ──────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
+}
+.modal-box {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 24px; width: 100%;
+  max-height: 90vh; overflow-y: auto;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+}
+@media (max-width: 767px) {
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal-box {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    max-width: 100% !important;
+    width: 100%;
+    max-height: 88vh;
+    padding: 20px 16px;
+    border-bottom: none;
+  }
+}
+
 /* Dashboard 5-column stats row: 5 → 2 → 1 */
 .stats-row-5 {
   display: grid;
@@ -373,12 +400,6 @@ html, body, #root {
   /* Input full-width */
   .input { font-size: 12px; }
 
-  /* Modals: full screen on mobile */
-  [data-modal] {
-    padding: 0 !important;
-    align-items: flex-end !important;
-  }
-
   /* Toast: full width on mobile */
   .toast-container {
     left: 12px !important;
@@ -396,6 +417,28 @@ html, body, #root {
     width: 100vw !important;
     border-radius: 0 !important;
   }
+
+  /* Pool card action buttons: wrap on mobile */
+  .pool-actions { flex-wrap: wrap !important; }
+  .pool-action-btn { flex: 1 1 auto; min-width: 0; }
+
+  /* Settings: stack sidebar + content vertically */
+  .settings-layout { flex-direction: column !important; }
+  .settings-sidebar { width: 100% !important; flex-shrink: 1 !important; }
+  .settings-sidebar button { border-bottom: 1px solid var(--border); }
+
+  /* Reduce excessive padding inside panels on mobile */
+  .panel-body { padding: 12px !important; }
+
+  /* Stat cards: compact on mobile */
+  .stat-card { padding: 14px 12px !important; }
+
+  /* Chart containers: reduce height on mobile */
+  .chart-container-md { height: 160px !important; }
+  .chart-container-lg { height: 200px !important; }
+
+  /* Performance gauge row: smaller on mobile */
+  .gauge-circle { width: 80px !important; height: 80px !important; }
 }
 
 /* ── Tablet (768px – 1023px) ─────────────────────────────────────────────────── */

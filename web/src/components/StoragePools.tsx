@@ -10,6 +10,7 @@ import { ZFSPool } from '../types';
 import { api, formatBytes } from '../api';
 import { useNotifications } from '../context/NotificationContext';
 import PageTransition from './PageTransition';
+import { useIsMobile } from '../hooks/useBreakpoint';
 
 interface StoragePoolsProps {
   pools: ZFSPool[];
@@ -126,8 +127,8 @@ function DevicePicker({ onSelect, onClose, usedDisks = new Set<string>() }: {
   }, []);
 
   return (
-    <div style={{ ...S.modal.overlay, zIndex: 300 }} onClick={onClose}>
-      <div style={{ ...S.modal.box, maxWidth: 440 }} onClick={e => e.stopPropagation()}>
+    <div className="modal-overlay" style={{ ...S.modal.overlay, zIndex: 300 }} onClick={onClose}>
+      <div className="modal-box" style={{ ...S.modal.box, maxWidth: 440 }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
             <h4 style={S.modal.title}>Available Block Devices</h4>
@@ -238,8 +239,8 @@ function DiskPicker({ onSelect, onClose, selected, addedDisks = [] }: {
   };
 
   return (
-    <div style={{ ...S.modal.overlay, zIndex: 300 }} onClick={onClose}>
-      <div style={{ ...S.modal.box, maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+    <div className="modal-overlay" style={{ ...S.modal.overlay, zIndex: 300 }} onClick={onClose}>
+      <div className="modal-box" style={{ ...S.modal.box, maxWidth: 480 }} onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
           <div>
@@ -436,8 +437,8 @@ function SmartModal({ device, onClose }: { device: string; onClose: () => void }
   const capacityBytes: number | null = data?.user_capacity?.bytes ?? null;
 
   return (
-    <div style={S.modal.overlay} onClick={onClose}>
-      <div style={{ ...S.modal.box, maxWidth: 560, maxHeight: '85vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+    <div className="modal-overlay" style={S.modal.overlay} onClick={onClose}>
+      <div className="modal-box" style={{ ...S.modal.box, maxWidth: 560, maxHeight: '85vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
             <h4 style={S.modal.title}>SMART Data</h4>
@@ -553,8 +554,8 @@ function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuc
   };
 
   return (
-    <div style={S.modal.overlay} onClick={onClose}>
-      <div style={{ ...S.modal.box, maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+    <div className="modal-overlay" style={S.modal.overlay} onClick={onClose}>
+      <div className="modal-box" style={{ ...S.modal.box, maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
           <div>
             <h3 style={S.modal.title}>Replace Disk</h3>
@@ -738,8 +739,8 @@ function AutoMountModal({ poolName, onClose, onSuccess }: { poolName: string; on
   );
 
   return (
-    <div style={S.modal.overlay} onClick={onClose}>
-      <div style={{ ...S.modal.box, maxWidth: 540, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+    <div className="modal-overlay" style={S.modal.overlay} onClick={onClose}>
+      <div className="modal-box" style={{ ...S.modal.box, maxWidth: 540, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -988,8 +989,8 @@ function ImportPoolModal({ onClose, onSuccess }: { onClose: () => void; onSucces
   });
 
   return (
-    <div style={S.modal.overlay} onClick={onClose}>
-      <div style={{ ...S.modal.box, maxWidth: 560, width: '100%', maxHeight: '85vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+    <div className="modal-overlay" style={S.modal.overlay} onClick={onClose}>
+      <div className="modal-box" style={{ ...S.modal.box, maxWidth: 560, width: '100%', maxHeight: '85vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <h3 style={S.modal.title}>Import Pool</h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
@@ -1235,8 +1236,8 @@ function ExpandPoolModal({ poolName, poolVdevs, zfsVersion, onClose, onSuccess }
   };
 
   return (
-    <div style={S.modal.overlay} onClick={onClose}>
-      <div style={{ ...S.modal.box, maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+    <div className="modal-overlay" style={S.modal.overlay} onClick={onClose}>
+      <div className="modal-box" style={{ ...S.modal.box, maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
             <h3 style={S.modal.title}>Expand Pool</h3>
@@ -1545,8 +1546,8 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
   const hasPermChanges = stagedList.some(s => s.isPermanent);
 
   return (
-    <div style={S.modal.overlay} onClick={() => { if (!confirmSave) onClose(); }}>
-      <div style={{ ...S.modal.box, maxWidth: 720, padding: 0, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+    <div className="modal-overlay" style={S.modal.overlay} onClick={() => { if (!confirmSave) onClose(); }}>
+      <div className="modal-box" style={{ ...S.modal.box, maxWidth: 720, padding: 0, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
 
         {/* ── Header ───────────────────────────────────────────────────────── */}
         <div style={{ padding: '20px 24px 14px' }}>
@@ -1796,8 +1797,8 @@ function CreatePoolModal({ onClose, onSuccess, usedDisks = new Set<string>() }: 
           addedDisks={devices.filter((d, idx) => d.trim() && (pickerTarget === null || idx !== pickerTarget))}
         />
       )}
-      <div style={S.modal.overlay} onClick={onClose}>
-        <div style={{ ...S.modal.box, maxWidth: 540, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+      <div className="modal-overlay" style={S.modal.overlay} onClick={onClose}>
+        <div className="modal-box" style={{ ...S.modal.box, maxWidth: 540, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
             <h3 style={S.modal.title}>Create ZFS Pool</h3>
             <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
@@ -2455,6 +2456,7 @@ function raidColor(raidType: string): string {
 /* ── Main Component ───────────────────────────────────────────────────────────── */
 export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePoolsProps) {
   const { notify } = useNotifications();
+  const isMobile = useIsMobile();
   const [scrubState,       setScrubState]       = useState<Record<string, ScrubState>>({});
   const [scrubProgress,    setScrubProgress]    = useState<Record<string, ScrubProgress>>({});
   const [expansionProgress,setExpansionProgress] = useState<Record<string, ExpansionProgress>>({});
@@ -2821,8 +2823,8 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
             >
 
               {/* Card header */}
-              <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <div style={{ padding: isMobile ? '14px 16px' : '20px 24px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: isMobile ? 'flex-start' : 'center', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', gap: isMobile ? 12 : 0, marginBottom: 16 }}>
                   {/* Name + badges */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                     <div style={{ width: 36, height: 36, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -2845,11 +2847,12 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                   </div>
 
                   {/* Action buttons */}
-                  <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                  <div className="pool-actions" style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: isMobile ? 'wrap' : 'nowrap' }}>
                     <button
-                      className="btn btn-secondary"
+                      className="btn btn-secondary pool-action-btn"
                       onClick={() => handleScrub(pool.name)}
                       disabled={state === 'running'}
+                      title="Scrub pool"
                       style={{
                         display: 'flex', alignItems: 'center', gap: 6,
                         color: state === 'running' ? 'var(--warning)' : state === 'success' ? 'var(--success)' : state === 'error' ? 'var(--danger)' : 'var(--text-secondary)',
@@ -2860,28 +2863,29 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                       {state === 'success' && <CheckCircle size={13} />}
                       {state === 'error'   && <XCircle size={13} />}
                       {state === 'idle'    && <Activity size={13} />}
-                      {state === 'running' ? 'Scrubbing…' : state === 'success' ? 'Done' : state === 'error' ? 'Failed' : 'Scrub'}
+                      {!isMobile && (state === 'running' ? 'Scrubbing…' : state === 'success' ? 'Done' : state === 'error' ? 'Failed' : 'Scrub')}
+                      {isMobile && (state === 'running' ? 'Scrub…' : state === 'success' ? 'Done' : state === 'error' ? 'Err' : 'Scrub')}
                     </button>
-                    <button className="btn btn-secondary" onClick={() => setReplaceTarget({ pool: pool.name })} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <ArrowLeftRight size={13} /> Replace Disk
+                    <button className="btn btn-secondary pool-action-btn" onClick={() => setReplaceTarget({ pool: pool.name })} title="Replace disk" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <ArrowLeftRight size={13} /> {!isMobile && 'Replace'}
                     </button>
-                    <button className="btn btn-secondary" onClick={() => setAutoMountOpenFor(pool.name)} style={{ display: 'flex', alignItems: 'center', gap: 6 }} title="Auto-mount / import config">
-                      <Download size={13} /> Mount Config
+                    <button className="btn btn-secondary pool-action-btn" onClick={() => setAutoMountOpenFor(pool.name)} title="Auto-mount / import config" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Download size={13} /> {!isMobile && 'Mount'}
                     </button>
                     <button
-                      className="btn btn-secondary"
+                      className="btn btn-secondary pool-action-btn"
                       onClick={() => setFeaturesOpenFor(pool.name)}
                       title="Pool Features"
                       style={{ display: 'flex', alignItems: 'center', gap: 6 }}
                     >
-                      <Layers size={13} /> Features
+                      <Layers size={13} /> {!isMobile && 'Features'}
                     </button>
-                    <button className="btn btn-secondary" onClick={() => handleToggleStatus(pool.name)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <button className="btn btn-secondary pool-action-btn" onClick={() => handleToggleStatus(pool.name)} title={isExpanded ? 'Hide status' : 'Show status'} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <Info size={13} />
-                      {isExpanded ? 'Hide' : 'Status'}
+                      {!isMobile && (isExpanded ? 'Hide' : 'Status')}
                     </button>
                     <button
-                      className="btn btn-secondary"
+                      className="btn btn-secondary pool-action-btn"
                       onClick={() => setSettingsOpenFor(settingsOpenFor === pool.name ? null : pool.name)}
                       title="Pool Settings"
                       style={{ display: 'flex', alignItems: 'center', gap: 6, color: settingsOpenFor === pool.name ? 'var(--accent)' : undefined, borderColor: settingsOpenFor === pool.name ? 'var(--accent-mid)' : undefined }}

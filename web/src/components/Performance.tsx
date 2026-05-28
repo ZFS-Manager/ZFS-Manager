@@ -9,6 +9,7 @@ import { useLayout } from '../hooks/useLayout';
 import WidgetShell from './WidgetShell';
 import PageTransition from './PageTransition';
 import PhysicalDisksTable from './PhysicalDisksTable';
+import { useIsMobile } from '../hooks/useBreakpoint';
 
 interface PerformanceProps {
   stats: any[];
@@ -261,20 +262,20 @@ function GaugeCard({ label, value, unit, color, sub }: {
   label: string; value: string; unit: string; color: string; sub?: string;
 }) {
   return (
-    <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '18px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: 12 }}>
+    <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '14px 12px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, marginBottom: 8 }}>
         <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
-        <span style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
+        <span style={{ fontFamily: 'var(--font-ui)', fontSize: 10, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
           {label}
         </span>
       </div>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 32, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1, letterSpacing: '-0.03em' }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 'clamp(20px, 4vw, 30px)', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1, letterSpacing: '-0.03em' }}>
           {value}
         </div>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 6, marginTop: 4 }}>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color }}>{unit}</span>
-          {sub && <span style={{ fontFamily: 'var(--font-ui)', fontSize: 10, color: 'var(--text-muted)' }}>{sub}</span>}
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 5, marginTop: 3 }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color }}>{unit}</span>
+          {sub && <span style={{ fontFamily: 'var(--font-ui)', fontSize: 9, color: 'var(--text-muted)' }}>{sub}</span>}
         </div>
       </div>
     </div>
@@ -372,6 +373,7 @@ const WIDGET_LABELS: Record<string, string> = {
 };
 
 export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0, pools: poolsProp, selectedPool, onSelectPool }: PerformanceProps) {
+  const isMobile = useIsMobile();
   const { widgets, loaded, setVisible, reorder, toast } = useLayout('performance');
   const [editMode, setEditMode]         = useState(false);
   const [dragFrom, setDragFrom]         = useState<string | null>(null);
@@ -798,7 +800,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
                   </div>
                 }
               >
-                <div style={{ height: 240, overflow: 'visible' }}>
+                <div style={{ height: isMobile ? 170 : 240, overflow: 'visible' }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={ioChartData} margin={CHART_MARGIN}>
                       <defs>
@@ -892,8 +894,8 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
               </div>
             }
           >
-            <div style={{ height: 240 }}>
-              {loadingCapacity ? <Skeleton height={240} /> : (
+            <div style={{ height: isMobile ? 170 : 240 }}>
+              {loadingCapacity ? <Skeleton height={isMobile ? 170 : 240} /> : (
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={capDisplayData} margin={CHART_MARGIN}>
                     <CartesianGrid {...GRID_PROPS} />
