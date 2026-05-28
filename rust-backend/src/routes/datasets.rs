@@ -7,14 +7,16 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::{error::ApiError, executor, state::AppState};
-use tracing::{error, info};
+use tracing::{info, warn};
 
 struct RewriteInfo {
     total_bytes: u64,
+    processed_bytes: Arc<AtomicU64>,
     started_at_secs: u64,
 }
 
@@ -283,51 +285,109 @@ async fn rewrite_dataset(
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0);
 
+    let processed = Arc::new(AtomicU64::new(0));
+
     let mut lock = active_rewrites().lock().await;
     if lock.contains_key(&body.name) {
         return Ok(Json(json!({ "message": format!("Rewrite already running for '{}'", body.name) })));
     }
-    lock.insert(body.name.clone(), RewriteInfo { total_bytes, started_at_secs: now_secs() });
+    lock.insert(body.name.clone(), RewriteInfo {
+        total_bytes,
+        processed_bytes: Arc::clone(&processed),
+        started_at_secs: now_secs(),
+    });
     drop(lock);
 
-    let ds_name = body.name.clone();
-    let state_clone = state.clone();
+    let ds_name      = body.name.clone();
+    let state_clone  = state.clone();
+    let mountpoint_c = mountpoint.clone();
 
-    // Spawn background task — re-apply dataset properties using `zfs set`
+    // Spawn background task: re-apply compression property then rewrite every block
+    // on disk by reading and writing each file in-place (copy-on-write rewrites with
+    // current compression settings). Uses nsenter to access the host mount namespace.
     tokio::spawn(async move {
-        // Get the current compression value and re-apply it so new blocks are written
-        // with the correct algorithm. `zfs rewrite` does not exist in standard ZFS.
+        // 1. Re-apply current compression so future writes use it
         let comp = executor::zfs(&["get", "-H", "-p", "-o", "value", "compression", &ds_name])
             .await
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty() && s != "-")
             .unwrap_or_else(|| "on".to_string());
+        let _ = executor::zfs(&["set", &format!("compression={}", comp), &ds_name]).await;
 
-        let kv = format!("compression={}", comp);
-        let final_res = executor::zfs(&["set", &kv, &ds_name]).await;
+        info!("Dataset rewrite starting for '{}' at '{}'", ds_name, mountpoint_c);
 
-        match final_res {
-            Ok(_) => {
-                info!("ZFS property rewrite completed for '{}'", ds_name);
-                crate::routes::notifications::trigger_rules_for_event(
-                    &state_clone,
-                    "dataset_rewrite_success",
-                    &format!("Dataset rewrite completed successfully for '{}'", ds_name)
-                ).await;
+        // 2. Enumerate all regular files via find (host namespace)
+        let find_out = tokio::process::Command::new("nsenter")
+            .args(["-t", "1", "-m", "--", "find", &mountpoint_c, "-type", "f", "-print0"])
+            .output()
+            .await;
+
+        let files_raw = match find_out {
+            Ok(out) if out.status.success() => out.stdout,
+            _ => {
+                // Fallback: try without nsenter (dataset visible in container namespace)
+                tokio::process::Command::new("find")
+                    .args([&mountpoint_c, "-type", "f", "-print0"])
+                    .output()
+                    .await
+                    .map(|o| o.stdout)
+                    .unwrap_or_default()
             }
-            Err(e) => {
-                error!("ZFS rewrite failed for '{}': {:?}", ds_name, e);
-                crate::routes::notifications::trigger_rules_for_event(
-                    &state_clone,
-                    "dataset_rewrite_failed",
-                    &format!("Dataset rewrite failed for '{}': {:?}", ds_name, e)
-                ).await;
+        };
+
+        // 3. For each file, dd it in-place so ZFS rewrites blocks with new compression
+        let files: Vec<&[u8]> = files_raw.split(|&b| b == 0)
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let total_files = files.len();
+        info!("Dataset rewrite '{}': found {} files to process", ds_name, total_files);
+
+        let mut done = 0usize;
+        for file_bytes in &files {
+            let path = match std::str::from_utf8(file_bytes) {
+                Ok(s) => s,
+                Err(_) => { done += 1; continue; }
+            };
+
+            // Get file size for progress tracking
+            let size: u64 = tokio::process::Command::new("nsenter")
+                .args(["-t", "1", "-m", "--", "stat", "-c", "%s", path])
+                .output().await
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(0);
+
+            // dd if=<file> of=<file> conv=notrunc — reads+rewrites every block in-place
+            let dd_res = tokio::process::Command::new("nsenter")
+                .args(["-t", "1", "-m", "--", "dd",
+                    &format!("if={}", path),
+                    &format!("of={}", path),
+                    "conv=notrunc", "bs=131072", "status=none"])
+                .output().await;
+
+            if let Err(e) = dd_res {
+                warn!("Dataset rewrite '{}': dd failed for '{}': {}", ds_name, path, e);
+            }
+
+            processed.fetch_add(size, Ordering::Relaxed);
+            done += 1;
+
+            if done % 100 == 0 {
+                info!("Dataset rewrite '{}': {}/{} files done", ds_name, done, total_files);
             }
         }
 
-        let mut lock = active_rewrites().lock().await;
-        lock.remove(&ds_name);
+        info!("Dataset rewrite completed for '{}' ({} files)", ds_name, total_files);
+        crate::routes::notifications::trigger_rules_for_event(
+            &state_clone,
+            "dataset_rewrite_success",
+            &format!("Dataset rewrite completed for '{}' ({} files)", ds_name, total_files)
+        ).await;
+
+        active_rewrites().lock().await.remove(&ds_name);
     });
 
     Ok(Json(json!({ "message": format!("Rewrite started in background for '{}'", body.name) })))
@@ -357,11 +417,13 @@ async fn list_active_rewrites() -> Result<Json<Value>, ApiError> {
     let active: Vec<Value> = lock.iter().map(|(name, info)| {
         let pool = name.split('/').next().unwrap_or(name);
         let elapsed_secs = now.saturating_sub(info.started_at_secs);
+        let processed = info.processed_bytes.load(Ordering::Relaxed);
         json!({
-            "name":         name,
-            "pool":         pool,
-            "total_bytes":  info.total_bytes,
-            "elapsed_secs": elapsed_secs,
+            "name":            name,
+            "pool":            pool,
+            "total_bytes":     info.total_bytes,
+            "processed_bytes": processed,
+            "elapsed_secs":    elapsed_secs,
         })
     }).collect();
 

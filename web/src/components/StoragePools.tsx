@@ -1138,6 +1138,7 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
   const [confirmSave,  setConfirmSave]  = useState(false);
   const [saving,       setSaving]       = useState(false);
   const [hovered,      setHovered]      = useState<FeatureEntry | null>(null);
+  const [featureSearch, setFeatureSearch] = useState('');
 
   useEffect(() => {
     api.getPoolFeatures(poolName)
@@ -1187,9 +1188,11 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
 
   const statusColor = (v: string) => v === 'active' ? 'var(--success)' : v === 'enabled' ? 'var(--accent)' : 'var(--text-muted)';
 
-  const active   = features.filter(f => f.value === 'active').sort((a,b) => a.name.localeCompare(b.name));
-  const enabled  = features.filter(f => f.value === 'enabled').sort((a,b) => a.name.localeCompare(b.name));
-  const disabled = features.filter(f => f.value === 'disabled').sort((a,b) => a.name.localeCompare(b.name));
+  const fq = featureSearch.trim().toLowerCase();
+  const filteredFeatures = fq ? features.filter(f => f.name.toLowerCase().includes(fq)) : features;
+  const active   = filteredFeatures.filter(f => f.value === 'active').sort((a,b) => a.name.localeCompare(b.name));
+  const enabled  = filteredFeatures.filter(f => f.value === 'enabled').sort((a,b) => a.name.localeCompare(b.name));
+  const disabled = filteredFeatures.filter(f => f.value === 'disabled').sort((a,b) => a.name.localeCompare(b.name));
 
   const renderSection = (label: string, items: FeatureEntry[], dot: string) => {
     if (items.length === 0) return null;
@@ -1282,11 +1285,29 @@ function FeaturesModal({ poolName, onClose }: { poolName: string; onClose: () =>
           </div>
 
           {/* General info callout */}
-          <div style={{ padding: '10px 14px', background: 'rgba(99,179,237,0.06)', border: '1px solid rgba(99,179,237,0.18)', borderRadius: 'var(--radius)', display: 'flex', gap: 10 }}>
+          <div style={{ padding: '10px 14px', background: 'rgba(99,179,237,0.06)', border: '1px solid rgba(99,179,237,0.18)', borderRadius: 'var(--radius)', display: 'flex', gap: 10, marginBottom: 12 }}>
             <Info size={13} style={{ color: 'var(--accent)', flexShrink: 0, marginTop: 1 }} />
             <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>
               ZFS features are <strong style={{ color: 'var(--text-primary)' }}>permanent on-disk format extensions</strong>. Once a feature becomes <span style={{ color: 'var(--success)' }}>active</span> (data uses it), it cannot be removed. Toggle as many features as you want, then click <strong>Save Changes</strong>.
             </p>
+          </div>
+
+          {/* Feature search */}
+          <div style={{ position: 'relative' }}>
+            <Search size={12} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+            <input
+              type="text"
+              placeholder="Search features…"
+              value={featureSearch}
+              onChange={e => setFeatureSearch(e.target.value)}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                paddingLeft: 28, paddingRight: 10, paddingTop: 6, paddingBottom: 6,
+                background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                borderRadius: 'var(--radius)', color: 'var(--text-primary)',
+                fontSize: 12, fontFamily: 'var(--font-mono)', outline: 'none',
+              }}
+            />
           </div>
         </div>
 
@@ -2159,7 +2180,6 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
   const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showCreate,    setShowCreate]    = useState(false);
   const [showImport,    setShowImport]    = useState(false);
-  const [searchQuery,   setSearchQuery]   = useState('');
   const [expandTarget,  setExpandTarget]  = useState<string | null>(null);
   const [replaceTarget, setReplaceTarget] = useState<{ pool: string; preselectedDisk?: string } | null>(null);
   const [smartTarget,   setSmartTarget]   = useState<string | null>(null);
@@ -2349,7 +2369,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
       onConfirm: async () => {
         try {
           await api.resilverPool(poolName);
-          showToast(`Rewrite (scrub) started on ${poolName}`, 'success');
+          showToast(`Resilver started on ${poolName}`, 'success');
           setScrubState(s => ({ ...s, [poolName]: 'running' }));
           startScrubPolling(poolName);
         } catch (err: any) {
@@ -2443,7 +2463,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
       )}
 
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             {pools.length} pool{pools.length !== 1 ? 's' : ''}
@@ -2465,27 +2485,9 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
         </div>
       </div>
 
-      {/* Search bar */}
-      <div style={{ position: 'relative', marginBottom: 20 }}>
-        <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
-        <input
-          type="text"
-          placeholder="Filter pools by name…"
-          value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
-          style={{
-            width: '100%', boxSizing: 'border-box',
-            paddingLeft: 30, paddingRight: 10, paddingTop: 7, paddingBottom: 7,
-            background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-            borderRadius: 'var(--radius)', color: 'var(--text-primary)',
-            fontSize: 13, fontFamily: 'var(--font-ui)', outline: 'none',
-          }}
-        />
-      </div>
-
       {/* Pool cards */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {pools.filter(p => !searchQuery.trim() || p.name.toLowerCase().includes(searchQuery.trim().toLowerCase())).map((pool, pi) => {
+        {pools.map((pool, pi) => {
           const state        = scrubState[pool.name] || 'idle';
           const progress     = scrubProgress[pool.name];
           const expansionProg = expansionProgress[pool.name];
