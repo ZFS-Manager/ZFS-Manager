@@ -54,7 +54,7 @@ export const formatSpeed = (bytesPerSec: number, decimals = 2): string => {
   if (!bytesPerSec || isNaN(bytesPerSec) || bytesPerSec <= 0) return '0 B/s';
   const k = 1024;
   const dm = Math.max(0, decimals);
-  const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s'];
+  const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s', 'PB/s'];
   const i = Math.floor(Math.log(bytesPerSec) / Math.log(k));
   return `${parseFloat((bytesPerSec / Math.pow(k, i)).toFixed(dm))} ${sizes[Math.min(i, sizes.length - 1)]}`;
 };

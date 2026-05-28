@@ -2450,7 +2450,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           poolDisks={getPoolDisks(replaceTarget.pool)}
           preselectedDisk={replaceTarget.preselectedDisk}
           onClose={() => setReplaceTarget(null)}
-          onSuccess={() => { showToast('Disk replacement started', 'success'); refreshPoolVdevs(replaceTarget.pool); setReplaceTarget(null); onRefresh(); startPostOpPoll(); }}
+          onSuccess={() => { showToast('Disk replacement started', 'success'); refreshPoolVdevs(replaceTarget.pool); setReplaceTarget(null); onRefresh(); startPostOpPoll(); startScrubPolling(replaceTarget.pool); }}
         />
       )}
       {smartTarget && <SmartModal device={smartTarget} onClose={() => setSmartTarget(null)} />}

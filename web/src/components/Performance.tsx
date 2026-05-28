@@ -94,18 +94,27 @@ const AXIS_TICK  = { fill: '#52525b', fontSize: 10 };
 const GRID_PROPS = { strokeDasharray: '3 6' as const, stroke: 'rgba(255,255,255,0.15)', vertical: false };
 
 function getBwScale(maxMB: number): { unit: string; fmt: (v: number) => string } {
+  if (maxMB >= 1e9)  return { unit: 'PB/s', fmt: v => formatSpeed(v * 1048576) };
+  if (maxMB >= 1e6)  return { unit: 'TB/s', fmt: v => formatSpeed(v * 1048576) };
   if (maxMB >= 1000) return { unit: 'GB/s', fmt: v => formatSpeed(v * 1048576) };
   if (maxMB >= 1)    return { unit: 'MB/s', fmt: v => formatSpeed(v * 1048576) };
   return { unit: 'KB/s', fmt: v => formatSpeed(v * 1048576) };
 }
 
 function getGbScale(maxGB: number): { unit: string; fmt: (v: number) => string } {
+  if (maxGB >= 1e9)  return { unit: 'EB', fmt: v => formatBytes(v * 1073741824) };
+  if (maxGB >= 1e6)  return { unit: 'PB', fmt: v => formatBytes(v * 1073741824) };
   if (maxGB >= 1000) return { unit: 'TB', fmt: v => formatBytes(v * 1073741824) };
   return { unit: 'GB', fmt: v => formatBytes(v * 1073741824) };
 }
 
 function fmtBw(v: number) { return formatSpeed(v * 1048576); }
 function fmtGB(v: number) { return formatBytes(v * 1073741824); }
+
+function splitUnit(fmt: string): { value: string; unit: string } {
+  const i = fmt.lastIndexOf(' ');
+  return i < 0 ? { value: fmt, unit: '' } : { value: fmt.slice(0, i), unit: fmt.slice(i + 1) };
+}
 
 function fmtTs(iso: string, iv: Interval) {
   if (!iso) return '';
@@ -181,16 +190,14 @@ function Skeleton({ height = 200 }: { height?: number }) {
 
 function fmtGrowthRate(diffGb: number, timeSec: number): string {
   if (timeSec <= 0 || diffGb === 0) return '0 B/s';
-  const bytesPerSec = (diffGb * 1024 * 1024 * 1024) / timeSec;
+  const bytesPerSec = (diffGb * 1073741824) / timeSec;
   const sign = bytesPerSec > 0 ? '+' : '';
-  const abs = Math.abs(bytesPerSec);
-  if (abs >= 1024 * 1024 * 1024) return `${sign}${(abs / (1024 * 1024 * 1024)).toFixed(1)} GB/s`;
-  if (abs >= 1024 * 1024) return `${sign}${(abs / (1024 * 1024)).toFixed(1)} MB/s`;
-  if (abs >= 1024) return `${sign}${(abs / 1024).toFixed(0)} KB/s`;
-  return `${sign}${abs.toFixed(0)} B/s`;
+  return `${sign}${formatSpeed(Math.abs(bytesPerSec))}`;
 }
 
 function fmtRateGbDay(gbPerDay: number): string {
+  if (gbPerDay >= 1e9)  return `${(gbPerDay / 1073741824).toFixed(1)} PB/day`;
+  if (gbPerDay >= 1e6)  return `${(gbPerDay / 1048576).toFixed(1)} TB/day`;
   if (gbPerDay >= 1000) return `${(gbPerDay / 1024).toFixed(1)} TB/day`;
   if (gbPerDay >= 1)    return `${gbPerDay.toFixed(2)} GB/day`;
   if (gbPerDay >= 0.001) return `${(gbPerDay * 1024).toFixed(1)} MB/day`;
@@ -640,29 +647,25 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const renderWidget = (id: string): React.ReactNode => {
     switch (id) {
       case 'live-gauges': {
-        const fmtTotal = (gb: number) => {
-          if (gb >= 1000) return { value: (gb / 1024).toFixed(2), unit: 'TB' };
-          if (gb >= 1)    return { value: gb.toFixed(2),          unit: 'GB' };
-          if (gb >= 0.001) return { value: (gb * 1024).toFixed(1), unit: 'MB' };
-          return { value: '0', unit: 'MB' };
-        };
-        const totalRead  = fmtTotal(totalReadGB);
-        const totalWrite = fmtTotal(totalWriteGB);
+        const rSpeed   = splitUnit(formatSpeed(ioReadBw  * 1048576));
+        const wSpeed   = splitUnit(formatSpeed(ioWriteBw * 1048576));
+        const totalRead  = splitUnit(formatBytes(totalReadGB  * 1073741824));
+        const totalWrite = splitUnit(formatBytes(totalWriteGB * 1073741824));
         return (
           <div>
             <SectionHeader label={multiPool ? `Live I/O · ${effectivePool}` : 'Live I/O'} badge="1 s" />
             <div className="perf-stats-grid">
               <GaugeCard
                 label="↑ Read Speed"
-                value={ioReadBw >= 1000 ? (ioReadBw / 1000).toFixed(2) : ioReadBw.toFixed(1)}
-                unit={ioReadBw >= 1000 ? 'GB/s' : 'MB/s'}
+                value={rSpeed.value}
+                unit={rSpeed.unit}
                 color={C.read}
                 sub={`Peak ${fmtBw(livePeakR)}`}
               />
               <GaugeCard
                 label="↓ Write Speed"
-                value={ioWriteBw >= 1000 ? (ioWriteBw / 1000).toFixed(2) : ioWriteBw.toFixed(1)}
-                unit={ioWriteBw >= 1000 ? 'GB/s' : 'MB/s'}
+                value={wSpeed.value}
+                unit={wSpeed.unit}
                 color={C.write}
                 sub={`Peak ${fmtBw(livePeakW)}`}
               />
