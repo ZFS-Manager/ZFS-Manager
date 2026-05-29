@@ -1901,13 +1901,26 @@ function CreatePoolModal({ onClose, onSuccess, usedDisks = new Set<string>() }: 
 
 /* ── Disk Row ─────────────────────────────────────────────────────────────────── */
 function DiskRow({ disk, poolName, onReplace, onSmartClick }: {
-  disk: { path: string; state: string };
+  disk: { path: string; state: string; replacing_with?: string };
   poolName: string;
   onReplace: (disk: string) => void;
   onSmartClick: (disk: string) => void;
 }) {
   const [hov, setHov] = useState(false);
-  const isOnline = disk.state === 'ONLINE';
+  const isReplacing = !!disk.replacing_with;
+  const isOnline    = disk.state === 'ONLINE';
+
+  const stateColor = isReplacing         ? 'var(--info)'
+    : isOnline                           ? 'var(--success)'
+    : disk.state === 'DEGRADED'          ? 'var(--warning)'
+    : 'var(--danger)';
+
+  const stateLabel = isReplacing ? 'replacing' : disk.state.toLowerCase();
+
+  const displayName = isReplacing
+    ? `${disk.path} to ${disk.replacing_with}`
+    : disk.path;
+
   return (
     <div onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)} style={{
       display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
@@ -1915,10 +1928,10 @@ function DiskRow({ disk, poolName, onReplace, onSmartClick }: {
       borderRadius: 'var(--radius)', transition: 'border-color 0.12s',
       borderColor: hov ? 'rgba(255,255,255,0.12)' : 'var(--border)',
     }}>
-      <HardDrive size={13} style={{ color: isOnline ? 'var(--text-muted)' : 'var(--danger)', flexShrink: 0 }} />
+      <HardDrive size={13} style={{ color: stateColor, flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div title={disk.path} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-primary)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{disk.path}</div>
-        <div style={{ fontSize: 9, color: isOnline ? 'var(--success)' : 'var(--danger)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{disk.state}</div>
+        <div title={displayName} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-primary)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayName}</div>
+        <div style={{ fontSize: 9, color: stateColor, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Status: {stateLabel}</div>
       </div>
       <div style={{ display: 'flex', gap: 4, opacity: hov ? 1 : 0, transition: 'opacity 0.12s' }}>
         <button title="SMART Data" onClick={() => onSmartClick(disk.path)} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-muted)' }}>
@@ -2571,7 +2584,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
     return types.map(t => t.toUpperCase()).join('+');
   };
 
-  const getPoolDisks = (poolName: string): { path: string; state: string }[] => {
+  const getPoolDisks = (poolName: string): { path: string; state: string; replacing_with?: string }[] => {
     const vdevs = poolVdevs[poolName] || [];
     return vdevs.flatMap((v: any) => v.disks || []);
   };

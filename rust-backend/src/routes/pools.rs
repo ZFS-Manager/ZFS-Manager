@@ -161,11 +161,36 @@ fn parse_vdev_config(status_output: &str) -> Vec<Value> {
     };
 
     let mut vdevs: Vec<Value> = Vec::new();
-    let mut cur_type  = String::new();
-    let mut cur_name  = String::new();
+    let mut cur_type     = String::new();
+    let mut cur_name     = String::new();
     let mut cur_disks: Vec<Value> = Vec::new();
-    let mut in_vdev   = false;
-    let mut past_pool = false;
+    let mut in_vdev      = false;
+    let mut past_pool    = false;
+    // Track an active "replacing-N" sub-vdev: collect old and new disk names.
+    let mut in_replacing = false;
+    let mut repl_old     = String::new();
+    let mut repl_new     = String::new();
+
+    // Emit any buffered replacing pair into cur_disks, then reset state.
+    let flush_replacing = |in_replacing: &mut bool,
+                                repl_old: &mut String,
+                                repl_new: &mut String,
+                                cur_disks: &mut Vec<Value>| {
+        if *in_replacing && !repl_old.is_empty() {
+            if repl_new.is_empty() {
+                cur_disks.push(json!({ "path": repl_old.clone(), "state": "OFFLINE" }));
+            } else {
+                cur_disks.push(json!({
+                    "path": repl_old.clone(),
+                    "state": "REPLACING",
+                    "replacing_with": repl_new.clone()
+                }));
+            }
+            *in_replacing = false;
+            repl_old.clear();
+            repl_new.clear();
+        }
+    };
 
     for line in status_output[config_idx..].lines() {
         if line.trim() == "config:" { continue; }
@@ -183,13 +208,13 @@ fn parse_vdev_config(status_output: &str) -> Vec<Value> {
         let tokens: Vec<&str> = after_tab.split_whitespace().collect();
         let name  = tokens.first().copied().unwrap_or("");
         let state = tokens.get(1).copied().unwrap_or("ONLINE");
+        // ZFS prefixes hot-spare disks with "spare-" in status output; strip it.
+        let disk_name = name.strip_prefix("spare-").unwrap_or(name);
 
         match leading {
-            0 => {
-                past_pool = true;  // pool root line
-            }
+            0 => { past_pool = true; }
             2 => {
-                // Flush previous vdev group
+                flush_replacing(&mut in_replacing, &mut repl_old, &mut repl_new, &mut cur_disks);
                 if in_vdev && !cur_disks.is_empty() {
                     vdevs.push(json!({ "name": cur_name, "type": cur_type, "disks": cur_disks.clone() }));
                 }
@@ -197,10 +222,10 @@ fn parse_vdev_config(status_output: &str) -> Vec<Value> {
 
                 let vtype = classify_vdev(name);
                 if vtype == "stripe" {
-                    vdevs.push(json!({ "name": name, "type": "stripe", "disks": [{"path": name, "state": state}] }));
-                    in_vdev    = false;
-                    cur_type   = String::new();
-                    cur_name   = String::new();
+                    vdevs.push(json!({ "name": disk_name, "type": "stripe", "disks": [{"path": disk_name, "state": state}] }));
+                    in_vdev  = false;
+                    cur_type = String::new();
+                    cur_name = String::new();
                 } else {
                     cur_type = vtype.to_string();
                     cur_name = name.to_string();
@@ -208,11 +233,26 @@ fn parse_vdev_config(status_output: &str) -> Vec<Value> {
                 }
             }
             4 if in_vdev => {
-                cur_disks.push(json!({ "path": name, "state": state }));
+                flush_replacing(&mut in_replacing, &mut repl_old, &mut repl_new, &mut cur_disks);
+                if name.starts_with("replacing") {
+                    // Enter a replacing sub-vdev; its two children arrive at depth 6.
+                    in_replacing = true;
+                } else {
+                    cur_disks.push(json!({ "path": disk_name, "state": state }));
+                }
+            }
+            6 if in_vdev && in_replacing => {
+                // First child is the old (outgoing) disk, second is the new (incoming) disk.
+                if repl_old.is_empty() {
+                    repl_old = disk_name.to_string();
+                } else if repl_new.is_empty() {
+                    repl_new = disk_name.to_string();
+                }
             }
             _ => {}
         }
     }
+    flush_replacing(&mut in_replacing, &mut repl_old, &mut repl_new, &mut cur_disks);
     if in_vdev && !cur_disks.is_empty() {
         vdevs.push(json!({ "name": cur_name, "type": cur_type, "disks": cur_disks }));
     }
@@ -463,33 +503,49 @@ async fn pool_vdevs(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
 
     // Pass 1: resolve SCSI IDs / full paths to short kernel device names.
     // Also preserve the raw vdev name (e.g. "raidz2-0") for use as attach target.
-    let mut vdev_data: Vec<(String, String, Vec<(String, String)>)> = Vec::with_capacity(raw_vdevs.len());
+    // Disk tuple: (short_name, state, replacing_with_short)
+    let mut vdev_data: Vec<(String, String, Vec<(String, String, Option<String>)>)> = Vec::with_capacity(raw_vdevs.len());
     for vdev in raw_vdevs {
         let vtype    = vdev["type"].as_str().unwrap_or("stripe").to_string();
         let vname    = vdev["name"].as_str().unwrap_or("").to_string();
         let raw_disks = vdev["disks"].as_array().cloned().unwrap_or_default();
-        let mut disks: Vec<(String, String)> = Vec::with_capacity(raw_disks.len());
+        let mut disks: Vec<(String, String, Option<String>)> = Vec::with_capacity(raw_disks.len());
         for disk in raw_disks {
             let raw_path = disk["path"].as_str().unwrap_or("").to_string();
             let short    = crate::worker::resolve_disk_short_name(&raw_path).await;
             let state    = disk["state"].as_str().unwrap_or("ONLINE").to_string();
-            disks.push((short, state));
+            let replacing_with = if let Some(rw) = disk["replacing_with"].as_str() {
+                Some(crate::worker::resolve_disk_short_name(rw).await)
+            } else {
+                None
+            };
+            disks.push((short, state, replacing_with));
         }
         vdev_data.push((vtype, vname, disks));
     }
 
     // Pass 2: strip partition suffixes across the full disk list when unambiguous
     // (sdb1 → sdb only if no sdb2 also exists in the pool).
+    // Include both the primary disk name and any replacing_with name in the check.
     let mut all_names: Vec<String> = vdev_data.iter()
-        .flat_map(|(_, _, disks)| disks.iter().map(|(n, _)| n.clone()))
+        .flat_map(|(_, _, disks)| disks.iter().flat_map(|(n, _, rw)| {
+            std::iter::once(n.clone()).chain(rw.iter().cloned())
+        }))
         .collect();
     crate::worker::strip_partition_suffix_list(&mut all_names);
 
     // Rebuild vdevs with stripped names, preserving vdev name.
+    // all_names order: for each disk, primary name first, then replacing_with (if any).
     let mut name_iter = all_names.into_iter();
     let vdevs: Vec<Value> = vdev_data.into_iter().map(|(vtype, vname, disks)| {
-        let resolved: Vec<Value> = disks.into_iter().map(|(_, state)| {
-            json!({ "path": name_iter.next().unwrap_or_default(), "state": state })
+        let resolved: Vec<Value> = disks.into_iter().map(|(_, state, replacing_with)| {
+            let path = name_iter.next().unwrap_or_default();
+            if replacing_with.is_some() {
+                let rw_path = name_iter.next().unwrap_or_default();
+                json!({ "path": path, "state": state, "replacing_with": rw_path })
+            } else {
+                json!({ "path": path, "state": state })
+            }
         }).collect();
         json!({ "type": vtype, "name": vname, "disks": resolved })
     }).collect();
