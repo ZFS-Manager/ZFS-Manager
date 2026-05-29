@@ -2,6 +2,52 @@ use std::fs;
 use std::process::Command;
 use tracing::{info, warn, error};
 
+/// Mount all ZFS datasets from already-imported pools so that the rshared /mnt
+/// bind-mount propagates them back to the host filesystem.
+pub async fn run_startup_zfs_mount() {
+    match tokio::process::Command::new("zfs")
+        .args(["mount", "-a"])
+        .output()
+        .await
+    {
+        Ok(out) if out.status.success() => {
+            info!("✅ ZFS: all datasets mounted (rshared propagation active)");
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            // "already mounted" is normal when pool was mounted before container start
+            if stderr.lines().all(|l| l.contains("already mounted") || l.trim().is_empty()) {
+                info!("✅ ZFS: datasets already mounted");
+            } else {
+                warn!("⚠️ ZFS mount -a: {}", stderr.trim());
+            }
+        }
+        Err(e) => warn!("⚠️ ZFS mount -a failed: {}", e),
+    }
+}
+
+pub async fn run_startup_pool_imports() {
+    use crate::routes::pools::{load_import_configs, execute_pool_import};
+
+    let configs = load_import_configs();
+    let startup_configs: Vec<_> = configs.into_iter()
+        .filter(|c| c.enabled && c.import_on_startup)
+        .collect();
+
+    if startup_configs.is_empty() {
+        return;
+    }
+
+    info!("Running {} startup pool import(s)...", startup_configs.len());
+    for config in &startup_configs {
+        info!("  → Importing pool '{}'...", config.name);
+        match execute_pool_import(config).await {
+            Ok(_) => info!("  ✅ Pool '{}' import completed", config.name),
+            Err(e) => error!("  ❌ Pool '{}' import failed: {:?}", config.name, e),
+        }
+    }
+}
+
 pub async fn run_startup_checks() {
     info!("🚀 Starting ZFS-Manager Diagnostic Checks...");
 

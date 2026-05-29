@@ -45,9 +45,18 @@ export const formatBytes = (bytes: number | string, decimals = 2): string => {
   if (!n || isNaN(n)) return '0 B';
   const k = 1024;
   const dm = Math.max(0, decimals);
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
   const i = Math.floor(Math.log(n) / Math.log(k));
   return `${parseFloat((n / Math.pow(k, i)).toFixed(dm))} ${sizes[Math.min(i, sizes.length - 1)]}`;
+};
+
+export const formatSpeed = (bytesPerSec: number, decimals = 2): string => {
+  if (!bytesPerSec || isNaN(bytesPerSec) || bytesPerSec <= 0) return '0 B/s';
+  const k = 1024;
+  const dm = Math.max(0, decimals);
+  const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s', 'PB/s', 'EB/s', 'ZB/s', 'YB/s'];
+  const i = Math.floor(Math.log(bytesPerSec) / Math.log(k));
+  return `${parseFloat((bytesPerSec / Math.pow(k, i)).toFixed(dm))} ${sizes[Math.min(i, sizes.length - 1)]}`;
 };
 
 export const formatUnixTimestamp = (ts: string | number): string => {
@@ -121,6 +130,8 @@ export const api = {
     }) }),
   replaceDisk: (poolName: string, oldDisk: string, newDisk: string, force = false) =>
     request<any>(`/pools/${poolName}/replace`, { method: 'POST', body: JSON.stringify({ old_disk: oldDisk, new_disk: newDisk, force }) }),
+  removeDevice: (poolName: string, device: string) =>
+    request<any>(`/pools/${poolName}/remove-device`, { method: 'POST', body: JSON.stringify({ device }) }),
   importPool: (name: string, dir?: string) =>
     request<any>(`/pools/${name}/import`, { method: 'POST', body: JSON.stringify({ dir }) }),
   importPoolById: (name: string, dir?: string) =>
@@ -226,6 +237,66 @@ export const api = {
       `/pools/${encodeURIComponent(name)}/settings`,
       { method: 'PUT', body: JSON.stringify({ scope, prop, value }) },
     ),
+
+  getPoolFeatures: (name: string) =>
+    request<{ pool: string; features: Array<{ name: string; property: string; value: string; enabled: boolean }> }>(
+      `/pools/${encodeURIComponent(name)}/features`
+    ),
+
+  togglePoolFeature: (name: string, feature: string, enabled: boolean) =>
+    request<{ message: string; pool: string; feature: string; enabled: boolean }>(
+      `/pools/${encodeURIComponent(name)}/feature/${encodeURIComponent(feature)}`,
+      { method: 'PUT', body: JSON.stringify({ enabled }) },
+    ),
+
+  getRaidzExpansionFeature: (name: string) =>
+    request<{ pool: string; feature: string; value: string; enabled: boolean }>(
+      `/pools/${encodeURIComponent(name)}/feature/raidz_expansion`
+    ),
+
+  enableRaidzExpansionFeature: (name: string) =>
+    request<{ message: string; pool: string; feature: string; enabled: boolean }>(
+      `/pools/${encodeURIComponent(name)}/feature/raidz_expansion/enable`,
+      { method: 'POST' }
+    ),
+
+  // ── Pool Import Configs ────────────────────────────────────────────────────
+  getImportConfigs: () =>
+    request<{ configs: Array<{
+      name: string; key_file?: string; encrypted: boolean;
+      import_on_startup: boolean; enabled: boolean;
+      bind_mounts: Array<{ source: string; target: string }>;
+    }> }>('/pools/import-configs'),
+
+  saveImportConfig: (config: {
+    name: string; key_file?: string; encrypted: boolean;
+    import_on_startup: boolean; enabled: boolean;
+    bind_mounts: Array<{ source: string; target: string }>;
+  }) =>
+    request<{ message: string; config: any }>('/pools/import-configs', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    }),
+
+  updateImportConfig: (name: string, config: {
+    name: string; key_file?: string; encrypted: boolean;
+    import_on_startup: boolean; enabled: boolean;
+    bind_mounts: Array<{ source: string; target: string }>;
+  }) =>
+    request<{ message: string; config: any }>(`/pools/import-configs/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      body: JSON.stringify(config),
+    }),
+
+  deleteImportConfig: (name: string) =>
+    request<{ message: string }>(`/pools/import-configs/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    }),
+
+  runImportConfig: (name: string) =>
+    request<{ message: string }>(`/pools/import-configs/${encodeURIComponent(name)}/run`, {
+      method: 'POST',
+    }),
 
   // ── Per-disk metrics ───────────────────────────────────────────────────────
   getPoolDiskMetrics: (poolName: string) =>

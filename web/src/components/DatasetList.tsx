@@ -523,7 +523,10 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
           await api.rewriteDataset(name);
           showToast(`Rewrite started on "${name}"`, 'success');
         } catch (err: any) {
-          showToast(err.message || 'Rewrite failed', 'error');
+          const raw = err.message || 'Rewrite failed';
+          const firstLine = raw.split('\n')[0];
+          const truncated = firstLine.length > 120 ? firstLine.slice(0, 120) + '…' : firstLine;
+          showToast(truncated, 'error');
           setRewriteState(s => ({ ...s, [name]: false }));
         }
       }

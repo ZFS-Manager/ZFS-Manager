@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { HardDrive, Lock, ArrowRight, AlertCircle, Wifi, WifiOff } from 'lucide-react';
+import { useIsMobile } from '../hooks/useBreakpoint';
 
 interface LoginProps {
   onLogin: (password: string) => Promise<void>;
 }
 
 export default function Login({ onLogin }: LoginProps) {
+  const isMobile = useIsMobile();
   const [password, setPassword] = useState('');
   const [isError, setIsError]   = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -164,9 +166,11 @@ export default function Login({ onLogin }: LoginProps) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: 32,
+        padding: isMobile ? 16 : 32,
         position: 'relative',
         zIndex: 1,
+        minHeight: 0,
+        overflowY: 'auto',
       }}>
 
         {/* Status pill top-right */}
@@ -203,7 +207,7 @@ export default function Login({ onLogin }: LoginProps) {
             background: 'var(--bg-surface)',
             border: '1px solid var(--border)',
             borderRadius: 14,
-            padding: 40,
+            padding: isMobile ? 24 : 40,
             boxShadow: '0 8px 40px rgba(0,0,0,0.4)',
           }}>
           {/* Logo inside card — always visible */}

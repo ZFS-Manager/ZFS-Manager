@@ -248,6 +248,32 @@ html, body, #root {
 }
 .widget-remove:hover { color: var(--danger); border-color: rgba(239,68,68,0.3); background: var(--danger-dim); }
 
+/* ── Fragmentation info tooltip ──────────────────────────────────────────────── */
+.frag-info-wrap { position: relative; }
+.frag-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 240px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  text-transform: none;
+  letter-spacing: normal;
+  z-index: 200;
+  pointer-events: none;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  white-space: normal;
+}
+.frag-info-wrap:hover .frag-tooltip { display: block; }
+
 /* ── Live indicator pulse ────────────────────────────────────────────────────── */
 @keyframes live-pulse {
   0%, 100% { opacity: 1; }
@@ -285,6 +311,33 @@ html, body, #root {
 }
 @media (max-width: 767px) {
   .two-col { grid-template-columns: 1fr; }
+}
+
+/* ── Mobile modal: bottom sheet ──────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
+}
+.modal-box {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 24px; width: 100%;
+  max-height: 90vh; overflow-y: auto;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+}
+@media (max-width: 767px) {
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal-box {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    max-width: 100% !important;
+    width: 100%;
+    max-height: 88vh;
+    padding: 20px 16px;
+    border-bottom: none;
+  }
 }
 
 /* Dashboard 5-column stats row: 5 → 2 → 1 */
@@ -341,17 +394,11 @@ html, body, #root {
   /* Always show row actions on mobile (no hover) */
   .data-table tbody tr .row-actions { opacity: 1; }
 
-  /* Touch targets: minimum 44px per Apple HIG */
-  .btn { min-height: 44px; height: auto; padding: 10px 14px; font-size: 12px; }
+  /* Touch targets — primary/secondary buttons only, not icon/tab buttons */
+  .btn-primary, .btn-secondary { min-height: 40px; height: auto; padding: 9px 14px; font-size: 12px; }
 
   /* Input full-width */
-  .input { font-size: 12px; }
-
-  /* Modals: full screen on mobile */
-  [data-modal] {
-    padding: 0 !important;
-    align-items: flex-end !important;
-  }
+  .input { font-size: 16px; } /* 16px prevents iOS zoom on focus */
 
   /* Toast: full width on mobile */
   .toast-container {
@@ -370,6 +417,39 @@ html, body, #root {
     width: 100vw !important;
     border-radius: 0 !important;
   }
+
+  /* Pool card action buttons: compact on mobile, all fit in one line */
+  .pool-actions { flex-wrap: wrap !important; gap: 5px !important; }
+  .pool-action-btn {
+    flex: 1 1 auto; min-width: 0;
+    min-height: 36px !important; height: 36px !important;
+    padding: 0 8px !important; font-size: 11px !important;
+  }
+
+  /* Settings: stack sidebar + content vertically, stretch children to full width */
+  .settings-layout { flex-direction: column !important; align-items: stretch !important; }
+  .settings-sidebar { width: 100% !important; flex-shrink: 1 !important; }
+
+  /* Settings tab buttons – compact, no min-height override */
+  .settings-sidebar button {
+    min-height: 52px !important;
+    height: auto !important;
+    padding: 8px 4px !important;
+    border-bottom: none !important;
+  }
+
+  /* Reduce excessive padding inside panels on mobile */
+  .panel-body { padding: 12px !important; }
+
+  /* Stat cards: compact on mobile */
+  .stat-card { padding: 14px 12px !important; }
+
+  /* Chart containers: reduce height on mobile */
+  .chart-container-md { height: 160px !important; }
+  .chart-container-lg { height: 200px !important; }
+
+  /* Performance gauge row: smaller on mobile */
+  .gauge-circle { width: 80px !important; height: 80px !important; }
 }
 
 /* ── Tablet (768px – 1023px) ─────────────────────────────────────────────────── */

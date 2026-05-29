@@ -1,19 +1,9 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { HardDrive } from 'lucide-react';
+import { formatBytes, formatSpeed } from '../api';
 
 const C = { read: '#38bdf8', write: '#818cf8' };
-
-function fmtBw(v: number) {
-  if (v >= 1000) return `${(v / 1000).toFixed(2)} GB/s`;
-  if (v >= 1)    return `${v.toFixed(2)} MB/s`;
-  return `${(v * 1024).toFixed(0)} KB/s`;
-}
-function fmtGB(v: number) {
-  if (v >= 1000) return `${(v / 1000).toFixed(2)} TB`;
-  if (v >= 1)    return `${v.toFixed(2)} GB`;
-  return `${(v * 1024).toFixed(0)} MB`;
-}
 
 interface PhysicalDisksTableProps {
   diskPools: string[];
@@ -69,12 +59,12 @@ export default function PhysicalDisksTable({ diskPools, diskMetrics }: PhysicalD
             >
               <td style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>{d.pool}</td>
               <td style={{ padding: '8px 12px', color: 'var(--text-primary)', fontWeight: 600 }}>{d.name}</td>
-              <td style={{ padding: '8px 12px', color: C.read,                 textAlign: 'right', fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{fmtBw(d.read_bw_mb ?? 0)}</td>
-              <td style={{ padding: '8px 12px', color: C.write,                textAlign: 'right', fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{fmtBw(d.write_bw_mb ?? 0)}</td>
+              <td style={{ padding: '8px 12px', color: C.read,                 textAlign: 'right', fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{formatSpeed((d.read_bw_mb ?? 0) * 1048576)}</td>
+              <td style={{ padding: '8px 12px', color: C.write,                textAlign: 'right', fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{formatSpeed((d.write_bw_mb ?? 0) * 1048576)}</td>
               <td style={{ padding: '8px 12px', color: C.read,                 textAlign: 'right', fontVariantNumeric: 'tabular-nums', minWidth: 80 }}>{(d.read_iops ?? 0).toFixed(0)}</td>
               <td style={{ padding: '8px 12px', color: C.write,                textAlign: 'right', fontVariantNumeric: 'tabular-nums', minWidth: 80 }}>{(d.write_iops ?? 0).toFixed(0)}</td>
-              <td style={{ padding: '8px 12px', color: 'var(--text-secondary)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{fmtGB(d.total_read_gb ?? 0)}</td>
-              <td style={{ padding: '8px 12px', color: 'var(--text-secondary)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{fmtGB(d.total_write_gb ?? 0)}</td>
+              <td style={{ padding: '8px 12px', color: 'var(--text-secondary)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{formatBytes((d.total_read_gb ?? 0) * 1073741824)}</td>
+              <td style={{ padding: '8px 12px', color: 'var(--text-secondary)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{formatBytes((d.total_write_gb ?? 0) * 1073741824)}</td>
             </motion.tr>
           ))}
         </tbody>
