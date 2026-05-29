@@ -49,6 +49,11 @@ services:
       - /proc:/proc:ro
       - /sys/module/zfs:/sys/module/zfs:ro
       - /var/lib/zfs:/var/lib/zfs:ro
+      - type: bind
+        source: /mnt
+        target: /mnt
+        bind:
+          propagation: rshared
       - /home/docker/zfs-manager:/home/docker/zfs-manager
     working_dir: /home/docker/zfs-manager
     depends_on:

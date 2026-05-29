@@ -130,6 +130,8 @@ export const api = {
     }) }),
   replaceDisk: (poolName: string, oldDisk: string, newDisk: string, force = false) =>
     request<any>(`/pools/${poolName}/replace`, { method: 'POST', body: JSON.stringify({ old_disk: oldDisk, new_disk: newDisk, force }) }),
+  removeDevice: (poolName: string, device: string) =>
+    request<any>(`/pools/${poolName}/remove-device`, { method: 'POST', body: JSON.stringify({ device }) }),
   importPool: (name: string, dir?: string) =>
     request<any>(`/pools/${name}/import`, { method: 'POST', body: JSON.stringify({ dir }) }),
   importPoolById: (name: string, dir?: string) =>

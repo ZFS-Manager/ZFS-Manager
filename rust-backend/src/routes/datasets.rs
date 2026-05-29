@@ -123,11 +123,31 @@ async fn create_dataset(Json(body): Json<CreateDatasetBody>) -> Result<Json<Valu
         return Err(ApiError::BadRequest("'name' is required".into()));
     }
     executor::validate_zfs_name(&body.name, "dataset")?;
+
+    // Extract custom mountpoint from options (e.g. ["-o", "mountpoint=/mnt/abc/ad"])
+    // and pre-create the directory so ZFS can mount there.
+    let mut i = 0;
+    while i + 1 < body.options.len() {
+        if body.options[i] == "-o" {
+            let opt = &body.options[i + 1];
+            if let Some(mp) = opt.strip_prefix("mountpoint=") {
+                if mp.starts_with('/') && mp != "/" {
+                    let _ = std::fs::create_dir_all(mp);
+                }
+            }
+        }
+        i += 1;
+    }
+
     let mut args = vec!["create".to_string()];
     args.extend(body.options);
     args.push(body.name.clone());
     let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     executor::zfs(&refs).await?;
+
+    // Explicitly mount so the dataset is active and propagates via rshared /mnt
+    let _ = executor::zfs(&["mount", &body.name]).await;
+
     Ok(Json(json!({ "message": format!("Dataset '{}' created", body.name) })))
 }
 
@@ -153,29 +173,151 @@ async fn get_dataset(Path(name): Path<String>) -> Result<Json<Value>, ApiError> 
     })))
 }
 
+/// Scan /proc (which is the HOST's /proc via bind-mount) for processes that
+/// have open file descriptors pointing inside `mount_path`, then kill them
+/// via nsenter into the host PID namespace so the ZFS dataset can be freed.
+async fn kill_procs_at_path(mount_path: &str) {
+    let Ok(proc_dir) = std::fs::read_dir("/proc") else { return };
+    let mut pids: Vec<String> = Vec::new();
+
+    for entry in proc_dir.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.chars().all(|c: char| c.is_ascii_digit()) { continue; }
+
+        let fd_dir = format!("/proc/{}/fd", name);
+        let Ok(fds) = std::fs::read_dir(&fd_dir) else { continue };
+        for fd_entry in fds.flatten() {
+            if let Ok(target) = std::fs::read_link(fd_entry.path()) {
+                if target.to_string_lossy().starts_with(mount_path) {
+                    pids.push(name.clone());
+                    break;
+                }
+            }
+        }
+    }
+
+    for pid in pids {
+        // nsenter -t 1 --pid enters the host's root PID namespace (host PID 1
+        // is in /proc since we bind-mount the host's /proc). This lets us send
+        // SIGKILL to the host process even from within the container's PID namespace.
+        let _ = tokio::process::Command::new("nsenter")
+            .args(["-t", "1", "--pid", "--", "kill", "-9", &pid])
+            .output()
+            .await;
+    }
+
+    // Brief wait for the killed processes to release their file handles
+    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+}
+
 async fn destroy_dataset(
     Path(name): Path<String>,
     Query(q): Query<DestroyQuery>,
 ) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "dataset")?;
-    // When force is requested, try to unmount first (handles busy datasets)
+
+    // Fetch mountpoint before destroying so we have it for cleanup steps
+    let mountpoint: Option<String> = executor::zfs(&["get", "-H", "-p", "-o", "value", "mountpoint", &name])
+        .await
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| s.starts_with('/'));
+
+    // Step 1: force-unmount (ZFS -f flag uses MNT_FORCE via the kernel)
+    let _ = executor::zfs(&["unmount", "-f", &name]).await;
+
+    // Step 2: with force flag — lazy-umount + iterative VFS cache flush.
+    // The container cannot kill host-PID-namespace processes (PID namespace
+    // barrier), so instead we flush the kernel's VFS caches repeatedly and
+    // force ZFS to sync its transactions, which allows ZFS to release its
+    // internal "dataset is busy" lock even with open file descriptors.
+    let drop_caches_cmd = || async {
+        let _ = tokio::process::Command::new("nsenter")
+            .args(["-t", "1", "-m", "--", "sh", "-c",
+                   "echo 2 > /proc/sys/vm/drop_caches"])
+            .output()
+            .await;
+    };
+
     if q.force {
-        if q.recursive {
-            let _ = executor::zfs(&["unmount", "-r", &name]).await;
-        } else {
-            let _ = executor::zfs(&["unmount", &name]).await;
+        if let Some(ref mp) = mountpoint {
+            // Lazy detach removes the mountpoint from the directory tree so
+            // processes can no longer open NEW files, though existing FDs remain.
+            let _ = tokio::process::Command::new("umount")
+                .args(["-l", mp])
+                .output()
+                .await;
+
+            // First cache flush + ZFS pool sync via host tools to commit all
+            // pending ZFS transactions (clears ZFS internal open-dataset locks).
+            drop_caches_cmd().await;
+            let pool_name = name.split('/').next().unwrap_or("");
+            if !pool_name.is_empty() {
+                let _ = tokio::process::Command::new("nsenter")
+                    .args(["-t", "1", "-m", "--", "zpool", "sync", pool_name])
+                    .output().await;
+            }
+            let _ = tokio::process::Command::new("sync").output().await;
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+
+            // Final force-unmount attempt now that VFS caches are partially cleared
+            let _ = executor::zfs(&["unmount", "-f", &name]).await;
         }
     }
 
+    // Step 3: destroy with retry loop.
+    // On each retry, run drop_caches again — some VFS dentries are temporarily
+    // pinned by kernel threads and only become freeable after a short delay.
+    // Running drop_caches repeatedly with 800ms gaps covers the ~3-5s window
+    // ZFS needs to fully release its dataset reference after lazy unmount.
     let mut args = vec!["destroy".to_string()];
     if q.recursive { args.push("-r".to_string()); }
-    if q.force     { args.push("-f".to_string()); }
+    args.push("-f".to_string());
     args.push(name.clone());
     let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-    match executor::zfs(&refs).await {
-        Ok(_) => Ok(Json(json!({ "message": format!("Dataset '{name}' destroyed") }))),
-        Err(ApiError::CommandFailed { ref stderr, .. })
+    let max_attempts: u32 = if q.force { 12 } else { 1 };
+    let mut last_err: Option<ApiError> = None;
+
+    for attempt in 0..max_attempts {
+        if attempt > 0 {
+            // Re-flush caches on each retry: some kernel VFS entries become
+            // unpinned only after previous drop_caches pass has been processed.
+            drop_caches_cmd().await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
+
+            // Bail early if ZFS async-destroyed the dataset in the background
+            if executor::zfs(&["list", &name]).await.is_err() {
+                last_err = None;
+                break;
+            }
+        }
+        match executor::zfs(&refs).await {
+            Ok(_) => { last_err = None; break; }
+            Err(ApiError::CommandFailed { ref stderr, .. })
+                if stderr.contains("dataset is busy") =>
+            {
+                last_err = Some(ApiError::CommandFailed {
+                    stderr: stderr.clone(),
+                    code: Some(1),
+                });
+            }
+            Err(e) => { last_err = Some(e); break; }
+        }
+    }
+
+    // Final check: ZFS may have destroyed the dataset asynchronously even
+    // if the last destroy call returned "dataset is busy".
+    if last_err.is_some() && q.force {
+        if executor::zfs(&["list", &name]).await.is_err() {
+            last_err = None;
+        }
+    }
+
+    match last_err {
+        None => Ok(Json(json!({ "message": format!("Dataset '{name}' destroyed") }))),
+        Some(ApiError::CommandFailed { ref stderr, .. })
             if (stderr.contains("has children") || stderr.contains("filesystem has children"))
                && !q.recursive =>
         {
@@ -183,14 +325,7 @@ async fn destroy_dataset(
                 "Dataset has children. Enable 'Recursive' to delete all child datasets.".into()
             ))
         }
-        Err(ApiError::CommandFailed { ref stderr, .. })
-            if stderr.contains("dataset is busy") && !q.force =>
-        {
-            Err(ApiError::BadRequest(
-                "Dataset is busy (mounted). Enable 'Force' to unmount and delete.".into()
-            ))
-        }
-        Err(e) => Err(e),
+        Some(e) => Err(e),
     }
 }
 

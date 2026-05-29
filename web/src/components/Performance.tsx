@@ -626,18 +626,31 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   // Disk pools filtered by selected pool when multiPool
   const selDiskPools = multiPool && effectivePool ? [effectivePool] : diskPools;
 
-  // SMART: filter to disks belonging to the selected pool (matched by name from disk metrics)
+  // SMART: filter to disks belonging to the selected pool.
+  // Uses I/O-metric disk names as primary source, but also includes disks
+  // that have no I/O metrics (spares, caches, logs) via zfs_disk_pool field.
   const poolDiskNamesForSmart = useMemo(() => {
     const src = multiPool && effectivePool ? (diskMetrics[effectivePool] || []) : diskPools.flatMap(p => diskMetrics[p] || []);
     return new Set(src.map((d: any) => d.name as string));
   }, [multiPool, effectivePool, diskMetrics, diskPools]);
 
-  const filteredSmartData = useMemo(() =>
-    poolDiskNamesForSmart.size === 0
-      ? smartData
-      : smartData.filter(d => poolDiskNamesForSmart.has(d.disk?.name)),
-    [smartData, poolDiskNamesForSmart]
-  );
+  const targetPool = multiPool && effectivePool ? effectivePool : null;
+
+  const filteredSmartData = useMemo(() => {
+    if (poolDiskNamesForSmart.size === 0 && !targetPool) return smartData;
+    return smartData.filter(d => {
+      // Include if the disk has I/O metrics for the selected pool
+      if (poolDiskNamesForSmart.has(d.disk?.name)) return true;
+      // Also include spares/cache/log disks that belong to the same pool
+      // but have no I/O metrics (they don't appear in diskMetrics)
+      const diskPool = d.smart?.zfs_disk_pool as string | undefined;
+      const diskRole = d.smart?.zfs_disk_role as string | undefined;
+      if (!diskPool || !diskRole) return false;
+      if (targetPool) return diskPool === targetPool;
+      // No specific pool selected: include all disks that are in any known pool
+      return diskPools.includes(diskPool) || poolDiskNamesForSmart.size === 0;
+    });
+  }, [smartData, poolDiskNamesForSmart, targetPool, diskPools]);
 
   const handleDragStart = useCallback((id: string) => setDragFrom(id), []);
   const handleDragOver  = useCallback((id: string) => setDragOver(id), []);
@@ -940,19 +953,51 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
                   No SMART data for disks in this pool
                 </div>
               ) : filteredSmartData.map((d, i) => {
-                const passed = d.smart?.smart_status?.passed;
-                const temp   = d.smart?.temperature?.current;
-                const hours  = d.smart?.power_on_time?.hours;
+                const passed   = d.smart?.smart_status?.passed;
+                const zfsState = d.smart?.zfs_disk_state as string | undefined;
+                const zfsRole  = d.smart?.zfs_disk_role  as string | undefined;
+                const temp     = d.smart?.temperature?.current;
+                const hours    = d.smart?.power_on_time?.hours;
+
+                // Health: ZFS pool state is ground truth; SMART passed as fallback
+                const healthy = zfsState === 'ONLINE' || zfsState === 'AVAIL' || passed === true;
+                const failed  = passed === false || (zfsState && !['ONLINE','AVAIL','NOT_IN_POOL'].includes(zfsState));
+                const statusLabel = healthy ? 'PASSED' : failed ? 'FAIL' : 'N/A';
+                const statusColor = healthy ? 'var(--success)' : failed ? 'var(--danger)' : 'var(--text-muted)';
+
+                // Role badge config
+                const roleCfg: Record<string, { label: string; color: string; bg: string }> = {
+                  data:  { label: 'DATA',   color: '#818cf8', bg: 'rgba(129,140,248,0.12)' },
+                  cache: { label: 'CACHE',  color: '#f59e0b', bg: 'rgba(245,158,11,0.12)'  },
+                  spare: { label: 'SPARE',  color: '#38bdf8', bg: 'rgba(56,189,248,0.12)'  },
+                  log:   { label: 'LOG',    color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },
+                };
+                const role = roleCfg[zfsRole ?? 'data'] ?? roleCfg.data;
+
                 return (
                   <div key={i} style={{ background: 'var(--bg-elevated)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 14 }}>
-                    <div style={{ width: 32, height: 32, borderRadius: '50%', background: passed ? 'var(--success-dim)' : 'var(--danger-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <HardDrive size={16} style={{ color: passed ? 'var(--success)' : 'var(--danger)' }} />
+                    {/* Health icon */}
+                    <div style={{ width: 32, height: 32, borderRadius: '50%', background: healthy ? 'var(--success-dim)' : failed ? 'var(--danger-dim)' : 'var(--bg-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <HardDrive size={16} style={{ color: statusColor }} />
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.disk.name}</span>
-                        <span style={{ fontSize: 10, fontWeight: 700, color: passed ? 'var(--success)' : 'var(--danger)' }}>{passed ? 'PASSED' : 'FAIL'}</span>
+                      {/* Top row: name + role badge + status */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, gap: 6 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.disk.name}</span>
+                          {zfsRole && (
+                            <span style={{
+                              fontSize: 9, fontWeight: 700, letterSpacing: '0.06em',
+                              fontFamily: 'var(--font-mono)', flexShrink: 0,
+                              color: role.color, background: role.bg,
+                              border: `1px solid ${role.color}44`,
+                              borderRadius: 3, padding: '1px 5px',
+                            }}>{role.label}</span>
+                          )}
+                        </div>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: statusColor, flexShrink: 0 }}>{statusLabel}</span>
                       </div>
+                      {/* Bottom row: temp + hours */}
                       <div style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--text-muted)' }}>
                         {temp !== undefined && <span>Temp: <span style={{ color: temp > 50 ? 'var(--danger)' : 'var(--text-secondary)' }}>{temp}°C</span></span>}
                         {hours !== undefined && <span>Power-on: <span style={{ color: 'var(--text-secondary)' }}>{(hours/24).toFixed(0)}d</span></span>}

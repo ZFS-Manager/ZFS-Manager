@@ -212,11 +212,12 @@ function DiskStatusBadge({ disk }: { disk: EnrichedDisk }) {
   );
 }
 
-function DiskPicker({ onSelect, onClose, selected, addedDisks = [] }: {
+function DiskPicker({ onSelect, onClose, selected, addedDisks = [], onlyFree = false }: {
   onSelect: (path: string) => void;
   onClose: () => void;
   selected?: string;
   addedDisks?: string[];
+  onlyFree?: boolean;
 }) {
   const [disks, setDisks]             = useState<EnrichedDisk[]>([]);
   const [loading, setLoading]         = useState(true);
@@ -230,9 +231,11 @@ function DiskPicker({ onSelect, onClose, selected, addedDisks = [] }: {
       .finally(() => setLoading(false));
   }, []);
 
+  const displayDisks = onlyFree ? disks.filter(d => !d.in_use) : disks;
+
   const handleClick = (disk: EnrichedDisk) => {
     const path = `/dev/${disk.name}`;
-    if (addedSet.has(path)) return; // already added — no action
+    if (addedSet.has(path)) return;
     if (disk.in_use) { setConfirmDisk(disk); return; }
     onSelect(path);
     onClose();
@@ -275,13 +278,15 @@ function DiskPicker({ onSelect, onClose, selected, addedDisks = [] }: {
             <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
             <span style={{ fontSize: 12, fontFamily: 'var(--font-ui)' }}>Scanning devices…</span>
           </div>
-        ) : disks.length === 0 ? (
+        ) : displayDisks.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '28px 0' }}>
-            <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>No block devices found</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+              {onlyFree ? 'No free disks available — all disks are in a pool' : 'No block devices found'}
+            </p>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto' }}>
-            {disks.map((disk, i) => {
+            {displayDisks.map((disk, i) => {
               const path = `/dev/${disk.name}`;
               const isSelected = selected === path;
               const isAdded = addedSet.has(path);
@@ -331,9 +336,10 @@ function DiskPicker({ onSelect, onClose, selected, addedDisks = [] }: {
 }
 
 /* ── Inline Disk Picker (embedded in modal body, no overlay) ─────────────────── */
-function InlineDiskPicker({ selected, onSelect }: {
+function InlineDiskPicker({ selected, onSelect, onlyFree = false }: {
   selected: string;
   onSelect: (path: string) => void;
+  onlyFree?: boolean;
 }) {
   const [disks, setDisks]             = useState<EnrichedDisk[]>([]);
   const [loading, setLoading]         = useState(true);
@@ -345,6 +351,9 @@ function InlineDiskPicker({ selected, onSelect }: {
       .catch(() => setDisks([]))
       .finally(() => setLoading(false));
   }, []);
+
+  // When onlyFree is true, only show disks not already in a ZFS pool
+  const displayDisks = onlyFree ? disks.filter(d => !d.in_use) : disks;
 
   const handleClick = (disk: EnrichedDisk) => {
     if (disk.in_use) { setConfirmDisk(disk); return; }
@@ -375,11 +384,15 @@ function InlineDiskPicker({ selected, onSelect }: {
           <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
           <span style={{ fontSize: 12, fontFamily: 'var(--font-ui)' }}>Scanning…</span>
         </div>
-      ) : disks.length === 0 ? (
-        <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: '20px 0' }}>No block devices found</p>
+      ) : displayDisks.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '20px 0' }}>
+          <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: 0 }}>
+            {onlyFree ? 'No free disks available — all disks are already in a pool' : 'No block devices found'}
+          </p>
+        </div>
       ) : (
         <div style={{ maxHeight: 260, overflowY: 'auto' }}>
-          {disks.map((disk, i) => {
+          {displayDisks.map((disk, i) => {
             const path = `/dev/${disk.name}`;
             const isSelected = selected === path;
             const sysAccent = 'rgba(251,146,60,0.7)';
@@ -400,7 +413,8 @@ function InlineDiskPicker({ selected, onSelect }: {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: isSelected ? 'var(--accent)' : 'var(--text-primary)', fontWeight: 600 }}>{path}</span>
-                    <DiskStatusBadge disk={disk} />
+                    {disk.is_system && <span style={{ fontSize: 10, color: '#fb923c', background: 'rgba(251,146,60,0.15)', border: '1px solid rgba(251,146,60,0.4)', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', fontWeight: 700, flexShrink: 0 }}>⚠ OS DISK</span>}
+                    {!onlyFree && !disk.is_system && <DiskStatusBadge disk={disk} />}
                   </div>
                   {(disk.model || disk.serial) && (
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1, fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -422,27 +436,69 @@ function InlineDiskPicker({ selected, onSelect }: {
 function SmartModal({ device, onClose }: { device: string; onClose: () => void }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [enrichedDisk, setEnrichedDisk] = useState<EnrichedDisk | null>(null);
 
   useEffect(() => {
-    api.getSmartData(device).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
+    const shortName = device.replace(/^\/dev\//, '');
+    Promise.all([
+      api.getSmartData(device).then(setData).catch(() => setData(null)),
+      api.getEnrichedDisks().then(res => {
+        const found = (res.disks || []).find((d: EnrichedDisk) => d.name === shortName);
+        setEnrichedDisk(found || null);
+      }).catch(() => {}),
+    ]).finally(() => setLoading(false));
   }, [device]);
 
   const passed    = data?.smart_status?.passed;
   const temp      = data?.temperature?.current;
   const hours     = data?.power_on_time?.hours;
   const attrs     = data?.ata_smart_attributes?.table || [];
-  const modelName = data?.model_name || data?.scsi_model_name || null;
-  const serial    = data?.serial_number || null;
+  const modelName = data?.model_name || data?.scsi_model_name || enrichedDisk?.model || null;
+  const serial    = data?.serial_number || enrichedDisk?.serial || null;
   const firmware  = data?.firmware_version || null;
   const capacityBytes: number | null = data?.user_capacity?.bytes ?? null;
+  const sizeHuman = capacityBytes ? null : (enrichedDisk?.size_human || null);
+  const isOnline  = data !== null && !data?.message;
+
+  // ZFS pool state (ground truth): ONLINE / FAULTED / OFFLINE / DEGRADED / NOT_IN_POOL
+  const zfsState: string | undefined = data?.zfs_disk_state;
+  const inPool = zfsState && zfsState !== 'NOT_IN_POOL';
+
+  // Health: use ZFS pool state as primary source (reliable for SCSI/virtual disks).
+  // Fall back to SMART passed only when the disk is not in any pool.
+  const zfsHealthy  = zfsState === 'ONLINE' || zfsState === 'AVAIL';
+  const zfsWarn     = zfsState === 'DEGRADED' || zfsState === 'INUSE';
+  const zfsFailed   = inPool && !zfsHealthy && !zfsWarn;
+
+  const healthValue = inPool
+    ? zfsState!
+    : (passed === true ? 'PASSED' : passed === false ? 'FAILED' : 'N/A');
+  const healthColor =
+    zfsHealthy      ? 'var(--success)' :
+    zfsWarn         ? 'var(--warning)' :
+    zfsFailed       ? 'var(--danger)'  :
+    passed === true ? 'var(--success)' :
+    passed === false? 'var(--danger)'  :
+    'var(--text-muted)';
+  const healthBorder =
+    zfsHealthy      ? 'rgba(34,197,94,0.3)'  :
+    zfsWarn         ? 'rgba(245,158,11,0.3)' :
+    zfsFailed       ? 'rgba(239,68,68,0.3)'  :
+    passed === true ? 'rgba(34,197,94,0.3)'  :
+    passed === false? 'rgba(239,68,68,0.3)'  :
+    'var(--border)';
+
+  const tempColor   = temp !== undefined && temp > 0
+    ? (temp > 55 ? 'var(--danger)' : temp > 45 ? 'var(--warning)' : 'var(--success)')
+    : 'var(--text-muted)';
 
   return (
     <div className="modal-overlay" style={S.modal.overlay} onClick={onClose}>
-      <div className="modal-box" style={{ ...S.modal.box, maxWidth: 560, maxHeight: '85vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+      <div className="modal-box" style={{ ...S.modal.box, maxWidth: 520, maxHeight: '85vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <div>
             <h4 style={S.modal.title}>SMART Data</h4>
-            <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{device}</p>
+            <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>/dev/{device.replace(/^\/dev\//, '')}</p>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
         </div>
@@ -454,58 +510,60 @@ function SmartModal({ device, onClose }: { device: string; onClose: () => void }
         ) : !data ? (
           <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: '24px 0' }}>No SMART data available</p>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-            {/* Hardware info row */}
-            {(modelName || serial || capacityBytes) && (
-              <div style={{ padding: '10px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {modelName && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Model</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{modelName}</span>
-                  </div>
-                )}
-                {serial && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Serial</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{serial}</span>
-                  </div>
-                )}
-                {firmware && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Firmware</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{firmware}</span>
-                  </div>
-                )}
-                {capacityBytes !== null && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Capacity</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{formatBytes(capacityBytes)}</span>
-                  </div>
-                )}
+            {/* Top row: Status + Online + Temp + Power-On — all in one line */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+              {/* Health Status — sourced from ZFS pool state when available */}
+              <div style={{ background: 'var(--bg-elevated)', border: `1px solid ${healthBorder}`, borderRadius: 'var(--radius)', padding: '10px 12px', textAlign: 'center' }}>
+                <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5 }}>Health</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: healthColor }}>{healthValue}</div>
               </div>
-            )}
+              {/* Online status */}
+              <div style={{ background: 'var(--bg-elevated)', border: `1px solid ${isOnline ? 'rgba(34,197,94,0.3)' : 'var(--border)'}`, borderRadius: 'var(--radius)', padding: '10px 12px', textAlign: 'center' }}>
+                <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5 }}>Status</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: isOnline ? 'var(--success)' : 'var(--danger)' }}>{isOnline ? 'ONLINE' : 'OFFLINE'}</div>
+              </div>
+              {/* Temperature */}
+              <div style={{ background: 'var(--bg-elevated)', border: `1px solid ${temp !== undefined && temp > 45 ? 'rgba(245,158,11,0.3)' : 'var(--border)'}`, borderRadius: 'var(--radius)', padding: '10px 12px', textAlign: 'center' }}>
+                <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5 }}>Temp</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: tempColor }}>
+                  {temp !== undefined && temp > 0 ? `${temp}°C` : 'N/A'}
+                </div>
+              </div>
+              {/* Power-On Hours */}
+              <div style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 12px', textAlign: 'center' }}>
+                <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5 }}>Power-On</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
+                  {hours !== undefined ? (hours >= 8760 ? `${(hours/8760).toFixed(1)}y` : `${(hours/24).toFixed(0)}d`) : 'N/A'}
+                </div>
+              </div>
+            </div>
 
-            {/* Status tiles */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+            {/* Device info — compact key/value table */}
+            <div style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
               {[
-                { label: 'Status', value: passed === true ? 'PASSED' : 'FAILED', color: passed === true ? 'var(--success)' : 'var(--danger)' },
-                ...(temp !== undefined && temp > 0 ? [{ label: 'Temp', value: `${temp}°C`, color: temp > 55 ? 'var(--danger)' : temp > 45 ? 'var(--warning)' : 'var(--text-primary)' }] : []),
-                ...(hours !== undefined ? [{ label: 'Power-On', value: hours >= 8760 ? `${(hours/8760).toFixed(1)}y` : `${(hours/24).toFixed(0)}d`, color: 'var(--text-primary)' }] : []),
-              ].map(({ label, value, color }) => (
-                <div key={label} style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 14px', textAlign: 'center' }}>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>{label}</div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color }}>{value}</div>
+                { label: 'Model',    value: modelName },
+                { label: 'Serial',   value: serial },
+                { label: 'Firmware', value: firmware },
+                { label: 'Capacity', value: capacityBytes !== null ? formatBytes(capacityBytes) : sizeHuman },
+              ].filter(r => r.value).map((row, i, arr) => (
+                <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 14px', borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', flexShrink: 0 }}>{row.label}</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', fontWeight: 600, textAlign: 'right', wordBreak: 'break-all' }}>{row.value}</span>
                 </div>
               ))}
+              {![modelName, serial, firmware, capacityBytes].some(Boolean) && (
+                <div style={{ padding: '12px 14px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>No device identity data available</div>
+              )}
             </div>
 
             {attrs.length > 0 && (
               <div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Attributes</div>
-                <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Attributes</div>
+                <div style={{ maxHeight: 200, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
                   {attrs.map((a: any, i: number) => (
-                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)' }}>
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 10px', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)' }}>
                       <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{a.name}</span>
                       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: a.thresh > 0 && a.value <= a.thresh ? 'var(--danger)' : 'var(--text-muted)', fontWeight: 600 }}>{a.raw?.value ?? a.value}</span>
                     </div>
@@ -533,6 +591,16 @@ function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuc
   const [step, setStep]               = useState<1 | 2>(preselectedDisk ? 2 : 1);
   const [enrichedDisks, setEnrichedDisks] = useState<EnrichedDisk[]>([]);
 
+  // Sync step/selectedOld whenever preselectedDisk changes (handles modal reuse)
+  useEffect(() => {
+    if (preselectedDisk) {
+      setSelectedOld(preselectedDisk);
+      setStep(2);
+    } else {
+      setStep(1);
+    }
+  }, [preselectedDisk]);
+
   useEffect(() => {
     api.getEnrichedDisks()
       .then(res => setEnrichedDisks(res.disks || []))
@@ -540,7 +608,7 @@ function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuc
   }, []);
 
   const getEnrichedInfo = (path: string): EnrichedDisk | null => {
-    const name = path.replace('/dev/', '');
+    const name = path.replace(/^\/dev\//, '');
     return enrichedDisks.find(d => d.name === name) || null;
   };
 
@@ -553,6 +621,9 @@ function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuc
     finally { setReplacing(false); }
   };
 
+  const stateColor = (s: string) =>
+    s === 'ONLINE' ? 'var(--success)' : s === 'DEGRADED' ? 'var(--warning)' : 'var(--danger)';
+
   return (
     <div className="modal-overlay" style={S.modal.overlay} onClick={onClose}>
       <div className="modal-box" style={{ ...S.modal.box, maxWidth: 500, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
@@ -560,7 +631,7 @@ function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuc
           <div>
             <h3 style={S.modal.title}>Replace Disk</h3>
             <p style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>
-              zpool replace {poolName} · Step {step}/2
+              zpool replace {poolName}{step === 2 && selectedOld ? ` · replacing ${selectedOld}` : ''}
             </p>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={16} /></button>
@@ -569,34 +640,45 @@ function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuc
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
           {step === 1 ? (
             <>
-              <label style={S.modal.label}>Step 1 — Select disk to replace</label>
+              <label style={S.modal.label}>Select disk to replace</label>
               {poolDisks.length === 0 ? (
-                <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>No disks found in pool</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px', background: 'var(--bg-elevated)', borderRadius: 'var(--radius)', color: 'var(--text-muted)', fontSize: 12 }}>
+                  <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> Loading pool disks…
+                </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {poolDisks.map((d, i) => {
                     const info = getEnrichedInfo(d.path);
+                    const isSelected = selectedOld === d.path;
+                    const sc = stateColor(d.state);
                     return (
                     <button key={i} onClick={() => setSelectedOld(d.path)} style={{
                       display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
-                      background: selectedOld === d.path ? 'var(--warning-dim)' : 'var(--bg-elevated)',
-                      border: `1px solid ${selectedOld === d.path ? 'rgba(245,158,11,0.3)' : 'var(--border)'}`,
-                      borderRadius: 'var(--radius)', cursor: 'pointer', textAlign: 'left', transition: 'all 0.12s',
+                      background: isSelected ? 'var(--warning-dim)' : 'var(--bg-elevated)',
+                      border: `1px solid ${isSelected ? 'rgba(245,158,11,0.5)' : 'var(--border)'}`,
+                      borderRadius: 'var(--radius)', cursor: 'pointer', textAlign: 'left', transition: 'all 0.12s', width: '100%',
                     }}>
-                      <HardDrive size={14} style={{ color: selectedOld === d.path ? 'var(--warning)' : 'var(--text-muted)', flexShrink: 0 }} />
+                      <HardDrive size={14} style={{ color: isSelected ? 'var(--warning)' : sc, flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{d.path}</div>
-                        <div style={{ fontSize: 10, color: d.state === 'ONLINE' ? 'var(--success)' : 'var(--danger)', textTransform: 'uppercase', marginTop: 2 }}>{d.state}</div>
-                        {(info?.model || info?.serial) && (
+                        {/* Disk name prominently */}
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text-primary)', fontWeight: 700 }}>
+                          {d.path}
+                        </div>
+                        {/* State badge */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                          <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: sc }}>{d.state}</span>
+                          {info?.size_human && (
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{info.size_human}</span>
+                          )}
+                        </div>
+                        {/* Model */}
+                        {info?.model && (
                           <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {[info.model, info.serial].filter(Boolean).join(' · ')}
+                            {info.model}
                           </div>
                         )}
                       </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, flexShrink: 0 }}>
-                        {info?.size_human && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>{info.size_human}</span>}
-                        {selectedOld === d.path && <CheckCircle size={13} style={{ color: 'var(--warning)' }} />}
-                      </div>
+                      {isSelected && <CheckCircle size={14} style={{ color: 'var(--warning)', flexShrink: 0 }} />}
                     </button>
                     );
                   })}
@@ -604,20 +686,56 @@ function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuc
               )}
               <div style={{ display: 'flex', gap: 10 }}>
                 <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
-                <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={() => setStep(2)} disabled={!selectedOld}>
+                <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                  onClick={() => { if (selectedOld) setStep(2); }}
+                  disabled={!selectedOld}
+                >
                   <ChevronRight size={14} /> Next
                 </button>
               </div>
             </>
           ) : (
             <>
-              <div style={{ background: 'var(--warning-dim)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 'var(--radius)', padding: '10px 14px' }}>
-                <div style={{ fontSize: 10, color: 'var(--warning)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Replacing</div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)' }}>{selectedOld}</div>
-              </div>
-              <label style={S.modal.label}>Step 2 — Select replacement disk</label>
-              {/* Inline DiskPicker - no overlay popup */}
-              <InlineDiskPicker selected={newDisk} onSelect={setNewDisk} />
+              {/* Show which disk is being replaced with its state */}
+              {(() => {
+                const replacingDisk = poolDisks.find(d => d.path === selectedOld);
+                const info = getEnrichedInfo(selectedOld);
+                const sc = replacingDisk ? stateColor(replacingDisk.state) : 'var(--text-muted)';
+                return (
+                  <div style={{ background: 'var(--warning-dim)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 'var(--radius)', padding: '12px 14px' }}>
+                    <div style={{ fontSize: 9, color: 'var(--warning)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Replacing</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <HardDrive size={14} style={{ color: sc, flexShrink: 0 }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text-primary)', fontWeight: 700 }}>{selectedOld}</div>
+                        <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+                          {replacingDisk && <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: sc }}>{replacingDisk.state}</span>}
+                          {info?.size_human && <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{info.size_human}</span>}
+                          {info?.model && <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{info.model}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+              <label style={S.modal.label}>Select replacement disk</label>
+              <InlineDiskPicker selected={newDisk} onSelect={setNewDisk} onlyFree={true} />
+              {newDisk && (() => {
+                const info = getEnrichedInfo(newDisk);
+                if (!info) return null;
+                const diskLabel = newDisk.replace(/^\/dev\//, '');
+                return (
+                  <div style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: 'var(--radius)', padding: '10px 14px' }}>
+                    <div style={{ fontSize: 9, color: 'var(--success)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Selected Replacement</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>{diskLabel}</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      {info.model   && <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>Model: {info.model}</div>}
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>Size: {info.size_human}</div>
+                      {info.serial  && <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>Serial: {info.serial}</div>}
+                    </div>
+                  </div>
+                );
+              })()}
               <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
                 <div onClick={() => setForce(v => !v)} style={{ width: 36, height: 20, borderRadius: 10, background: force ? 'var(--warning)' : 'var(--bg-elevated)', border: '1px solid var(--border)', position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}>
                   <div style={{ position: 'absolute', top: 2, left: force ? 17 : 2, width: 14, height: 14, borderRadius: 7, background: '#fff', transition: 'left 0.2s' }} />
@@ -631,9 +749,11 @@ function ReplaceDiskModal({ poolName, poolDisks, preselectedDisk, onClose, onSuc
                 </div>
               )}
               <div style={{ display: 'flex', gap: 10 }}>
-                <button className="btn btn-secondary" onClick={() => setStep(1)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <ChevronDown size={13} style={{ transform: 'rotate(90deg)' }} /> Back
-                </button>
+                {!preselectedDisk && (
+                  <button className="btn btn-secondary" onClick={() => setStep(1)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <ChevronDown size={13} style={{ transform: 'rotate(90deg)' }} /> Back
+                  </button>
+                )}
                 <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={handleReplace} disabled={replacing || !newDisk.trim()}>
                   {replacing ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <ArrowLeftRight size={14} />}
                   {replacing ? 'Replacing…' : 'Replace'}
@@ -656,22 +776,24 @@ interface ImportConfig {
   enabled: boolean;
   bind_mounts: Array<{ source: string; target: string }>;
   dataset_keys: Array<{ dataset: string; key_file: string }>;
+  mountpoint_override?: string;
 }
 
 /* ── Auto-Mount Config Modal (per-pool) ─────────────────────────────────────── */
 function AutoMountModal({ poolName, onClose, onSuccess }: { poolName: string; onClose: () => void; onSuccess: () => void }) {
   const { notify } = useNotifications();
-  const [loading, setLoading]         = useState(true);
-  const [existing, setExisting]       = useState<ImportConfig | null>(null);
-  const [enabled, setEnabled]         = useState(true);
-  const [onStartup, setOnStartup]     = useState(true);
-  const [encrypted, setEncrypted]     = useState(false);
-  const [keyFile, setKeyFile]         = useState('');
-  const [datasetKeys, setDatasetKeys] = useState<Array<{ dataset: string; key_file: string }>>([]);
-  const [bindMounts, setBindMounts]   = useState<Array<{ source: string; target: string }>>([]);
-  const [saving, setSaving]           = useState(false);
-  const [running, setRunning]         = useState(false);
-  const [error, setError]             = useState('');
+  const [loading, setLoading]               = useState(true);
+  const [existing, setExisting]             = useState<ImportConfig | null>(null);
+  const [enabled, setEnabled]               = useState(true);
+  const [onStartup, setOnStartup]           = useState(true);
+  const [encrypted, setEncrypted]           = useState(false);
+  const [keyFile, setKeyFile]               = useState('');
+  const [datasetKeys, setDatasetKeys]       = useState<Array<{ dataset: string; key_file: string }>>([]);
+  const [bindMounts, setBindMounts]         = useState<Array<{ source: string; target: string }>>([]);
+  const [mountpointOverride, setMountpointOverride] = useState('');
+  const [saving, setSaving]                 = useState(false);
+  const [running, setRunning]               = useState(false);
+  const [error, setError]                   = useState('');
 
   useEffect(() => {
     api.getImportConfigs()
@@ -685,23 +807,27 @@ function AutoMountModal({ poolName, onClose, onSuccess }: { poolName: string; on
           setKeyFile(found.key_file || '');
           setDatasetKeys(found.dataset_keys?.map(d => ({ ...d })) || []);
           setBindMounts(found.bind_mounts?.map(b => ({ ...b })) || []);
+          setMountpointOverride(found.mountpoint_override || '');
         }
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [poolName]);
 
+  const buildPayload = (): ImportConfig => ({
+    name: poolName,
+    encrypted,
+    key_file: encrypted && keyFile.trim() ? keyFile.trim() : undefined,
+    import_on_startup: onStartup,
+    enabled,
+    bind_mounts: bindMounts.filter(b => b.source.trim() && b.target.trim()),
+    dataset_keys: datasetKeys.filter(d => d.dataset.trim() && d.key_file.trim()),
+    mountpoint_override: mountpointOverride.trim() || undefined,
+  });
+
   const handleSave = async () => {
     setSaving(true); setError('');
-    const payload: ImportConfig = {
-      name: poolName,
-      encrypted,
-      key_file: encrypted && keyFile.trim() ? keyFile.trim() : undefined,
-      import_on_startup: onStartup,
-      enabled,
-      bind_mounts: bindMounts.filter(b => b.source.trim() && b.target.trim()),
-      dataset_keys: datasetKeys.filter(d => d.dataset.trim() && d.key_file.trim()),
-    };
+    const payload = buildPayload();
     try {
       if (existing) await api.updateImportConfig(poolName, payload);
       else          await api.saveImportConfig(payload);
@@ -713,15 +839,7 @@ function AutoMountModal({ poolName, onClose, onSuccess }: { poolName: string; on
 
   const handleRunNow = async () => {
     setRunning(true); setError('');
-    const payload: ImportConfig = {
-      name: poolName,
-      encrypted,
-      key_file: encrypted && keyFile.trim() ? keyFile.trim() : undefined,
-      import_on_startup: onStartup,
-      enabled,
-      bind_mounts: bindMounts.filter(b => b.source.trim() && b.target.trim()),
-      dataset_keys: datasetKeys.filter(d => d.dataset.trim() && d.key_file.trim()),
-    };
+    const payload = buildPayload();
     try {
       if (existing) await api.updateImportConfig(poolName, payload);
       else          await api.saveImportConfig(payload);
@@ -814,6 +932,22 @@ function AutoMountModal({ poolName, onClose, onSuccess }: { poolName: string; on
               </div>
             )}
 
+            {/* Mountpoint Override — directly sets zfs mountpoint property */}
+            <div>
+              <label style={S.modal.label}>Pool Mountpoint <span style={{ color: 'var(--text-muted)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(optional)</span></label>
+              <input
+                style={{ ...S.modal.input, fontFamily: 'var(--font-mono)' }}
+                type="text"
+                placeholder={`/mnt/${poolName}`}
+                value={mountpointOverride}
+                onChange={e => setMountpointOverride(e.target.value)}
+              />
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
+                Sets the ZFS mountpoint directly: <code style={{ fontFamily: 'var(--font-mono)' }}>zfs set mountpoint=… {poolName}</code><br/>
+                Files written here go into the pool. Leave empty to keep the current mountpoint.
+              </div>
+            </div>
+
             {/* Bind mounts */}
             <div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -864,7 +998,7 @@ ${bindMounts.filter(b => b.source && b.target).map(b => `\n# Bind mount\nmkdir -
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="btn btn-secondary" onClick={onClose} style={{ flex: 1 }}>Cancel</button>
               {existing && (
-                <button className="btn btn-secondary" onClick={handleRunNow} disabled={running} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <button className="btn btn-secondary" onClick={handleRunNow} disabled={running} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                   {running ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={13} />}
                   {running ? 'Mounting…' : 'Run Now'}
                 </button>
@@ -1178,12 +1312,18 @@ function ExpandPoolModal({ poolName, poolVdevs, zfsVersion, onClose, onSuccess }
   const [expanding, setExpanding]     = useState(false);
   const [error, setError]             = useState('');
   const [mode, setMode]               = useState<'extend' | 'cache' | 'spare'>('extend');
+  const [cacheType, setCacheType]     = useState<'l2arc' | 'slog'>('l2arc');
   const [disk, setDisk]               = useState('');
   const [raidzEnabled, setRaidzEnabled] = useState<boolean | null>(null);
 
   const dataVdevs = poolVdevs.filter((v: any) => !['log', 'cache', 'spare'].includes(v.type));
   const [expandMode, setExpandMode] = useState<'new' | 'attach'>(dataVdevs.length > 0 ? 'attach' : 'new');
   const [targetVdev, setTargetVdev] = useState(dataVdevs.length > 0 ? (dataVdevs[0].name || dataVdevs[0].type || '') : '');
+
+  // All disk short names already in this pool (e.g. "sde", "sdb")
+  const poolDiskNames = new Set<string>(
+    poolVdevs.flatMap((v: any) => (v.disks || []).map((d: any) => (d.path || '').replace(/^\/dev\//, '')))
+  );
 
   // zpool attach (RAIDZ expansion) requires OpenZFS >= 2.1
   const attachSupported = (() => {
@@ -1205,12 +1345,14 @@ function ExpandPoolModal({ poolName, poolVdevs, zfsVersion, onClose, onSuccess }
   const modeLabels: Record<string, string> = { extend: 'Extend Pool', cache: 'Add Cache', spare: 'Add Hot Spare' };
   const modeHints: Record<string, React.ReactNode> = {
     extend: <>Expand your pool by adding a new vdev or attaching to an existing one (e.g. RAIDZ Expansion).</>,
-    cache:  <>Adds one disk as an <strong>L2ARC cache</strong> to accelerate read performance.</>,
-    spare:  <>Adds a disk as a <strong>hot spare</strong> — ZFS will automatically use it to replace a failed drive (<code style={{ fontFamily: 'var(--font-mono)' }}>autoreplace</code> must be enabled).</>,
+    cache:  cacheType === 'l2arc'
+      ? <>Adds one disk as an <strong>L2ARC read cache</strong> to accelerate read performance. Data is volatile and survives reboots.</>
+      : <>Adds one disk as a <strong>ZIL/SLOG write log</strong> to accelerate synchronous writes and protect against power loss.</>,
+    spare:  <>Adds a disk as a <strong>hot spare</strong> — ZFS will automatically use it to replace a failed drive (<code style={{ fontFamily: 'var(--font-mono)' }}>autoreplace</code> must be enabled). Only free disks (not in any pool) are shown.</>,
   };
 
   const cmdPreview = mode === 'cache'
-    ? `zpool add ${poolName} cache ${disk || '<disk>'}`
+    ? `zpool add ${poolName} ${cacheType === 'l2arc' ? 'cache' : 'log'} ${disk || '<disk>'}`
     : mode === 'spare'
       ? `zpool add ${poolName} spare ${disk || '<disk>'}`
       : expandMode === 'attach'
@@ -1219,10 +1361,19 @@ function ExpandPoolModal({ poolName, poolVdevs, zfsVersion, onClose, onSuccess }
 
   const handleExpand = async () => {
     if (!ready) { setError('Select a disk to continue'); return; }
+    // Block adding a disk that is already a member of this pool as a spare
+    if (mode === 'spare') {
+      const shortName = disk.replace(/^\/dev\//, '');
+      if (poolDiskNames.has(shortName)) {
+        setError(`${disk} is already a member of pool "${poolName}" and cannot be added as a hot spare. Choose a different disk.`);
+        return;
+      }
+    }
     setExpanding(true); setError('');
     try {
       if (mode === 'cache') {
-        await api.expandPool(poolName, [disk], 'cache', false);
+        const vdevType = cacheType === 'l2arc' ? 'cache' : 'log';
+        await api.expandPool(poolName, [disk], vdevType, false);
       } else if (mode === 'spare') {
         await api.expandPool(poolName, [disk], 'spare', false);
       } else {
@@ -1254,7 +1405,7 @@ function ExpandPoolModal({ poolName, poolVdevs, zfsVersion, onClose, onSuccess }
             <label style={S.modal.label}>Operation</label>
             <div style={{ display: 'flex', gap: 8 }}>
               {(['extend', 'cache', 'spare'] as const).map(m => (
-                <button key={m} onClick={() => { setMode(m); setDisk(''); setError(''); }} style={{
+                <button key={m} onClick={() => { setMode(m); setDisk(''); setError(''); setCacheType('l2arc'); }} style={{
                   flex: 1, padding: '8px 6px', fontSize: 12, fontFamily: 'var(--font-ui)',
                   background: mode === m ? 'var(--accent)' : 'var(--bg-elevated)',
                   color: mode === m ? '#fff' : 'var(--text-secondary)',
@@ -1266,6 +1417,34 @@ function ExpandPoolModal({ poolName, poolVdevs, zfsVersion, onClose, onSuccess }
               ))}
             </div>
           </div>
+
+          {/* Cache type selection (L2ARC vs ZIL/SLOG) */}
+          {mode === 'cache' && (
+            <div>
+              <label style={S.modal.label}>Cache Type</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {([
+                  { key: 'l2arc', label: 'L2ARC', sub: 'Read Cache', desc: 'zpool add … cache /dev/[disk]' },
+                  { key: 'slog',  label: 'ZIL/SLOG', sub: 'Write Log', desc: 'zpool add … log /dev/[disk]' },
+                ] as const).map(opt => (
+                  <button
+                    key={opt.key}
+                    onClick={() => setCacheType(opt.key)}
+                    style={{
+                      flex: 1, padding: '10px 12px', borderRadius: 'var(--radius)', cursor: 'pointer', textAlign: 'left',
+                      background: cacheType === opt.key ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                      border: `1px solid ${cacheType === opt.key ? 'var(--accent-mid)' : 'var(--border)'}`,
+                      transition: 'all 0.12s',
+                    }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 700, color: cacheType === opt.key ? 'var(--accent)' : 'var(--text-primary)', fontFamily: 'var(--font-ui)' }}>{opt.label}</div>
+                    <div style={{ fontSize: 11, color: cacheType === opt.key ? 'var(--accent)' : 'var(--text-muted)', fontFamily: 'var(--font-ui)', marginTop: 2 }}>{opt.sub}</div>
+                    <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>{opt.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Hint */}
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 14px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 'var(--radius)' }}>
@@ -1321,7 +1500,17 @@ function ExpandPoolModal({ poolName, poolVdevs, zfsVersion, onClose, onSuccess }
           )}
 
           <label style={S.modal.label}>Select disk</label>
-          <InlineDiskPicker selected={disk} onSelect={setDisk} />
+          <InlineDiskPicker selected={disk} onSelect={setDisk} onlyFree={true} />
+
+          {/* Warn when selected disk is already in the pool (spare mode only) */}
+          {mode === 'spare' && disk && poolDiskNames.has(disk.replace(/^\/dev\//, '')) && (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 'var(--radius)' }}>
+              <AlertTriangle size={13} style={{ color: 'var(--danger)', flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 12, color: 'var(--danger)', lineHeight: 1.5 }}>
+                <strong>{disk}</strong> is already a member of this pool. Select a different disk to use as a hot spare.
+              </span>
+            </div>
+          )}
 
           <div style={{ background: 'var(--bg-elevated)', borderRadius: 'var(--radius)', padding: '8px 12px', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Command preview</div>
@@ -1795,6 +1984,7 @@ function CreatePoolModal({ onClose, onSuccess, usedDisks = new Set<string>() }: 
           onClose={() => setShowPicker(false)}
           selected={pickerTarget !== null ? devices[pickerTarget] : undefined}
           addedDisks={devices.filter((d, idx) => d.trim() && (pickerTarget === null || idx !== pickerTarget))}
+          onlyFree={true}
         />
       )}
       <div className="modal-overlay" style={S.modal.overlay} onClick={onClose}>
@@ -1901,7 +2091,7 @@ function CreatePoolModal({ onClose, onSuccess, usedDisks = new Set<string>() }: 
 
 /* ── Disk Row ─────────────────────────────────────────────────────────────────── */
 function DiskRow({ disk, poolName, onReplace, onSmartClick }: {
-  disk: { path: string; state: string; replacing_with?: string };
+  disk: { path: string; state: string; replacing_with?: string; via_spare?: boolean; being_replaced_by?: string };
   poolName: string;
   onReplace: (disk: string) => void;
   onSmartClick: (disk: string) => void;
@@ -1909,14 +2099,27 @@ function DiskRow({ disk, poolName, onReplace, onSmartClick }: {
   const [hov, setHov] = useState(false);
   const isReplacing = !!disk.replacing_with;
   const isOnline    = disk.state === 'ONLINE';
+  const isFailed    = ['REMOVED', 'FAULTED', 'UNAVAIL', 'OFFLINE'].includes(disk.state);
+  const isDegraded  = disk.state === 'DEGRADED';
 
-  const stateColor = isReplacing         ? 'var(--info)'
-    : isOnline                           ? 'var(--success)'
-    : disk.state === 'DEGRADED'          ? 'var(--warning)'
+  // Always show the actual disk state color — even when a spare is covering it
+  const stateColor = isOnline  ? (isReplacing ? 'var(--info)' : 'var(--success)')
+    : isFailed                 ? 'var(--danger)'
+    : isDegraded               ? 'var(--warning)'
     : 'var(--danger)';
 
-  const stateLabel = isReplacing
-    ? `replacing to ${disk.replacing_with}`
+  // Show state + full replacement chain so the user always knows what's happening:
+  //   via_spare=true, no being_replaced_by  → spare covering:   "removed → spare: sdh"
+  //   via_spare=true, being_replaced_by=sda → spare + replace:  "degraded → spare: sdh → sda"
+  //   via_spare=false                       → manual replace:   "replacing → sda"
+  const rw  = (disk.replacing_with    || '').replace(/^\/dev\//, '');
+  const rbr = (disk.being_replaced_by || '').replace(/^\/dev\//, '');
+  const stateLabel = disk.replacing_with
+    ? disk.via_spare
+      ? rbr
+        ? `${disk.state.toLowerCase()} → spare: ${rw} → ${rbr}` // spare + new disk resilvering
+        : `${disk.state.toLowerCase()} → spare: ${rw}`           // spare covering
+      : `replacing → ${rw}`                                       // manual replace
     : disk.state.toLowerCase();
 
   return (
@@ -1928,8 +2131,10 @@ function DiskRow({ disk, poolName, onReplace, onSmartClick }: {
     }}>
       <HardDrive size={13} style={{ color: stateColor, flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div title={disk.path} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-primary)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{disk.path}</div>
-        <div style={{ fontSize: 9, color: stateColor, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{stateLabel}</div>
+        <div title={disk.path || 'missing'} style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: disk.path ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: disk.path ? 'normal' : 'italic' }}>
+          {disk.path ? disk.path.replace(/^\/dev\//, '') : '(missing)'}
+        </div>
+        <div style={{ fontSize: 9, color: stateColor, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 1 }}>{stateLabel}</div>
       </div>
       <div style={{ display: 'flex', gap: 4, opacity: hov ? 1 : 0, transition: 'opacity 0.12s' }}>
         <button title="SMART Data" onClick={() => onSmartClick(disk.path)} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-muted)' }}>
@@ -2593,7 +2798,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
     return types.map(t => t.toUpperCase()).join('+');
   };
 
-  const getPoolDisks = (poolName: string): { path: string; state: string; replacing_with?: string }[] => {
+  const getPoolDisks = (poolName: string): { path: string; state: string; replacing_with?: string; via_spare?: boolean; being_replaced_by?: string }[] => {
     const vdevs = poolVdevs[poolName] || [];
     // Exclude spare/log/cache vdevs — they get their own sections.
     return vdevs.filter((v: any) => !['spare', 'log', 'cache'].includes(v.type)).flatMap((v: any) => v.disks || []);
@@ -2692,12 +2897,31 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
 
   const handleActivateSpare = async (poolName: string, failedDisk: string, spareDisk: string) => {
     try {
-      await api.replaceDisk(poolName, failedDisk, spareDisk, false);
+      // ZFS needs full /dev/ path for the new disk, not just the short name
+      const newDisk = spareDisk.startsWith('/dev/') ? spareDisk : `/dev/${spareDisk}`;
+      await api.replaceDisk(poolName, failedDisk, newDisk, false);
       showToast(`Spare ${spareDisk} activated — replacing ${failedDisk}`, 'success');
       onRefresh();
     } catch (err: any) {
       showToast(err.message || 'Failed to activate spare', 'error');
     }
+  };
+
+  const handleRemoveDevice = (poolName: string, device: string, label: string) => {
+    setConfirmState({
+      title: `Remove ${label}`,
+      message: `Remove "${device}" from pool "${poolName}"? The pool will continue without it.`,
+      onConfirm: async () => {
+        try {
+          await api.removeDevice(poolName, device);
+          showToast(`${device} removed from ${poolName}`, 'success');
+          refreshPoolVdevs(poolName);
+          onRefresh();
+        } catch (err: any) {
+          showToast(err.message || 'Remove failed', 'error');
+        }
+      },
+    });
   };
 
   const handleToggleStatus = async (poolName: string) => {
@@ -2757,6 +2981,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
       )}
       {replaceTarget && (
         <ReplaceDiskModal
+          key={`${replaceTarget.pool}-${replaceTarget.preselectedDisk || 'pick'}`}
           poolName={replaceTarget.pool}
           poolDisks={getPoolDisks(replaceTarget.pool)}
           preselectedDisk={replaceTarget.preselectedDisk}
@@ -2828,9 +3053,11 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
           const capColor   = pool.cap > 90 ? 'var(--danger)' : pool.cap > 80 ? 'var(--warning)' : 'var(--accent)';
           const isOnline   = pool.health === 'ONLINE';
 
-          // Hot spare detection
+          // Hot spare / cache / log detection
           const allVdevs    = poolVdevs[pool.name] || [];
           const spareDisks  = allVdevs.filter((v: any) => v.type === 'spare').flatMap((v: any) => v.disks || []);
+          const cacheDisks  = allVdevs.filter((v: any) => v.type === 'cache').flatMap((v: any) => v.disks || []);
+          const logDisks    = allVdevs.filter((v: any) => v.type === 'log').flatMap((v: any) => v.disks || []);
           const availSpares = spareDisks.filter((d: any) => d.state === 'AVAIL');
           const failedDisks = allVdevs
             .filter((v: any) => !['spare', 'log', 'cache'].includes(v.type))
@@ -2891,7 +3118,25 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                       {!isMobile && (state === 'running' ? 'Scrubbing…' : state === 'success' ? 'Done' : state === 'error' ? 'Failed' : 'Scrub')}
                       {isMobile && (state === 'running' ? 'Scrub…' : state === 'success' ? 'Done' : state === 'error' ? 'Err' : 'Scrub')}
                     </button>
-                    <button className="btn btn-secondary pool-action-btn" onClick={() => setReplaceTarget({ pool: pool.name })} title="Replace disk" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <button
+                      className="btn btn-secondary pool-action-btn"
+                      onClick={() => {
+                        if (pool.health === 'DEGRADED' || pool.health === 'FAULTED') {
+                          const degradedDisks = disks.filter(d =>
+                            (d.state === 'DEGRADED' || d.state === 'FAULTED' ||
+                             d.state === 'UNAVAIL'  || d.state === 'REMOVED') &&
+                            d.path // only auto-select if we know the disk path
+                          );
+                          if (degradedDisks.length === 1) {
+                            setReplaceTarget({ pool: pool.name, preselectedDisk: degradedDisks[0].path });
+                            return;
+                          }
+                        }
+                        setReplaceTarget({ pool: pool.name });
+                      }}
+                      title="Replace disk"
+                      style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                    >
                       <ArrowLeftRight size={13} /> {!isMobile && 'Replace'}
                     </button>
                     <button className="btn btn-secondary pool-action-btn" onClick={() => setAutoMountOpenFor(pool.name)} title="Auto-mount / import config" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -2905,9 +3150,9 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                     >
                       <Layers size={13} /> {!isMobile && 'Features'}
                     </button>
-                    <button className="btn btn-secondary pool-action-btn" onClick={() => handleToggleStatus(pool.name)} title={isExpanded ? 'Hide status code' : 'Show raw pool status code'} style={{ display: 'flex', alignItems: 'center', gap: 6, color: isExpanded ? 'var(--accent)' : undefined, borderColor: isExpanded ? 'var(--accent-mid)' : undefined }}>
+                    <button className="btn btn-secondary pool-action-btn" onClick={() => handleToggleStatus(pool.name)} title={isExpanded ? 'Hide status' : 'Show pool status'} style={{ display: 'flex', alignItems: 'center', gap: 6, color: isExpanded ? 'var(--accent)' : undefined, borderColor: isExpanded ? 'var(--accent-mid)' : undefined }}>
                       <Info size={13} />
-                      {!isMobile && (isExpanded ? 'Hide' : 'Status Code')}
+                      {!isMobile && (isExpanded ? 'Hide' : 'Status')}
                     </button>
                     <button
                       className="btn btn-secondary pool-action-btn"
@@ -3082,14 +3327,131 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                   <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>Hot Spares</div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6 }}>
                     {spareDisks.map((sd: any, si: number) => {
-                      const spareState = sd.state === 'AVAIL' ? 'online' : sd.state === 'INUSE' ? 'in use' : sd.state.toLowerCase();
-                      const spareColor = sd.state === 'AVAIL' ? 'var(--success)' : sd.state === 'INUSE' ? 'var(--info)' : 'var(--danger)';
+                      const spareShort = (sd.path || '').replace(/^\/dev\//, '');
+                      // When INUSE: find the data disk this spare is covering for
+                      const coveredDisk = sd.state === 'INUSE'
+                        ? allVdevs
+                            .filter((v: any) => !['spare', 'log', 'cache'].includes(v.type))
+                            .flatMap((v: any) => v.disks || [])
+                            .find((d: any) => (d.replacing_with || '').replace(/^\/dev\//, '') === spareShort)
+                        : null;
+                      const coveredName = coveredDisk ? (coveredDisk.path || '').replace(/^\/dev\//, '') : null;
+
+                      const spareState = sd.state === 'AVAIL'
+                        ? 'available'
+                        : sd.state === 'INUSE'
+                        ? coveredName ? `replacing ${coveredName}` : 'in use'
+                        : sd.state.toLowerCase();
+                      const spareColor = sd.state === 'AVAIL' ? 'var(--success)' : sd.state === 'INUSE' ? 'var(--warning)' : 'var(--danger)';
                       return (
-                        <div key={si} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+                        <div key={si} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--bg-elevated)', border: `1px solid ${sd.state === 'INUSE' ? 'rgba(245,158,11,0.3)' : 'var(--border)'}`, borderRadius: 'var(--radius)' }}
+                          onMouseEnter={e => (e.currentTarget as HTMLElement).querySelector('.spare-actions')?.setAttribute('style', 'display:flex;gap:4px;opacity:1')}
+                          onMouseLeave={e => (e.currentTarget as HTMLElement).querySelector('.spare-actions')?.setAttribute('style', 'display:flex;gap:4px;opacity:0')}
+                        >
                           <HardDrive size={13} style={{ color: spareColor, flexShrink: 0 }} />
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-primary)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sd.path}</div>
-                            <div style={{ fontSize: 9, color: spareColor, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{spareState}</div>
+                            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {spareShort || '(missing)'}
+                            </div>
+                            <div style={{ fontSize: 9, color: spareColor, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 1 }}>{spareState}</div>
+                          </div>
+                          <div className="spare-actions" style={{ display: 'flex', gap: 4, opacity: 0, transition: 'opacity 0.12s' }}>
+                            <button title="SMART Data" onClick={() => setSmartTarget(sd.path)} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                              <Cpu size={10} />
+                            </button>
+                            <button title="Replace Spare" onClick={() => setReplaceTarget({ pool: pool.name, preselectedDisk: sd.path })} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                              <ArrowLeftRight size={10} />
+                            </button>
+                            <button
+                              title={sd.state === 'INUSE' ? 'Remove Spare (currently resilvering)' : 'Remove Spare'}
+                              onClick={() => handleRemoveDevice(pool.name, sd.path, 'Hot Spare')}
+                              disabled={!sd.path}
+                              style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: sd.path ? 'pointer' : 'not-allowed', color: 'var(--text-muted)', opacity: sd.path ? 1 : 0.4 }}
+                            >
+                              <Trash2 size={10} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Cache (L2ARC) */}
+              {cacheDisks.length > 0 && (
+                <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>L2ARC Cache</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6 }}>
+                    {cacheDisks.map((cd: any, ci: number) => {
+                      const cdIsReplacing = !!cd.replacing_with;
+                      const cdStateLabel = cdIsReplacing
+                        ? `${cd.state.toLowerCase()} → ${cd.replacing_with}`
+                        : cd.state === 'ONLINE' ? 'l2arc' : cd.state.toLowerCase();
+                      const cdColor = cdIsReplacing || cd.state !== 'ONLINE' ? 'var(--warning)' : 'var(--info)';
+                      return (
+                        <div key={ci} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}
+                          onMouseEnter={e => (e.currentTarget as HTMLElement).querySelector('.cache-actions')?.setAttribute('style', 'display:flex;gap:4px;opacity:1')}
+                          onMouseLeave={e => (e.currentTarget as HTMLElement).querySelector('.cache-actions')?.setAttribute('style', 'display:flex;gap:4px;opacity:0')}
+                        >
+                          <HardDrive size={13} style={{ color: cdColor, flexShrink: 0 }} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {(cd.path || '').replace(/^\/dev\//, '')}
+                            </div>
+                            <div style={{ fontSize: 9, color: cdColor, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 1 }}>{cdStateLabel}</div>
+                          </div>
+                          <div className="cache-actions" style={{ display: 'flex', gap: 4, opacity: 0, transition: 'opacity 0.12s' }}>
+                            <button title="SMART Data" onClick={() => setSmartTarget(cd.path)} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                              <Cpu size={10} />
+                            </button>
+                            <button title="Replace Cache Disk" onClick={() => setReplaceTarget({ pool: pool.name, preselectedDisk: cd.path })} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                              <ArrowLeftRight size={10} />
+                            </button>
+                            <button title="Remove Cache Disk" onClick={() => handleRemoveDevice(pool.name, cd.path, 'L2ARC Cache')} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                              <Trash2 size={10} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* ZIL/SLOG (log devices) */}
+              {logDisks.length > 0 && (
+                <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>ZIL / SLOG</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6 }}>
+                    {logDisks.map((ld: any, li: number) => {
+                      const ldIsReplacing = !!ld.replacing_with;
+                      const ldStateLabel = ldIsReplacing
+                        ? `${ld.state.toLowerCase()} → ${ld.replacing_with}`
+                        : ld.state === 'ONLINE' ? 'slog' : ld.state.toLowerCase();
+                      const ldColor = ldIsReplacing || ld.state !== 'ONLINE' ? 'var(--warning)' : 'var(--accent)';
+                      return (
+                        <div key={li} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}
+                          onMouseEnter={e => (e.currentTarget as HTMLElement).querySelector('.log-actions')?.setAttribute('style', 'display:flex;gap:4px;opacity:1')}
+                          onMouseLeave={e => (e.currentTarget as HTMLElement).querySelector('.log-actions')?.setAttribute('style', 'display:flex;gap:4px;opacity:0')}
+                        >
+                          <HardDrive size={13} style={{ color: ldColor, flexShrink: 0 }} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {(ld.path || '').replace(/^\/dev\//, '')}
+                            </div>
+                            <div style={{ fontSize: 9, color: ldColor, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 1 }}>{ldStateLabel}</div>
+                          </div>
+                          <div className="log-actions" style={{ display: 'flex', gap: 4, opacity: 0, transition: 'opacity 0.12s' }}>
+                            <button title="SMART Data" onClick={() => setSmartTarget(ld.path)} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                              <Cpu size={10} />
+                            </button>
+                            <button title="Replace Log Disk" onClick={() => setReplaceTarget({ pool: pool.name, preselectedDisk: ld.path })} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                              <ArrowLeftRight size={10} />
+                            </button>
+                            <button title="Remove Log Disk" onClick={() => handleRemoveDevice(pool.name, ld.path, 'ZIL/SLOG')} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                              <Trash2 size={10} />
+                            </button>
                           </div>
                         </div>
                       );
@@ -3133,32 +3495,25 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                       <span style={{ fontSize: 12 }}>Fetching status…</span>
                     </div>
                   ) : (
-                    <div style={{
+                    <pre style={{
                       fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.8,
                       background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border)',
                       borderRadius: 'var(--radius)', padding: '12px 14px',
-                      overflowX: 'auto',
+                      overflowX: 'auto', margin: 0, whiteSpace: 'pre',
+                      color: 'var(--text-secondary)',
                     }}>
                       {(poolStatus[pool.name] || 'No data available').split('\n').map((line, li) => {
                         const stateColor = line.match(/\bONLINE\b/) ? 'var(--success)'
                           : line.match(/\bDEGRADED\b/) ? '#f59e0b'
                           : line.match(/\bFAULTED\b|\bUNAVAIL\b|\bREMOVED\b|\bOFFLINE\b/) ? 'var(--danger)'
                           : undefined;
-                        const labelMatch = line.match(/^(\s*\w[\w ]*?:\s*)(.*)/);
                         return (
-                          <div key={li} style={{ display: 'flex', gap: 0, color: stateColor || 'var(--text-secondary)', minHeight: '1.4em' }}>
-                            {labelMatch ? (
-                              <>
-                                <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>{labelMatch[1]}</span>
-                                <span style={{ color: stateColor || 'var(--text-primary)' }}>{labelMatch[2]}</span>
-                              </>
-                            ) : (
-                              <span style={{ whiteSpace: 'pre' }}>{line || ' '}</span>
-                            )}
-                          </div>
+                          <span key={li} style={{ color: stateColor, display: 'block' }}>
+                            {line || ' '}
+                          </span>
                         );
                       })}
-                    </div>
+                    </pre>
                   )}
                 </div>
               )}

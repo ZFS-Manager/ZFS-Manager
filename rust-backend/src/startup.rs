@@ -2,6 +2,30 @@ use std::fs;
 use std::process::Command;
 use tracing::{info, warn, error};
 
+/// Mount all ZFS datasets from already-imported pools so that the rshared /mnt
+/// bind-mount propagates them back to the host filesystem.
+pub async fn run_startup_zfs_mount() {
+    match tokio::process::Command::new("zfs")
+        .args(["mount", "-a"])
+        .output()
+        .await
+    {
+        Ok(out) if out.status.success() => {
+            info!("✅ ZFS: all datasets mounted (rshared propagation active)");
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            // "already mounted" is normal when pool was mounted before container start
+            if stderr.lines().all(|l| l.contains("already mounted") || l.trim().is_empty()) {
+                info!("✅ ZFS: datasets already mounted");
+            } else {
+                warn!("⚠️ ZFS mount -a: {}", stderr.trim());
+            }
+        }
+        Err(e) => warn!("⚠️ ZFS mount -a failed: {}", e),
+    }
+}
+
 pub async fn run_startup_pool_imports() {
     use crate::routes::pools::{load_import_configs, execute_pool_import};
 
