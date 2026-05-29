@@ -170,6 +170,8 @@ fn parse_vdev_config(status_output: &str) -> Vec<Value> {
     let mut in_replacing = false;
     let mut repl_old     = String::new();
     let mut repl_new     = String::new();
+    // Track the "spares" section so those entries get type "spare".
+    let mut in_spares    = false;
 
     // Emit any buffered replacing pair into cur_disks, then reset state.
     let flush_replacing = |in_replacing: &mut bool,
@@ -212,7 +214,25 @@ fn parse_vdev_config(status_output: &str) -> Vec<Value> {
         let disk_name = name.strip_prefix("spare-").unwrap_or(name);
 
         match leading {
-            0 => { past_pool = true; }
+            0 => {
+                past_pool = true;
+                // Detect the "spares" section header; flush current vdev group first.
+                if name.eq_ignore_ascii_case("spares") {
+                    flush_replacing(&mut in_replacing, &mut repl_old, &mut repl_new, &mut cur_disks);
+                    if in_vdev && !cur_disks.is_empty() {
+                        vdevs.push(json!({ "name": cur_name, "type": cur_type, "disks": cur_disks.clone() }));
+                    }
+                    cur_disks = Vec::new();
+                    in_vdev   = false;
+                    in_spares = true;
+                } else {
+                    in_spares = false;
+                }
+            }
+            2 if in_spares => {
+                // Each disk in the spares section is a standalone "spare" vdev.
+                vdevs.push(json!({ "name": disk_name, "type": "spare", "disks": [{"path": disk_name, "state": state}] }));
+            }
             2 => {
                 flush_replacing(&mut in_replacing, &mut repl_old, &mut repl_new, &mut cur_disks);
                 if in_vdev && !cur_disks.is_empty() {

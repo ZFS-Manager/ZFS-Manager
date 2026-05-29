@@ -1915,11 +1915,9 @@ function DiskRow({ disk, poolName, onReplace, onSmartClick }: {
     : disk.state === 'DEGRADED'          ? 'var(--warning)'
     : 'var(--danger)';
 
-  const stateLabel = isReplacing ? 'replacing' : disk.state.toLowerCase();
-
-  const displayName = isReplacing
-    ? `${disk.path} to ${disk.replacing_with}`
-    : disk.path;
+  const stateLabel = isReplacing
+    ? `replacing to ${disk.replacing_with}`
+    : disk.state.toLowerCase();
 
   return (
     <div onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)} style={{
@@ -1930,8 +1928,8 @@ function DiskRow({ disk, poolName, onReplace, onSmartClick }: {
     }}>
       <HardDrive size={13} style={{ color: stateColor, flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div title={displayName} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-primary)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayName}</div>
-        <div style={{ fontSize: 9, color: stateColor, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Status: {stateLabel}</div>
+        <div title={disk.path} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-primary)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{disk.path}</div>
+        <div style={{ fontSize: 9, color: stateColor, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{stateLabel}</div>
       </div>
       <div style={{ display: 'flex', gap: 4, opacity: hov ? 1 : 0, transition: 'opacity 0.12s' }}>
         <button title="SMART Data" onClick={() => onSmartClick(disk.path)} style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-muted)' }}>
@@ -2491,6 +2489,7 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
 
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
   const postOpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const vdevPollRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const animEnabled = localStorage.getItem('page_animations') !== 'false';
 
   // zpool resilver was introduced in OpenZFS 2.1.0
@@ -2535,13 +2534,23 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
       .catch(() => {});
   };
 
+  // Auto-refresh vdevs every 2s so disk states (replacing, faulted, etc.) update in real-time.
+  useEffect(() => {
+    if (pools.length === 0) return;
+    const names = pools.map(p => p.name);
+    const fetchVdevs = () => names.forEach(n =>
+      api.getPoolVdevs(n)
+        .then(res => setPoolVdevs(prev => ({ ...prev, [n]: res.vdevs || [] })))
+        .catch(() => {})
+    );
+    fetchVdevs();
+    if (vdevPollRef.current) clearInterval(vdevPollRef.current);
+    vdevPollRef.current = setInterval(fetchVdevs, 2000);
+    return () => { if (vdevPollRef.current) { clearInterval(vdevPollRef.current); vdevPollRef.current = null; } };
+  }, [pools.map(p => p.name).join(',')]);  // re-run only when pool list changes
+
   useEffect(() => {
     pools.forEach(pool => {
-      if (!poolVdevs[pool.name]) {
-        api.getPoolVdevs(pool.name)
-          .then(res => setPoolVdevs(prev => ({ ...prev, [pool.name]: res.vdevs || [] })))
-          .catch(() => {});
-      }
       api.getScrubStatus(pool.name).then(res => {
         if (res.in_progress) {
           setScrubState(s => ({ ...s, [pool.name]: 'running' }));
@@ -2586,7 +2595,8 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
 
   const getPoolDisks = (poolName: string): { path: string; state: string; replacing_with?: string }[] => {
     const vdevs = poolVdevs[poolName] || [];
-    return vdevs.flatMap((v: any) => v.disks || []);
+    // Exclude spare/log/cache vdevs — they get their own sections.
+    return vdevs.filter((v: any) => !['spare', 'log', 'cache'].includes(v.type)).flatMap((v: any) => v.disks || []);
   };
 
   // Set of all disk paths currently in use by any pool
@@ -2820,8 +2830,8 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
 
           // Hot spare detection
           const allVdevs    = poolVdevs[pool.name] || [];
-          const spareVdev   = allVdevs.find((v: any) => v.type === 'spare');
-          const availSpares = spareVdev ? (spareVdev.disks || []).filter((d: any) => d.state === 'AVAIL') : [];
+          const spareDisks  = allVdevs.filter((v: any) => v.type === 'spare').flatMap((v: any) => v.disks || []);
+          const availSpares = spareDisks.filter((d: any) => d.state === 'AVAIL');
           const failedDisks = allVdevs
             .filter((v: any) => !['spare', 'log', 'cache'].includes(v.type))
             .flatMap((v: any) => v.disks || [])
@@ -2895,9 +2905,9 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                     >
                       <Layers size={13} /> {!isMobile && 'Features'}
                     </button>
-                    <button className="btn btn-secondary pool-action-btn" onClick={() => handleToggleStatus(pool.name)} title={isExpanded ? 'Hide status' : 'Show status'} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <button className="btn btn-secondary pool-action-btn" onClick={() => handleToggleStatus(pool.name)} title={isExpanded ? 'Hide status code' : 'Show raw pool status code'} style={{ display: 'flex', alignItems: 'center', gap: 6, color: isExpanded ? 'var(--accent)' : undefined, borderColor: isExpanded ? 'var(--accent-mid)' : undefined }}>
                       <Info size={13} />
-                      {!isMobile && (isExpanded ? 'Hide' : 'Status')}
+                      {!isMobile && (isExpanded ? 'Hide' : 'Status Code')}
                     </button>
                     <button
                       className="btn btn-secondary pool-action-btn"
@@ -3062,6 +3072,28 @@ export default function StoragePools({ pools, onRefresh, zfsVersion }: StoragePo
                         onSmartClick={d => setSmartTarget(d)}
                       />
                     ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Hot Spares */}
+              {spareDisks.length > 0 && (
+                <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>Hot Spares</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6 }}>
+                    {spareDisks.map((sd: any, si: number) => {
+                      const spareState = sd.state === 'AVAIL' ? 'online' : sd.state === 'INUSE' ? 'in use' : sd.state.toLowerCase();
+                      const spareColor = sd.state === 'AVAIL' ? 'var(--success)' : sd.state === 'INUSE' ? 'var(--info)' : 'var(--danger)';
+                      return (
+                        <div key={si} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+                          <HardDrive size={13} style={{ color: spareColor, flexShrink: 0 }} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-primary)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sd.path}</div>
+                            <div style={{ fontSize: 9, color: spareColor, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{spareState}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
