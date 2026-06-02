@@ -64,6 +64,8 @@ jobs:
             type=raw,value=${{ steps.extract_branch.outputs.branch }}
             # Optional: Immer noch den kurzen SHA-Tag mitgeben (gute Praxis)
             type=sha,format=short
+            # NEU: Vergibt den Tag 'latest' exklusiv bei Pushes in den main-Branch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
