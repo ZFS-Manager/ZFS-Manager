@@ -459,7 +459,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
 
           // Pool filter applied client-side using pool_name from backend
           const poolFilter = multiPool && effectivePool ? effectivePool : undefined;
-          const windowCutoff = Date.now() - INTERVAL_MS[interval];
+          const windowCutoff = Date.now() + serverTimeOffsetMs - INTERVAL_MS[interval];
 
           // transformHistory with optional pool filter
           const all = transformHistory(allMetrics, interval, poolFilter);
@@ -485,7 +485,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     fetchHistory();
     const id = setInterval(fetchHistory, 30_000);
     return () => clearInterval(id);
-  }, [interval, liveMode, multiPool, effectivePool]);
+  }, [interval, liveMode, multiPool, effectivePool, serverTimeOffsetMs]);
 
   useEffect(() => {
     api.getDisks().then(async res => {
@@ -526,7 +526,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const vis = (key: string) => !hidden.has(key);
 
   // Windowed totals: only count points within the selected time window
-  const windowCutoffMs = Date.now() - INTERVAL_MS[interval];
+  const windowCutoffMs = Date.now() + serverTimeOffsetMs - INTERVAL_MS[interval];
   const windowedChartData = useMemo(
     () => chartData.filter(d => d.tsMs >= windowCutoffMs),
     [chartData, windowCutoffMs]
@@ -601,7 +601,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     ? poolTotalWriteGB
     : (liveMetrics?.total_write_mb ?? 0) / 1024;
 
-  const nowMs = Date.now();
+  const nowMs = Date.now() + serverTimeOffsetMs;
   const histXDomain: [number, number] = [nowMs - INTERVAL_MS[interval], nowMs];
   const histXTicks = getXTicks(interval, nowMs);
 

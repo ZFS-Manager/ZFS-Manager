@@ -153,6 +153,12 @@ export const api = {
   getActiveRewrites: () =>
     request<{ active: Array<{ name: string; pool: string; total_bytes: number; elapsed_secs: number }> }>('/datasets/rewrite/active'),
 
+  mountDatasetPersistent: (name: string, mountpoint: string, encrypted = false) =>
+    request<{ message: string; steps: string[] }>('/datasets/persistent-mount', {
+      method: 'POST',
+      body: JSON.stringify({ name, mountpoint, encrypted }),
+    }),
+
   // ── Dataset Properties ─────────────────────────────────────────────────────
   getDatasetProperties: (name: string, props?: string) =>
     request<any>(`/properties/${name}${props ? `?prop=${encodeURIComponent(props)}` : ''}`),

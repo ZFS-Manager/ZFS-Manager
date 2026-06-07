@@ -85,6 +85,7 @@ function fmtUsableSpace(bytes: number): string {
 function colorVar(c: string): string {
   if (c === 'danger')    return 'var(--danger)';
   if (c === 'warning')   return 'var(--warning)';
+  if (c === 'success')   return 'var(--success)';
   if (c === 'secondary') return 'var(--text-secondary)';
   return 'var(--text-muted)';
 }
@@ -106,18 +107,21 @@ function useFillPrediction() {
       const map: Record<string, PoolFillInfo> = {};
       for (const pred of res.predictions) {
         const rate = parseFloat(pred.rate_gb_day);
-        const days = rate > 0 ? pred.free_gb / rate : 0;
+        const isShrinking = pred.fill_date === 'Shrinking – not filling';
+        const isStable = pred.fill_date === 'Stable';
+        const days = (!isShrinking && !isStable && rate > 0) ? pred.free_gb / rate : 0;
         map[pred.pool] = { days, rateGbDay: rate, fillDate: pred.fill_date, color: colorVar(pred.color) };
       }
       setByPool(map);
 
       if (res.predictions.length > 0) {
-        const earliest = res.predictions.reduce((min, pred) => {
-          if (pred.fill_date === '–') return min;
-          if (!min || pred.fill_date < min.fill_date) return pred;
-          return min;
-        }, null as any);
-        if (earliest) {
+        // Find earliest fill date from growing pools only
+        const growing = res.predictions.filter(p =>
+          p.fill_date !== '–' && p.fill_date !== 'Shrinking – not filling' && p.fill_date !== 'Stable'
+        );
+        if (growing.length > 0) {
+          const earliest = growing.reduce((min, pred) =>
+            (!min || pred.fill_date < min.fill_date) ? pred : min, null as any);
           const rate = parseFloat(earliest.rate_gb_day);
           const days = rate > 0 ? earliest.free_gb / rate : 0;
           setPrediction({
@@ -126,7 +130,13 @@ function useFillPrediction() {
             timeText: fmtTimeUntilFull(days),
           });
         } else {
-          setPrediction({ text: '–', color: 'var(--text-muted)', timeText: '' });
+          // All pools are shrinking or stable
+          const anyShrinking = res.predictions.some(p => p.fill_date === 'Shrinking – not filling');
+          setPrediction({
+            text: anyShrinking ? 'Shrinking – not filling' : 'Stable',
+            color: anyShrinking ? 'var(--success)' : 'var(--text-muted)',
+            timeText: '',
+          });
         }
       } else {
         setPrediction({ text: '–', color: 'var(--text-muted)', timeText: '' });
@@ -514,22 +524,34 @@ function PoolCard({ pool, fillInfo }: { pool: ZFSPool; fillInfo?: PoolFillInfo }
         </div>
       </div>
 
-      {fillInfo && fillInfo.rateGbDay > 0 && (
+      {fillInfo && (
         <div style={{
           fontSize: 11, fontFamily: 'var(--font-ui)', marginBottom: 14,
           color: fillInfo.color,
           display: 'flex', gap: 8, flexWrap: 'wrap',
         }}>
-          <span>
+          {fillInfo.fillDate === 'Shrinking – not filling' ? (
             <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
-              +{formatBytes(fillInfo.rateGbDay * 1_073_741_824)}/day
+              ↓ Shrinking – not filling
             </span>
-          </span>
-          {daysUntilFull !== null && (
-            <span>
-              · Full in <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{fmtDays(daysUntilFull)}</span>
+          ) : fillInfo.fillDate === 'Stable' ? (
+            <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+              — Stable
             </span>
-          )}
+          ) : fillInfo.rateGbDay > 0 ? (
+            <>
+              <span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+                  +{formatBytes(fillInfo.rateGbDay * 1_073_741_824)}/day
+                </span>
+              </span>
+              {daysUntilFull !== null && (
+                <span>
+                  · Full in <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{fmtDays(daysUntilFull)}</span>
+                </span>
+              )}
+            </>
+          ) : null}
         </div>
       )}
 

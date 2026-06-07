@@ -3,7 +3,7 @@ import { ZFSDataset, ZFSPool } from '../types';
 import {
   HardDrive, Plus, Lock, Search, Trash2, X,
   Loader2, XCircle, AlertTriangle, Layers,
-  ArrowUp, ArrowDown, RotateCcw,
+  ArrowUp, ArrowDown, RotateCcw, Download,
   ChevronRight, ChevronDown, Folder, FolderOpen, Database, Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -83,7 +83,7 @@ const fieldSelect: React.CSSProperties = {
 };
 
 
-type SortField = 'name' | 'used' | 'avail';
+type SortField = 'name' | 'used' | 'avail' | 'type' | 'compression' | 'mountpoint';
 type SortDir   = 'asc' | 'desc';
 
 interface TreeNode {
@@ -411,6 +411,12 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
   const [rewriteState,  setRewriteState]  = useState<Record<string, boolean>>({});
   const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null);
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
+  const [mountTarget, setMountTarget] = useState<string | null>(null);
+  const [mountpoint, setMountpoint] = useState('');
+  const [mountEncrypted, setMountEncrypted] = useState(false);
+  const [mounting, setMounting] = useState(false);
+  const [mountResult, setMountResult] = useState<{ steps: string[] } | null>(null);
+  const [mountError, setMountError] = useState('');
   const animEnabled = localStorage.getItem('page_animations') !== 'false';
 
   useEffect(() => {
@@ -456,15 +462,30 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
   const flatItems = useMemo(() => flattenTree(treeNodes, expandedNodes), [treeNodes, expandedNodes]);
 
   const sortedFlat = useMemo(() => {
-    if (!search) return flatItems;
     return [...flatItems].sort((a, b) => {
       let cmp = 0;
-      if (sortField === 'name') cmp = a.dataset.name.localeCompare(b.dataset.name);
-      else if (sortField === 'used') cmp = (a.dataset._usedBytes ?? 0) - (b.dataset._usedBytes ?? 0);
-      else if (sortField === 'avail') cmp = (a.dataset._availBytes ?? 0) - (b.dataset._availBytes ?? 0);
+      const da = a.dataset as any;
+      const db = b.dataset as any;
+      if (sortField === 'name') {
+        cmp = a.dataset.name.localeCompare(b.dataset.name);
+      } else if (sortField === 'used') {
+        cmp = (a.dataset._usedBytes ?? 0) - (b.dataset._usedBytes ?? 0);
+      } else if (sortField === 'avail') {
+        cmp = (a.dataset._availBytes ?? 0) - (b.dataset._availBytes ?? 0);
+      } else if (sortField === 'type') {
+        const ta = da.type || 'filesystem';
+        const tb = db.type || 'filesystem';
+        cmp = ta.localeCompare(tb);
+      } else if (sortField === 'compression') {
+        cmp = (a.dataset.compression || '').localeCompare(b.dataset.compression || '');
+      } else if (sortField === 'mountpoint') {
+        const ma = a.dataset.mountpoint || '';
+        const mb = b.dataset.mountpoint || '';
+        cmp = ma.localeCompare(mb);
+      }
       return sortDir === 'asc' ? cmp : -cmp;
     });
-  }, [flatItems, search, sortField, sortDir]);
+  }, [flatItems, sortField, sortDir]);
 
   const parentOptionsByPool = useMemo(() => {
     return pools.map(p => ({
@@ -511,6 +532,33 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
       const msgLow = msg.toLowerCase();
       setCanForce(msgLow.includes('busy') || msgLow.includes('children') || msgLow.includes('dependent') || msgLow.includes('mount'));
     } finally { setDeleting(false); }
+  };
+
+  const openMount = (name: string) => {
+    const defaultMp = '/mnt/' + name.replace(/\//g, '-');
+    setMountTarget(name);
+    setMountpoint(defaultMp);
+    setMountEncrypted(false);
+    setMounting(false);
+    setMountResult(null);
+    setMountError('');
+  };
+
+  const handleMount = async () => {
+    if (!mountTarget || !mountpoint.trim()) return;
+    setMounting(true);
+    setMountError('');
+    setMountResult(null);
+    try {
+      const res = await api.mountDatasetPersistent(mountTarget, mountpoint.trim(), mountEncrypted);
+      setMountResult({ steps: res.steps || [] });
+      showToast(`Mounted ${mountTarget}`, 'success');
+      onRefresh();
+    } catch (err: any) {
+      setMountError(err.message || 'Mount failed');
+    } finally {
+      setMounting(false);
+    }
   };
 
   const handleRewrite = async (name: string) => {
@@ -650,6 +698,93 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
         )}
       </AnimatePresence>
 
+      {/* Mount Modal */}
+      <AnimatePresence>
+        {mountTarget && (
+          <Modal title="Mount Dataset Persistently" onClose={() => { setMountTarget(null); setMountResult(null); }} maxWidth={500}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ padding: '8px 12px', background: 'var(--bg-elevated)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--accent)' }}>{mountTarget}</span>
+              </div>
+
+              {mountResult ? (
+                <>
+                  <div style={{ padding: '12px 14px', background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: 'var(--radius)' }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--success)', marginBottom: 8 }}>Mount successful</div>
+                    <ul style={{ margin: 0, padding: '0 0 0 16px' }}>
+                      {mountResult.steps.map((s, i) => (
+                        <li key={i} style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginBottom: 3 }}>{s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <button className="btn btn-secondary" onClick={() => { setMountTarget(null); setMountResult(null); }}>Close</button>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <label style={fieldLabel}>Mountpoint</label>
+                    <input
+                      type="text"
+                      value={mountpoint}
+                      onChange={e => setMountpoint(e.target.value)}
+                      placeholder="/mnt/tank-data"
+                      style={{ ...fieldInput, fontFamily: 'var(--font-mono)' }}
+                      onKeyDown={e => e.key === 'Enter' && handleMount()}
+                    />
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                      Sets <code style={{ fontFamily: 'var(--font-mono)' }}>mountpoint</code> and <code style={{ fontFamily: 'var(--font-mono)' }}>canmount=on</code> permanently. Auto-mounted at every boot.
+                    </div>
+                  </div>
+
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+                    <button
+                      onClick={() => setMountEncrypted(v => !v)}
+                      style={{
+                        width: 36, height: 20, borderRadius: 10,
+                        background: mountEncrypted ? 'var(--accent)' : 'var(--bg-elevated)',
+                        border: `1px solid ${mountEncrypted ? 'var(--accent)' : 'var(--border)'}`,
+                        position: 'relative', cursor: 'pointer', transition: 'all 0.2s', flexShrink: 0,
+                      }}
+                    >
+                      <div style={{
+                        position: 'absolute', top: 2, left: mountEncrypted ? 17 : 2,
+                        width: 14, height: 14, borderRadius: 7, background: '#fff', transition: 'left 0.2s',
+                      }} />
+                    </button>
+                    <div>
+                      <div style={{ fontSize: 12, color: 'var(--text-primary)', fontFamily: 'var(--font-ui)' }}>Encrypted dataset</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', marginTop: 1 }}>
+                        Generates a keyfile and registers early-boot key loading
+                      </div>
+                    </div>
+                  </label>
+
+                  {mountError && (
+                    <div style={{ display: 'flex', gap: 10, padding: '10px 14px', background: 'var(--danger-dim)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius)' }}>
+                      <XCircle size={14} style={{ color: 'var(--danger)', flexShrink: 0, marginTop: 1 }} />
+                      <span style={{ fontSize: 12, color: 'var(--danger)' }}>{mountError}</span>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: 10, paddingTop: 4 }}>
+                    <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setMountTarget(null)}>Cancel</button>
+                    <button
+                      className="btn btn-primary"
+                      style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                      onClick={handleMount}
+                      disabled={mounting || !mountpoint.trim()}
+                    >
+                      {mounting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                      {mounting ? 'Mounting…' : 'Mount'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </Modal>
+        )}
+      </AnimatePresence>
+
       {/* Dataset Settings Popout */}
       {settingsOpenFor && (
         <DatasetSettingsPopout
@@ -704,8 +839,12 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
             <table className="data-table" style={{ minWidth: 820 }}>
               <thead>
                 <tr>
-                  <th style={{ minWidth: 240 }}>Name</th>
-                  <th>Type</th>
+                  <th style={{ minWidth: 240, cursor: 'pointer' }} onClick={() => handleSort('name')} className={sortField === 'name' ? 'sort-active' : ''}>
+                    Name {sortField === 'name' && (sortDir === 'asc' ? <ArrowUp size={10} style={{ display: 'inline' }} /> : <ArrowDown size={10} style={{ display: 'inline' }} />)}
+                  </th>
+                  <th onClick={() => handleSort('type')} className={sortField === 'type' ? 'sort-active' : ''} style={{ cursor: 'pointer' }}>
+                    Type {sortField === 'type' && (sortDir === 'asc' ? <ArrowUp size={10} style={{ display: 'inline' }} /> : <ArrowDown size={10} style={{ display: 'inline' }} />)}
+                  </th>
                   <th onClick={() => handleSort('used')} className={sortField === 'used' ? 'sort-active' : ''} style={{ cursor: 'pointer' }}>
                     Used {sortField === 'used' && (sortDir === 'asc' ? <ArrowUp size={10} style={{ display: 'inline' }} /> : <ArrowDown size={10} style={{ display: 'inline' }} />)}
                   </th>
@@ -713,8 +852,12 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
                     Available {sortField === 'avail' && (sortDir === 'asc' ? <ArrowUp size={10} style={{ display: 'inline' }} /> : <ArrowDown size={10} style={{ display: 'inline' }} />)}
                   </th>
                   <th>Referenced</th>
-                  <th>Compression</th>
-                  <th style={{ minWidth: 180 }}>Mount Point</th>
+                  <th onClick={() => handleSort('compression')} className={sortField === 'compression' ? 'sort-active' : ''} style={{ cursor: 'pointer' }}>
+                    Compression {sortField === 'compression' && (sortDir === 'asc' ? <ArrowUp size={10} style={{ display: 'inline' }} /> : <ArrowDown size={10} style={{ display: 'inline' }} />)}
+                  </th>
+                  <th onClick={() => handleSort('mountpoint')} className={sortField === 'mountpoint' ? 'sort-active' : ''} style={{ minWidth: 180, cursor: 'pointer' }}>
+                    Mount Point {sortField === 'mountpoint' && (sortDir === 'asc' ? <ArrowUp size={10} style={{ display: 'inline' }} /> : <ArrowDown size={10} style={{ display: 'inline' }} />)}
+                  </th>
                   <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
@@ -828,6 +971,15 @@ export default function DatasetList({ datasets, volumes = [], pools, onRefresh }
                             </td>
                             <td>
                               <div className="row-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: 4 }}>
+                                <button
+                                  title="Mount (persistent)"
+                                  onClick={() => openMount(ds.name)}
+                                  style={ACT_BTN}
+                                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--success)'; (e.currentTarget as HTMLElement).style.borderColor = 'rgba(34,197,94,0.3)'; }}
+                                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; }}
+                                >
+                                  <Download size={12} />
+                                </button>
                                 <button
                                   title="Rewrite Data (rebalance)"
                                   onClick={() => handleRewrite(ds.name)}
