@@ -304,6 +304,8 @@ async fn main() {
         .init();
 
     startup::run_startup_checks().await;
+    startup::run_startup_pool_imports().await;
+    startup::run_startup_zfs_mount().await;
 
     let port: u16 = std::env::var("ZFS_API_PORT")
         .ok()

@@ -413,19 +413,27 @@ export default function App() {
 
       if (mappedPools.length > 0) {
         try {
-          const histRes = await api.getPoolHistory(mappedPools[0].name);
-          const histLogs: ZFSLog[] = (histRes.history || [])
-            .filter((line: string) => line.trim() && !line.startsWith('History'))
-            .slice(-50)
-            .map((line: string, i: number) => ({
-              id: String(i),
-              timestamp: line.substring(0, 19) || new Date().toISOString(),
-              level: classifyLogLevel(line),
-              message: line.replace(/^\d{4}-\d{2}-\d{2}\.\d{2}:\d{2}:\d{2}\s+/, '').trim(),
-              pool: mappedPools[0].name,
-            }))
-            .reverse();
-          setLogs(histLogs);
+          const histResults = await Promise.all(
+            mappedPools.map(p => api.getPoolHistory(p.name).catch(() => ({ history: [] })))
+          );
+          const allLogs: ZFSLog[] = [];
+          histResults.forEach((histRes, idx) => {
+            const poolName = mappedPools[idx].name;
+            (histRes.history || [])
+              .filter((line: string) => line.trim() && !line.startsWith('History'))
+              .slice(-100)
+              .forEach((line: string, i: number) => {
+                allLogs.push({
+                  id: `${poolName}-${i}`,
+                  timestamp: line.substring(0, 19) || new Date().toISOString(),
+                  level: classifyLogLevel(line),
+                  message: line.replace(/^\d{4}-\d{2}-\d{2}\.\d{2}:\d{2}:\d{2}\s+/, '').trim(),
+                  pool: poolName,
+                });
+              });
+          });
+          allLogs.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+          setLogs(allLogs.slice(0, 300));
         } catch { /* no history */ }
       }
 

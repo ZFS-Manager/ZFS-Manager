@@ -30,7 +30,7 @@ services:
       start_period: 10s
 
   zfs-backend:
-    image: ghcr.io/zfs-manager/zfs-manager-backend
+    image: zfs-manager-backend:local
     container_name: zfs-backend
     restart: unless-stopped
     stop_signal: SIGINT
@@ -49,6 +49,11 @@ services:
       - /proc:/proc:ro
       - /sys/module/zfs:/sys/module/zfs:ro
       - /var/lib/zfs:/var/lib/zfs:ro
+      - type: bind
+        source: /mnt
+        target: /mnt
+        bind:
+          propagation: rshared
       - /home/docker/zfs-manager:/home/docker/zfs-manager
     working_dir: /home/docker/zfs-manager
     depends_on:
@@ -58,7 +63,7 @@ services:
         condition: service_healthy
 
   zfs-web:
-    image: ghcr.io/zfs-manager/zfs-manager-web
+    image: zfs-manager-web:local
     container_name: zfs-web
     restart: unless-stopped
     ports:

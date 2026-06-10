@@ -9,11 +9,12 @@ import {
   ArrowUp, ArrowDown, Edit2, Check, Plus,
 } from 'lucide-react';
 import { ZFSPool, ZFSDataset, ZFSLog } from '../types';
-import { formatBytes, api } from '../api';
+import { formatBytes, formatSpeed, api } from '../api';
 import { useLayout } from '../hooks/useLayout';
 import WidgetShell from './WidgetShell';
 import PageTransition from './PageTransition';
 import PhysicalDisksTable from './PhysicalDisksTable';
+import { useIsMobile } from '../hooks/useBreakpoint';
 
 interface DashboardProps {
   pools: ZFSPool[];
@@ -55,14 +56,10 @@ function useCounter(target: number, duration = 600) {
 }
 
 function fmtBw(v: number): string {
-  if (v >= 1000) return `${(v / 1000).toFixed(2)} GB/s`;
-  if (v >= 1)    return `${v.toFixed(2)} MB/s`;
-  return `${(v * 1024).toFixed(0)} KB/s`;
+  return formatSpeed(v * 1048576);
 }
 function fmtGB(v: number): string {
-  if (v >= 1000) return `${(v / 1000).toFixed(2)} TB`;
-  if (v >= 1)    return `${v.toFixed(2)} GB`;
-  return `${(v * 1024).toFixed(0)} MB`;
+  return formatBytes(v * 1073741824);
 }
 
 function fmtDays(d: number): string {
@@ -82,15 +79,13 @@ function fmtTimeUntilFull(days: number): string {
 
 function fmtUsableSpace(bytes: number): string {
   if (!bytes) return '—';
-  const tb = bytes / (1024 ** 4);
-  if (tb >= 1) return `${tb.toFixed(2)} TB`;
-  const gb = bytes / (1024 ** 3);
-  return `${gb.toFixed(2)} GB`;
+  return formatBytes(bytes);
 }
 
 function colorVar(c: string): string {
   if (c === 'danger')    return 'var(--danger)';
   if (c === 'warning')   return 'var(--warning)';
+  if (c === 'success')   return 'var(--success)';
   if (c === 'secondary') return 'var(--text-secondary)';
   return 'var(--text-muted)';
 }
@@ -112,18 +107,21 @@ function useFillPrediction() {
       const map: Record<string, PoolFillInfo> = {};
       for (const pred of res.predictions) {
         const rate = parseFloat(pred.rate_gb_day);
-        const days = rate > 0 ? pred.free_gb / rate : 0;
+        const isShrinking = pred.fill_date === 'Shrinking – not filling';
+        const isStable = pred.fill_date === 'Stable';
+        const days = (!isShrinking && !isStable && rate > 0) ? pred.free_gb / rate : 0;
         map[pred.pool] = { days, rateGbDay: rate, fillDate: pred.fill_date, color: colorVar(pred.color) };
       }
       setByPool(map);
 
       if (res.predictions.length > 0) {
-        const earliest = res.predictions.reduce((min, pred) => {
-          if (pred.fill_date === '–') return min;
-          if (!min || pred.fill_date < min.fill_date) return pred;
-          return min;
-        }, null as any);
-        if (earliest) {
+        // Find earliest fill date from growing pools only
+        const growing = res.predictions.filter(p =>
+          p.fill_date !== '–' && p.fill_date !== 'Shrinking – not filling' && p.fill_date !== 'Stable'
+        );
+        if (growing.length > 0) {
+          const earliest = growing.reduce((min, pred) =>
+            (!min || pred.fill_date < min.fill_date) ? pred : min, null as any);
           const rate = parseFloat(earliest.rate_gb_day);
           const days = rate > 0 ? earliest.free_gb / rate : 0;
           setPrediction({
@@ -132,7 +130,13 @@ function useFillPrediction() {
             timeText: fmtTimeUntilFull(days),
           });
         } else {
-          setPrediction({ text: '–', color: 'var(--text-muted)', timeText: '' });
+          // All pools are shrinking or stable
+          const anyShrinking = res.predictions.some(p => p.fill_date === 'Shrinking – not filling');
+          setPrediction({
+            text: anyShrinking ? 'Shrinking – not filling' : 'Stable',
+            color: anyShrinking ? 'var(--success)' : 'var(--text-muted)',
+            timeText: '',
+          });
         }
       } else {
         setPrediction({ text: '–', color: 'var(--text-muted)', timeText: '' });
@@ -325,10 +329,7 @@ function StatCard({ label, value, sub, fillLine, icon: Icon, color, minHeight = 
 const REWRITE_SPEED_BPS_DASH = 100 * 1024 * 1024;
 
 function fmtBytesDash(b: number): string {
-  if (b >= 1024 ** 4) return `${(b / 1024 ** 4).toFixed(2)}T`;
-  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(2)}G`;
-  if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(2)}M`;
-  return `${(b / 1024).toFixed(2)}K`;
+  return formatBytes(b);
 }
 
 function fmtSecsDash(s: number): string {
@@ -523,26 +524,34 @@ function PoolCard({ pool, fillInfo }: { pool: ZFSPool; fillInfo?: PoolFillInfo }
         </div>
       </div>
 
-      {fillInfo && fillInfo.rateGbDay > 0 && (
+      {fillInfo && (
         <div style={{
           fontSize: 11, fontFamily: 'var(--font-ui)', marginBottom: 14,
           color: fillInfo.color,
           display: 'flex', gap: 8, flexWrap: 'wrap',
         }}>
-          <span>
+          {fillInfo.fillDate === 'Shrinking – not filling' ? (
             <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
-              +{fillInfo.rateGbDay >= 1000
-                ? `${(fillInfo.rateGbDay / 1024).toFixed(2)} TB/day`
-                : fillInfo.rateGbDay >= 1
-                  ? `${fillInfo.rateGbDay.toFixed(2)} GB/day`
-                  : `${(fillInfo.rateGbDay * 1024).toFixed(0)} MB/day`}
+              ↓ Shrinking – not filling
             </span>
-          </span>
-          {daysUntilFull !== null && (
-            <span>
-              · Full in <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{fmtDays(daysUntilFull)}</span>
+          ) : fillInfo.fillDate === 'Stable' ? (
+            <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+              — Stable
             </span>
-          )}
+          ) : fillInfo.rateGbDay > 0 ? (
+            <>
+              <span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+                  +{formatBytes(fillInfo.rateGbDay * 1_073_741_824)}/day
+                </span>
+              </span>
+              {daysUntilFull !== null && (
+                <span>
+                  · Full in <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{fmtDays(daysUntilFull)}</span>
+                </span>
+              )}
+            </>
+          ) : null}
         </div>
       )}
 
@@ -788,6 +797,7 @@ export default function Dashboard({
   selectedPool,
   onSelectPool,
 }: DashboardProps) {
+  const isMobile = useIsMobile();
   const { widgets, loaded, setVisible, reorder, toast } = useLayout('dashboard');
   const [editMode, setEditMode] = useState(false);
   const [dragFrom, setDragFrom] = useState<string | null>(null);
@@ -1058,21 +1068,18 @@ export default function Dashboard({
             <div style={{ padding: '16px 20px' }}>
               {ioData.length > 1 ? (
                 <>
-                  <div style={{ height: 180, marginLeft: 8, overflow: 'visible' }}>
+                  <div style={{ height: isMobile ? 140 : 180, marginLeft: isMobile ? 0 : 8, overflow: 'visible' }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={ioData} margin={CHART_MARGIN}>
                         <CartesianGrid {...GRID_PROPS} />
                         <XAxis dataKey="timestamp" axisLine={false} tickLine={false} tick={AXIS_TICK} minTickGap={48} />
                         <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK}
-                          tickFormatter={v => {
-                            const maxV = ioData.reduce((m: number, d: any) => Math.max(m, d.read || 0, d.write || 0), 0);
-                            return maxV >= 1000 ? `${(v/1000).toFixed(1)} GB/s` : `${v.toFixed(0)} MB/s`;
-                          }}
+                          tickFormatter={v => formatSpeed(v * 1_048_576)}
                           tickCount={MAX_TICKS}
                           width={85}
                         />
                         <Tooltip {...TOOLTIP_STYLE} formatter={(v: number, n: string) => [
-                          v >= 1000 ? `${(v/1000).toFixed(2)} GB/s` : `${v.toFixed(2)} MB/s`,
+                          formatSpeed(v * 1_048_576),
                           n === 'read' ? '↑ Read' : '↓ Write',
                         ]} />
                         {ioShowRead  && <Line type="monotone" dataKey="read"  stroke="#38bdf8" strokeWidth={1.5} dot={false} isAnimationActive={false} activeDot={{ r: 3, strokeWidth: 0 }} />}
@@ -1085,13 +1092,13 @@ export default function Dashboard({
                     const totalR = ioData.reduce((s, d) => s + (d.read  || 0), 0) * secsPerPoint;
                     const totalW = ioData.reduce((s, d) => s + (d.write || 0), 0) * secsPerPoint;
                     const peakW  = ioData.reduce((m, d) => Math.max(m, d.write || 0), 0);
-                    const fmtData = (v: number) => v >= 1024 ? `${(v/1024).toFixed(1)} TB` : `${v.toFixed(1)} GB`;
-                    const fmtBwLocal = (v: number) => v >= 1000 ? `${(v/1000).toFixed(2)} GB/s` : `${v.toFixed(0)} MB/s`;
+                    const fmtData = (v: number) => formatBytes(v * 1_048_576);
+                    const fmtBwLocal = (v: number) => formatSpeed(v * 1_048_576);
                     return (
                       <div style={{ display: 'flex', gap: 32, marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
                         {[
-                          { label: '↑ Read total',  value: fmtData(totalR / 1024), color: '#38bdf8' },
-                          { label: '↓ Write total', value: fmtData(totalW / 1024), color: '#818cf8' },
+                          { label: '↑ Read total',  value: fmtData(totalR), color: '#38bdf8' },
+                          { label: '↓ Write total', value: fmtData(totalW), color: '#818cf8' },
                           { label: 'Peak write',    value: fmtBwLocal(peakW),       color: 'var(--text-muted)' },
                         ].map(({ label, value, color }) => (
                           <div key={label}>
@@ -1128,7 +1135,7 @@ export default function Dashboard({
             <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>
               Storage Pools
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : displayPools.length === 1 ? '1fr' : displayPools.length === 2 || displayPools.length === 4 ? '1fr 1fr' : 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
               {displayPools.map((pool, i) => <PoolCard key={i} pool={pool} fillInfo={fillByPool[pool.name]} />)}
             </div>
           </div>
@@ -1138,19 +1145,21 @@ export default function Dashboard({
         return (
           <div className="two-col">
             <Panel title="Live I/O" sub={multiPool ? `Pool: ${effectivePoolName} · 1s refresh` : 'Current throughput · 1s refresh'}>
-              <div style={{ display: 'flex' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)' }}>
                 {[
                   { label: '↑ Read',       value: fmtBw(poolLiveRead),      color: '#38bdf8' },
                   { label: '↓ Write',      value: fmtBw(poolLiveWrite),     color: '#818cf8' },
-                  { label: '↑ Read IOPS',  value: `${poolLiveReadIops.toFixed(0)} ops/s`,  color: '#38bdf8' },
-                  { label: '↓ Write IOPS', value: `${poolLiveWriteIops.toFixed(0)} ops/s`, color: '#818cf8' },
-                ].map(({ label, value, color }, i, arr) => (
-                  <div key={label} style={{ flex: 1, padding: '16px 18px', borderRight: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
-                      <span style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>{label}</span>
+                  { label: '↑ IOPS Read',  value: `${poolLiveReadIops.toFixed(0)}`,  sub: 'ops/s', color: '#38bdf8' },
+                  { label: '↓ IOPS Write', value: `${poolLiveWriteIops.toFixed(0)}`, sub: 'ops/s', color: '#818cf8' },
+                ].map(({ label, value, color, sub }: any, i) => (
+                  <div key={label} style={{ padding: isMobile ? '12px 10px' : '16px 18px', borderRight: isMobile ? (i % 2 === 0 ? '1px solid var(--border)' : 'none') : (i < 3 ? '1px solid var(--border)' : 'none'), borderBottom: isMobile && i < 2 ? '1px solid var(--border)' : 'none' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 8 }}>
+                      <span style={{ width: 5, height: 5, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
+                      <span style={{ fontFamily: 'var(--font-ui)', fontSize: isMobile ? 10 : 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>{label}</span>
                     </div>
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1, letterSpacing: '-0.02em' }}>{value}</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: isMobile ? 16 : 22, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1, letterSpacing: '-0.02em' }}>
+                      {value}{sub && <span style={{ fontSize: isMobile ? 10 : 12, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 3 }}>{sub}</span>}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1189,11 +1198,11 @@ export default function Dashboard({
                   { label: 'ARC Hit', pct: arcHit, value: `${arcHit.toFixed(1)}%`, color: 'var(--success)' },
                 ].map(({ label, pct, value, color }) => (
                   <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', width: 64, flexShrink: 0 }}>{label}</div>
+                    <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', width: isMobile ? 44 : 64, flexShrink: 0 }}>{label}</div>
                     <div className="progress-track" style={{ flex: 1 }}>
                       <div className="progress-fill" style={{ width: `${Math.min(pct, 100)}%`, background: color }} />
                     </div>
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)', width: 96, textAlign: 'right', flexShrink: 0 }}>{value}</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: isMobile ? 10 : 11, color: 'var(--text-secondary)', width: isMobile ? 72 : 96, textAlign: 'right', flexShrink: 0 }}>{value}</div>
                   </div>
                 ))}
 
@@ -1310,17 +1319,19 @@ export default function Dashboard({
       )}
 
       {/* Toolbar — pool selector (right) + Edit Layout button */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
         {multiPool && onSelectPool && (
           <PoolSelector pools={pools} selected={effectivePoolName} onSelect={onSelectPool} />
         )}
-        <button
-          onClick={() => setEditMode(m => !m)}
-          className="btn btn-secondary"
-          style={{ gap: 6 }}
-        >
-          {editMode ? <><Check size={13} /> Done</> : <><Edit2 size={13} /> Edit Layout</>}
-        </button>
+        {!isMobile && (
+          <button
+            onClick={() => setEditMode(m => !m)}
+            className="btn btn-secondary"
+            style={{ gap: 6 }}
+          >
+            {editMode ? <><Check size={13} /> Done</> : <><Edit2 size={13} /> Edit Layout</>}
+          </button>
+        )}
       </div>
 
       {/* Capacity banners */}

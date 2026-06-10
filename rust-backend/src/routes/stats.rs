@@ -213,6 +213,89 @@ async fn get_system_stats(State(state): State<AppState>) -> Result<Json<Value>, 
     Ok(Json(result))
 }
 
+struct DiskZfsInfo {
+    state: String,
+    /// Role in the pool: "data", "cache", "spare", or "log"
+    role: String,
+    /// Name of the pool this disk belongs to
+    pool: String,
+}
+
+/// Query `zpool status -P` to find a disk's state, role, and pool name.
+async fn find_zfs_disk_info(short_name: &str) -> Option<DiskZfsInfo> {
+    let out = tokio::process::Command::new("zpool")
+        .args(["status", "-P"])
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() { return None; }
+
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut in_config    = false;
+    let mut section      = "data";
+    let mut current_pool = String::new();
+
+    for line in text.lines() {
+        let t = line.trim();
+
+        // Pool name line (outside config block)
+        if let Some(p) = t.strip_prefix("pool:") {
+            current_pool = p.trim().to_string();
+            in_config    = false;
+            section      = "data";
+            continue;
+        }
+        if t == "config:" { in_config = true; continue; }
+        if t.starts_with("errors:") { in_config = false; continue; }
+        if !in_config || t.is_empty() { continue; }
+
+        if !line.starts_with('\t') { continue; }
+        let after_tab = &line[1..];
+        let leading = after_tab.len() - after_tab.trim_start().len();
+
+        // leading=0 inside config: pool name row or section header (spares/cache/logs)
+        if leading == 0 {
+            let n = t.to_lowercase();
+            section = if n == "spares" { "spare" }
+                      else if n == "cache" { "cache" }
+                      else if n == "logs" || n == "log" { "log" }
+                      else { "data" };  // pool-name row resets to data
+            continue;
+        }
+        if leading < 2 { continue; }
+
+        let tokens: Vec<&str> = t.split_whitespace().collect();
+        let raw_name  = tokens.first().copied().unwrap_or("");
+        let state     = tokens.get(1).copied().unwrap_or("ONLINE");
+        let disk_name = raw_name.strip_prefix("spare-").unwrap_or(raw_name);
+
+        let disk_short = if disk_name.starts_with('/') {
+            std::fs::canonicalize(disk_name)
+                .ok()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                .unwrap_or_else(|| disk_name.trim_start_matches("/dev/").to_string())
+        } else {
+            disk_name.to_string()
+        };
+
+        if disk_short == short_name
+            || disk_short.trim_end_matches(|c: char| c.is_ascii_digit()) == short_name
+        {
+            return Some(DiskZfsInfo {
+                state: state.to_string(),
+                role:  section.to_string(),
+                pool:  current_pool.clone(),
+            });
+        }
+    }
+    None
+}
+
+/// Thin wrapper kept for callers that only need the state string.
+async fn find_zfs_disk_state(short_name: &str) -> Option<String> {
+    find_zfs_disk_info(short_name).await.map(|i| i.state)
+}
+
 async fn get_smart_data(
     State(state): State<AppState>,
     Path(device): Path<String>,
@@ -231,17 +314,69 @@ async fn get_smart_data(
         }
     }
 
-    let output = tokio::process::Command::new("smartctl")
-        .args(["-H", "-A", "--json=c", &dev_path])
-        .output()
-        .await
-        .map_err(|e| ApiError::InternalError(e.to_string()))?;
-    let json_str = String::from_utf8_lossy(&output.stdout);
-    let result = if let Ok(parsed) = serde_json::from_str::<Value>(&json_str) {
-        parsed
-    } else {
-        json!({ "smart_status": { "passed": null }, "message": "No SMART data available" })
+    // Virtual/loop devices don't support SMART — return immediately without
+    // spawning smartctl (which would hang or fail slowly for these device types).
+    let short_name = device.trim_start_matches('/').trim_start_matches("dev/");
+    let is_virtual = short_name.starts_with("loop")
+        || short_name.starts_with("ram")
+        || short_name.starts_with("zram")
+        || short_name.starts_with("nbd");
+    if is_virtual {
+        let zfs_info  = find_zfs_disk_info(short_name).await;
+        let zfs_state = zfs_info.as_ref().map(|i| i.state.as_str()).unwrap_or("NOT_IN_POOL");
+        let zfs_role  = zfs_info.as_ref().map(|i| i.role.as_str());
+        let zfs_pool  = zfs_info.as_ref().map(|i| i.pool.as_str()).filter(|s| !s.is_empty());
+        let result = json!({
+            "smart_status": { "passed": null },
+            "device": { "name": dev_path, "type": "virtual" },
+            "message": "SMART not supported for virtual/loop devices",
+            "zfs_disk_state": zfs_state,
+            "zfs_disk_role":  zfs_role,
+            "zfs_disk_pool":  zfs_pool,
+        });
+        // Cache for 5 minutes — virtual devices won't suddenly gain SMART support
+        if let Some(ref redis_conn) = state.redis {
+            let mut conn = redis_conn.clone();
+            if let Ok(s) = serde_json::to_string(&result) {
+                let _: redis::RedisResult<()> = conn.set_ex(&cache_key, s, 300u64).await;
+            }
+        }
+        return Ok(Json(result));
+    }
+
+    // Run smartctl with a 10-second timeout to prevent blocking slow drives
+    let smartctl_future = tokio::process::Command::new("smartctl")
+        .args(["-i", "-H", "-A", "--json=c", &dev_path])
+        .output();
+
+    let mut result = match tokio::time::timeout(
+        tokio::time::Duration::from_secs(10),
+        smartctl_future,
+    ).await {
+        Ok(Ok(out)) => {
+            let json_str = String::from_utf8_lossy(&out.stdout);
+            serde_json::from_str::<Value>(&json_str)
+                .unwrap_or_else(|_| json!({ "smart_status": { "passed": null }, "message": "No SMART data available" }))
+        }
+        Ok(Err(e)) => {
+            json!({ "smart_status": { "passed": null }, "message": format!("smartctl error: {}", e) })
+        }
+        Err(_) => {
+            warn!("smartctl timed out for device {}", device);
+            json!({ "smart_status": { "passed": null }, "message": "SMART query timed out after 10s" })
+        }
     };
+
+    // Enrich result with ZFS pool state, role (data/cache/spare/log), and pool name.
+    let zfs_info  = find_zfs_disk_info(short_name).await;
+    let zfs_state = zfs_info.as_ref().map(|i| i.state.as_str()).unwrap_or("NOT_IN_POOL");
+    let zfs_role  = zfs_info.as_ref().map(|i| i.role.as_str());
+    let zfs_pool  = zfs_info.as_ref().map(|i| i.pool.as_str()).filter(|s| !s.is_empty());
+    if let Value::Object(ref mut map) = result {
+        map.insert("zfs_disk_state".to_string(), json!(zfs_state));
+        map.insert("zfs_disk_role".to_string(),  json!(zfs_role));
+        map.insert("zfs_disk_pool".to_string(),  json!(zfs_pool));
+    }
 
     // Cache in Redis with 60s TTL
     if let Some(ref redis_conn) = state.redis {

@@ -1,19 +1,85 @@
 use axum::{
     extract::{Path, Query, State},
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use redis::AsyncCommands;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{error::ApiError, executor, state::AppState};
+
+// ── Pool import config storage ────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BindMount {
+    pub source: String,
+    pub target: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DatasetKey {
+    pub dataset: String,
+    pub key_file: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PoolImportConfig {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_file: Option<String>,
+    #[serde(default)]
+    pub encrypted: bool,
+    #[serde(default)]
+    pub import_on_startup: bool,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub bind_mounts: Vec<BindMount>,
+    #[serde(default)]
+    pub dataset_keys: Vec<DatasetKey>,
+    // When set, the pool's ZFS mountpoint property is changed to this path before mounting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mountpoint_override: Option<String>,
+}
+
+fn default_true() -> bool { true }
+
+pub fn get_imports_file() -> String {
+    let data_dir = std::env::var("ZFS_MANAGER_DATA")
+        .unwrap_or_else(|_| "/home/docker/zfs-manager".to_string());
+    format!("{}/pool_imports.json", data_dir)
+}
+
+pub fn load_import_configs() -> Vec<PoolImportConfig> {
+    let path = get_imports_file();
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_import_configs(configs: &[PoolImportConfig]) -> Result<(), ApiError> {
+    let path = get_imports_file();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| ApiError::InternalError(format!("Cannot create data dir: {e}")))?;
+    }
+    let json = serde_json::to_string_pretty(configs)
+        .map_err(|e| ApiError::InternalError(format!("Serialize error: {e}")))?;
+    std::fs::write(&path, json)
+        .map_err(|e| ApiError::InternalError(format!("Write error: {e}")))?;
+    Ok(())
+}
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/v1/pools", get(list_pools).post(create_pool))
         // Static routes BEFORE dynamic ones
-        .route("/api/v1/pools/importable", get(list_importable_pools))
+        .route("/api/v1/pools/importable",                              get(list_importable_pools))
+        .route("/api/v1/pools/import-configs",                          get(list_import_configs).post(save_import_config))
+        .route("/api/v1/pools/import-configs/:config_name",             put(update_import_config).delete(delete_import_config))
+        .route("/api/v1/pools/import-configs/:config_name/run",         post(run_import_config_now))
         .route("/api/v1/pools/:name", get(get_pool).delete(destroy_pool))
         .route("/api/v1/pools/:name/status",      get(pool_status))
         .route("/api/v1/pools/:name/vdevs",        get(pool_vdevs))
@@ -27,8 +93,15 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/pools/:name/resilver",     post(resilver_pool))
         .route("/api/v1/pools/:name/expand",       post(expand_pool))
         .route("/api/v1/pools/:name/replace",      post(replace_disk))
+        .route("/api/v1/pools/:name/remove-device", post(remove_device))
         .route("/api/v1/pools/:name/events",       get(pool_events))
         .route("/api/v1/pools/:name/settings",     get(get_pool_settings).put(set_pool_setting))
+        // raidz_expansion static route handles both GET and PUT (fixes 405 when toggling feature)
+        .route("/api/v1/pools/:name/feature/raidz_expansion",
+            get(get_raidz_expansion_feature).put(toggle_raidz_expansion))
+        .route("/api/v1/pools/:name/feature/raidz_expansion/enable", post(enable_raidz_expansion_feature))
+        .route("/api/v1/pools/:name/features",                        get(list_pool_features))
+        .route("/api/v1/pools/:name/feature/:feature_name",           put(toggle_pool_feature))
         .with_state(state)
 }
 
@@ -92,11 +165,64 @@ fn parse_vdev_config(status_output: &str) -> Vec<Value> {
     };
 
     let mut vdevs: Vec<Value> = Vec::new();
-    let mut cur_type  = String::new();
-    let mut cur_name  = String::new();
+    let mut cur_type     = String::new();
+    let mut cur_name     = String::new();
     let mut cur_disks: Vec<Value> = Vec::new();
-    let mut in_vdev   = false;
-    let mut past_pool = false;
+    let mut in_vdev      = false;
+    let mut past_pool    = false;
+    // Track an active "replacing-N" or "spare-N" sub-vdev: collect old and new disk names.
+    let mut in_replacing       = false;
+    let mut repl_is_spare      = false; // true when sub-vdev is spare-N, false for replacing-N
+    let mut repl_old           = String::new();
+    let mut repl_old_state     = String::new();
+    let mut repl_new           = String::new();
+    // Nested case: spare-N { failed_disk, replacing-N { spare_disk, new_disk } }
+    // repl_in_nested  = we are inside the inner replacing-N
+    // repl_final_disk = the actual new replacement disk (depth-8 second child)
+    let mut repl_in_nested     = false;
+    let mut repl_final_disk    = String::new();
+    // Track top-level sections ("spares", "logs", "cache") so entries get the right type.
+    let mut in_spares    = false;
+    let mut in_logs      = false;
+    let mut in_cache_sec = false;
+
+    // Emit any buffered replacing pair into cur_disks, then reset state.
+    #[allow(clippy::too_many_arguments)]
+    let flush_replacing = |in_replacing: &mut bool,
+                                repl_is_spare: &mut bool,
+                                repl_old: &mut String,
+                                repl_old_state: &mut String,
+                                repl_new: &mut String,
+                                repl_in_nested: &mut bool,
+                                repl_final_disk: &mut String,
+                                cur_disks: &mut Vec<Value>| {
+        if *in_replacing && !repl_old.is_empty() {
+            let old_state = if repl_old_state.is_empty() { "DEGRADED" } else { repl_old_state.as_str() };
+            if repl_new.is_empty() {
+                cur_disks.push(json!({ "path": repl_old.clone(), "state": old_state }));
+            } else {
+                let mut entry = json!({
+                    "path": repl_old.clone(),
+                    "state": old_state,
+                    "replacing_with": repl_new.clone(),
+                    "via_spare": *repl_is_spare,
+                });
+                // Nested spare-N { failed, replacing-N { spare, new_disk } }:
+                // repl_new = spare, repl_final_disk = the actual new replacement disk.
+                if !repl_final_disk.is_empty() {
+                    entry["being_replaced_by"] = json!(repl_final_disk.clone());
+                }
+                cur_disks.push(entry);
+            }
+            *in_replacing   = false;
+            *repl_is_spare  = false;
+            *repl_in_nested = false;
+            repl_old.clear();
+            repl_old_state.clear();
+            repl_new.clear();
+            repl_final_disk.clear();
+        }
+    };
 
     for line in status_output[config_idx..].lines() {
         if line.trim() == "config:" { continue; }
@@ -114,24 +240,58 @@ fn parse_vdev_config(status_output: &str) -> Vec<Value> {
         let tokens: Vec<&str> = after_tab.split_whitespace().collect();
         let name  = tokens.first().copied().unwrap_or("");
         let state = tokens.get(1).copied().unwrap_or("ONLINE");
+        // ZFS prefixes hot-spare disks with "spare-" in status output; strip it.
+        let disk_name = name.strip_prefix("spare-").unwrap_or(name);
 
         match leading {
             0 => {
-                past_pool = true;  // pool root line
+                past_pool = true;
+                // Detect top-level section headers (spares, logs/log, cache); flush current vdev group first.
+                let n_lower = name.to_lowercase();
+                let is_section = n_lower == "spares" || n_lower == "logs" || n_lower == "log" || n_lower == "cache";
+                if is_section {
+                    flush_replacing(&mut in_replacing, &mut repl_is_spare, &mut repl_old, &mut repl_old_state, &mut repl_new, &mut repl_in_nested, &mut repl_final_disk, &mut cur_disks);
+                    if in_vdev && !cur_disks.is_empty() {
+                        vdevs.push(json!({ "name": cur_name, "type": cur_type, "disks": cur_disks.clone() }));
+                    }
+                    cur_disks = Vec::new();
+                    in_vdev   = false;
+                    in_spares    = n_lower == "spares";
+                    in_logs      = n_lower == "logs" || n_lower == "log";
+                    in_cache_sec = n_lower == "cache";
+                } else {
+                    in_spares = false;
+                    in_logs   = false;
+                    in_cache_sec = false;
+                }
+            }
+            2 if in_spares => {
+                // Each disk in the spares section is a standalone "spare" vdev.
+                vdevs.push(json!({ "name": disk_name, "type": "spare", "disks": [{"path": disk_name, "state": state}] }));
+            }
+            2 if in_logs => {
+                // Each disk in the logs section is a standalone "log" vdev.
+                vdevs.push(json!({ "name": disk_name, "type": "log", "disks": [{"path": disk_name, "state": state}] }));
+            }
+            2 if in_cache_sec => {
+                // Each disk in the cache section is a standalone "cache" vdev.
+                vdevs.push(json!({ "name": disk_name, "type": "cache", "disks": [{"path": disk_name, "state": state}] }));
             }
             2 => {
-                // Flush previous vdev group
+                flush_replacing(&mut in_replacing, &mut repl_is_spare, &mut repl_old, &mut repl_old_state, &mut repl_new, &mut repl_in_nested, &mut repl_final_disk, &mut cur_disks);
                 if in_vdev && !cur_disks.is_empty() {
                     vdevs.push(json!({ "name": cur_name, "type": cur_type, "disks": cur_disks.clone() }));
                 }
                 cur_disks = Vec::new();
+                // Entering a regular data vdev resets any section context.
+                in_spares = false; in_logs = false; in_cache_sec = false;
 
                 let vtype = classify_vdev(name);
                 if vtype == "stripe" {
-                    vdevs.push(json!({ "name": name, "type": "stripe", "disks": [{"path": name, "state": state}] }));
-                    in_vdev    = false;
-                    cur_type   = String::new();
-                    cur_name   = String::new();
+                    vdevs.push(json!({ "name": disk_name, "type": "stripe", "disks": [{"path": disk_name, "state": state}] }));
+                    in_vdev  = false;
+                    cur_type = String::new();
+                    cur_name = String::new();
                 } else {
                     cur_type = vtype.to_string();
                     cur_name = name.to_string();
@@ -139,11 +299,48 @@ fn parse_vdev_config(status_output: &str) -> Vec<Value> {
                 }
             }
             4 if in_vdev => {
-                cur_disks.push(json!({ "path": name, "state": state }));
+                flush_replacing(&mut in_replacing, &mut repl_is_spare, &mut repl_old, &mut repl_old_state, &mut repl_new, &mut repl_in_nested, &mut repl_final_disk, &mut cur_disks);
+                if name.starts_with("replacing") || name.starts_with("spare-") {
+                    // Enter a replacing or spare-activated sub-vdev; actual disks arrive at depth 6.
+                    // "spare-N" means a hot spare took over; "replacing-N" means a manual replace.
+                    in_replacing  = true;
+                    repl_is_spare = name.starts_with("spare-");
+                } else {
+                    cur_disks.push(json!({ "path": disk_name, "state": state }));
+                }
+            }
+            6 if in_vdev && in_replacing => {
+                // First child is the old (outgoing) disk, second is the new (incoming) disk.
+                // Special case: spare-N { failed_disk, replacing-N { spare_disk, new_disk } }
+                // In this nested layout the second child at depth-6 is a sub-vdev name like
+                // "replacing-4", not an actual disk. Detect it and enter nested mode so we
+                // can collect the real disks at depth-8.
+                if name.starts_with("replacing") && repl_is_spare && !repl_old.is_empty() {
+                    // The spare sub-vdev has a nested replacing sub-vdev:
+                    //   spare-N { failed, replacing-N { spare_disk, new_disk } }
+                    // repl_old is already set (the failed disk). Now we drill into the nested
+                    // replacing sub-vdev whose children appear at leading=8.
+                    repl_in_nested = true;
+                } else if repl_old.is_empty() {
+                    repl_old       = disk_name.to_string();
+                    repl_old_state = state.to_string();
+                } else if repl_new.is_empty() {
+                    repl_new = disk_name.to_string();
+                }
+            }
+            8 if in_vdev && in_replacing && repl_in_nested => {
+                // Inside spare-N → replacing-N: first child=spare covering disk,
+                // second child=actual new replacement disk.
+                if repl_new.is_empty() {
+                    repl_new = disk_name.to_string();         // spare disk (e.g. sdh)
+                } else if repl_final_disk.is_empty() {
+                    repl_final_disk = disk_name.to_string();  // new replacement disk (e.g. sda)
+                }
             }
             _ => {}
         }
     }
+    flush_replacing(&mut in_replacing, &mut repl_is_spare, &mut repl_old, &mut repl_old_state, &mut repl_new, &mut repl_in_nested, &mut repl_final_disk, &mut cur_disks);
     if in_vdev && !cur_disks.is_empty() {
         vdevs.push(json!({ "name": cur_name, "type": cur_type, "disks": cur_disks }));
     }
@@ -307,12 +504,37 @@ async fn create_pool(Json(body): Json<CreatePoolBody>) -> Result<Json<Value>, Ap
             executor::validate_zfs_name(v, "vdev")?;
         }
     }
+
+    // If user didn't specify a mountpoint, default to /mnt/<name> so the pool
+    // is mounted under the rshared bind-mount and is visible on the host.
+    let user_set_mountpoint = body.options.iter().any(|o| o == "-m")
+        || body.options.iter().any(|o| o.starts_with("mountpoint="));
+
     let mut args = vec!["create".to_string()];
     args.extend(body.options);
+
+    let pool_mp = if user_set_mountpoint {
+        None
+    } else {
+        let mp = format!("/mnt/{}", body.name);
+        let _ = std::fs::create_dir_all(&mp);
+        args.push("-m".to_string());
+        args.push(mp.clone());
+        Some(mp)
+    };
+
     args.push(body.name.clone());
     args.extend(body.vdevs);
     let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     executor::zpool(&refs).await?;
+
+    // Explicitly mount after creation so the dataset is immediately active and
+    // the rshared /mnt propagation makes it visible on the host.
+    if let Some(ref mp) = pool_mp {
+        let _ = std::fs::create_dir_all(mp);
+    }
+    let _ = executor::zfs(&["mount", &body.name]).await;
+
     Ok(Json(json!({ "message": format!("Pool '{}' created", body.name) })))
 }
 
@@ -360,6 +582,13 @@ async fn destroy_pool(
 
     executor::zpool(&["destroy", &name]).await?;
 
+    // Remove any import configs for the destroyed pool so they don't linger.
+    {
+        let mut configs = load_import_configs();
+        configs.retain(|c| c.name != name);
+        let _ = save_import_configs(&configs);
+    }
+
     // Wipe all ZFS labels AND partition signatures so disks appear free immediately.
     // labelclear removes ZFS super-blocks; wipefs clears the GPT/MBR table that
     // OpenZFS creates on whole-disk vdevs — otherwise lsblk still shows children
@@ -393,34 +622,64 @@ async fn pool_vdevs(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     let raw_vdevs = parse_vdev_config(&raw);
 
     // Pass 1: resolve SCSI IDs / full paths to short kernel device names.
-    // Also preserve the raw vdev name (e.g. "raidz2-0") for use as attach target.
-    let mut vdev_data: Vec<(String, String, Vec<(String, String)>)> = Vec::with_capacity(raw_vdevs.len());
+    // Disk tuple: (short_name, state, replacing_with_short, via_spare, being_replaced_by_short)
+    let mut vdev_data: Vec<(String, String, Vec<(String, String, Option<String>, bool, Option<String>)>)> = Vec::with_capacity(raw_vdevs.len());
     for vdev in raw_vdevs {
-        let vtype    = vdev["type"].as_str().unwrap_or("stripe").to_string();
-        let vname    = vdev["name"].as_str().unwrap_or("").to_string();
+        let vtype     = vdev["type"].as_str().unwrap_or("stripe").to_string();
+        let vname     = vdev["name"].as_str().unwrap_or("").to_string();
         let raw_disks = vdev["disks"].as_array().cloned().unwrap_or_default();
-        let mut disks: Vec<(String, String)> = Vec::with_capacity(raw_disks.len());
+        let mut disks: Vec<(String, String, Option<String>, bool, Option<String>)> = Vec::with_capacity(raw_disks.len());
         for disk in raw_disks {
-            let raw_path = disk["path"].as_str().unwrap_or("").to_string();
-            let short    = crate::worker::resolve_disk_short_name(&raw_path).await;
-            let state    = disk["state"].as_str().unwrap_or("ONLINE").to_string();
-            disks.push((short, state));
+            let raw_path   = disk["path"].as_str().unwrap_or("").to_string();
+            let short      = crate::worker::resolve_disk_short_name(&raw_path).await;
+            let state      = disk["state"].as_str().unwrap_or("ONLINE").to_string();
+            let via_spare  = disk["via_spare"].as_bool().unwrap_or(false);
+            let replacing_with = if let Some(rw) = disk["replacing_with"].as_str() {
+                Some(crate::worker::resolve_disk_short_name(rw).await)
+            } else {
+                None
+            };
+            let being_replaced_by = if let Some(rb) = disk["being_replaced_by"].as_str() {
+                Some(crate::worker::resolve_disk_short_name(rb).await)
+            } else {
+                None
+            };
+            disks.push((short, state, replacing_with, via_spare, being_replaced_by));
         }
         vdev_data.push((vtype, vname, disks));
     }
 
-    // Pass 2: strip partition suffixes across the full disk list when unambiguous
-    // (sdb1 → sdb only if no sdb2 also exists in the pool).
+    // Pass 2: strip partition suffixes across the full disk list when unambiguous.
+    // Include replacing_with AND being_replaced_by names in the set.
     let mut all_names: Vec<String> = vdev_data.iter()
-        .flat_map(|(_, _, disks)| disks.iter().map(|(n, _)| n.clone()))
+        .flat_map(|(_, _, disks)| disks.iter().flat_map(|(n, _, rw, _, rb)| {
+            std::iter::once(n.clone())
+                .chain(rw.iter().cloned())
+                .chain(rb.iter().cloned())
+        }))
         .collect();
     crate::worker::strip_partition_suffix_list(&mut all_names);
 
-    // Rebuild vdevs with stripped names, preserving vdev name.
+    // Rebuild vdevs — iterate names in the same order as all_names was built.
     let mut name_iter = all_names.into_iter();
     let vdevs: Vec<Value> = vdev_data.into_iter().map(|(vtype, vname, disks)| {
-        let resolved: Vec<Value> = disks.into_iter().map(|(_, state)| {
-            json!({ "path": name_iter.next().unwrap_or_default(), "state": state })
+        let resolved: Vec<Value> = disks.into_iter().map(|(_, state, replacing_with, via_spare, being_replaced_by)| {
+            let path  = name_iter.next().unwrap_or_default();
+            if replacing_with.is_some() {
+                let rw_path = name_iter.next().unwrap_or_default();
+                let mut entry = json!({
+                    "path": path, "state": state,
+                    "replacing_with": rw_path,
+                    "via_spare": via_spare,
+                });
+                if being_replaced_by.is_some() {
+                    let rb_path = name_iter.next().unwrap_or_default();
+                    entry["being_replaced_by"] = json!(rb_path);
+                }
+                entry
+            } else {
+                json!({ "path": path, "state": state })
+            }
         }).collect();
         json!({ "type": vtype, "name": vname, "disks": resolved })
     }).collect();
@@ -627,22 +886,47 @@ async fn upgrade_pool(Path(name): Path<String>) -> Result<Json<Value>, ApiError>
 // ZFS Rewrite = zpool scrub (validates & rewrites checksums for all blocks)
 async fn resilver_pool(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "pool")?;
-    match executor::zpool(&["scrub", &name]).await {
-        Ok(_) => Ok(Json(json!({ "message": format!("Rewrite (scrub) started on pool '{name}'") }))),
+    // Use host ZFS tools via nsenter — `zpool resilver` was added in OpenZFS 2.1.0
+    // and may not be available in the container's older Alpine ZFS userland.
+    match executor::zpool_host(&["resilver", &name]).await {
+        Ok(_) => Ok(Json(json!({ "message": format!("Resilver started on pool '{name}'") }))),
         Err(ApiError::CommandFailed { ref stderr, .. }) if stderr.contains("already in progress") => {
-            let _ = executor::zpool(&["scrub", "-s", &name]).await;
-            executor::zpool(&["scrub", &name]).await?;
-            Ok(Json(json!({ "message": format!("Rewrite (scrub) restarted on pool '{name}'") })))
+            // Restart: stop current resilver then kick a new one
+            let _ = executor::zpool_host(&["resilver", &name]).await;
+            Ok(Json(json!({ "message": format!("Resilver restarted on pool '{name}'") })))
         }
         Err(ApiError::CommandFailed { ref stderr, .. })
-            if stderr.contains("does not support") || stderr.contains("module version") =>
+            if stderr.contains("unrecognized command") || stderr.contains("does not support") =>
         {
             Err(ApiError::BadRequest(
-                "Scrub not supported: ZFS userland/kernel version mismatch. Upgrade kernel module or downgrade ZFS tools.".into()
+                "zpool resilver is not supported by this ZFS version (requires OpenZFS ≥ 2.1.0).".into()
             ))
         }
         Err(e) => Err(e),
     }
+}
+
+async fn list_pool_features(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
+    executor::validate_zfs_name(&name, "pool")?;
+    let raw = executor::zpool_host(&["get", "-H", "all", &name]).await?;
+    let features: Vec<Value> = raw.lines()
+        .filter_map(|line| {
+            let cols: Vec<&str> = line.splitn(4, '\t').collect();
+            if cols.len() < 3 { return None; }
+            let prop = cols[1].trim();
+            if !prop.starts_with("feature@") { return None; }
+            let feature_name = prop.strip_prefix("feature@").unwrap_or(prop);
+            let value = cols[2].trim();
+            let enabled = matches!(value, "active" | "enabled");
+            Some(json!({
+                "name":     feature_name,
+                "property": prop,
+                "value":    value,
+                "enabled":  enabled,
+            }))
+        })
+        .collect();
+    Ok(Json(json!({ "pool": name, "features": features })))
 }
 
 async fn pool_events(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
@@ -773,18 +1057,18 @@ async fn expand_pool(
         }
     }
 
+    let vdev_type_str = body.vdev_type.as_deref().unwrap_or("").trim().to_string();
+    // Spare/cache/log adds always use -f: ZFS rejects disks with existing labels otherwise.
+    let needs_force = body.force || matches!(vdev_type_str.as_str(), "spare" | "cache" | "log");
     let mut args = vec!["add".to_string()];
-    if body.force { args.push("-f".to_string()); }
+    if needs_force { args.push("-f".to_string()); }
     args.push(name.clone());
-    if let Some(vt) = &body.vdev_type {
-        let vt = vt.trim();
-        if !vt.is_empty() && vt != "stripe" {
-            // Validate vdev type
-            if !["mirror", "raidz", "raidz1", "raidz2", "raidz3", "spare", "log", "cache"].contains(&vt) {
-                return Err(ApiError::BadRequest(format!("Invalid vdev_type: {vt}")));
-            }
-            args.push(vt.to_string());
+    if !vdev_type_str.is_empty() && vdev_type_str != "stripe" {
+        // Validate vdev type
+        if !["mirror", "raidz", "raidz1", "raidz2", "raidz3", "spare", "log", "cache"].contains(&vdev_type_str.as_str()) {
+            return Err(ApiError::BadRequest(format!("Invalid vdev_type: {vdev_type_str}")));
         }
+        args.push(vdev_type_str.clone());
     }
     args.extend(all_disks.clone());
 
@@ -807,8 +1091,39 @@ async fn replace_disk(
     args.push(body.old_disk.clone());
     args.push(body.new_disk.clone());
     let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    executor::zpool(&refs).await?;
-    Ok(Json(json!({ "message": format!("Replacing '{}' -> '{}' on pool '{name}'", body.old_disk, body.new_disk) })))
+    match executor::zpool(&refs).await {
+        Ok(_) => Ok(Json(json!({ "message": format!("Replacing '{}' -> '{}' on pool '{name}'", body.old_disk, body.new_disk) }))),
+        // L2ARC cache devices cannot be replaced directly — remove old, add new.
+        Err(ApiError::CommandFailed { ref stderr, .. }) if stderr.contains("device is in use as a cache") => {
+            executor::zpool(&["remove", &name, &body.old_disk]).await?;
+            executor::zpool(&["add", "-f", &name, "cache", &body.new_disk]).await?;
+            Ok(Json(json!({ "message": format!("Cache disk '{}' swapped for '{}' on pool '{name}'", body.old_disk, body.new_disk) })))
+        }
+        // Hot spare devices cannot be replaced directly — remove old, add new.
+        Err(ApiError::CommandFailed { ref stderr, .. }) if stderr.contains("device is reserved as a hot spare") => {
+            executor::zpool(&["remove", &name, &body.old_disk]).await?;
+            executor::zpool(&["add", "-f", &name, "spare", &body.new_disk]).await?;
+            Ok(Json(json!({ "message": format!("Spare disk '{}' swapped for '{}' on pool '{name}'", body.old_disk, body.new_disk) })))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct RemoveDeviceBody {
+    pub device: String,
+}
+
+async fn remove_device(
+    Path(name): Path<String>,
+    Json(body): Json<RemoveDeviceBody>,
+) -> Result<Json<Value>, ApiError> {
+    executor::validate_zfs_name(&name, "pool")?;
+    if body.device.is_empty() {
+        return Err(ApiError::BadRequest("'device' is required".into()));
+    }
+    executor::zpool(&["remove", &name, &body.device]).await?;
+    Ok(Json(json!({ "message": format!("Device '{}' removed from pool '{name}'", body.device) })))
 }
 
 // ── Pool settings ─────────────────────────────────────────────────────────────
@@ -939,5 +1254,258 @@ async fn set_pool_setting(
         "pool":  name,
         "prop":  body.prop,
         "value": body.value,
+    })))
+}
+
+// ── Pool import configs ───────────────────────────────────────────────────────
+
+async fn list_import_configs() -> Result<Json<Value>, ApiError> {
+    let configs = load_import_configs();
+    Ok(Json(json!({ "configs": configs })))
+}
+
+async fn save_import_config(
+    Json(body): Json<PoolImportConfig>,
+) -> Result<Json<Value>, ApiError> {
+    if body.name.is_empty() {
+        return Err(ApiError::BadRequest("'name' is required".into()));
+    }
+    executor::validate_zfs_name(&body.name, "pool")?;
+    let mut configs = load_import_configs();
+    // Upsert by name
+    if let Some(pos) = configs.iter().position(|c| c.name == body.name) {
+        configs[pos] = body.clone();
+    } else {
+        configs.push(body.clone());
+    }
+    save_import_configs(&configs)?;
+    Ok(Json(json!({ "message": format!("Import config '{}' saved", body.name), "config": body })))
+}
+
+async fn update_import_config(
+    Path(config_name): Path<String>,
+    Json(body): Json<PoolImportConfig>,
+) -> Result<Json<Value>, ApiError> {
+    let mut configs = load_import_configs();
+    match configs.iter().position(|c| c.name == config_name) {
+        Some(pos) => {
+            configs[pos] = body.clone();
+            save_import_configs(&configs)?;
+            Ok(Json(json!({ "message": format!("Import config '{}' updated", config_name), "config": body })))
+        }
+        None => Err(ApiError::NotFound(format!("Import config '{}' not found", config_name))),
+    }
+}
+
+async fn delete_import_config(
+    Path(config_name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let mut configs = load_import_configs();
+    let len_before = configs.len();
+    configs.retain(|c| c.name != config_name);
+    if configs.len() == len_before {
+        return Err(ApiError::NotFound(format!("Import config '{}' not found", config_name)));
+    }
+    save_import_configs(&configs)?;
+    Ok(Json(json!({ "message": format!("Import config '{}' deleted", config_name) })))
+}
+
+async fn run_import_config_now(
+    Path(config_name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let configs = load_import_configs();
+    let config = configs.iter().find(|c| c.name == config_name)
+        .ok_or_else(|| ApiError::NotFound(format!("Import config '{}' not found", config_name)))?
+        .clone();
+
+    execute_pool_import(&config).await?;
+    Ok(Json(json!({ "message": format!("Import executed for pool '{}'", config_name) })))
+}
+
+pub async fn execute_pool_import(config: &PoolImportConfig) -> Result<(), ApiError> {
+    use tracing::{info, warn};
+
+    // Check if pool is already imported
+    let already_imported = executor::zpool(&["list", &config.name]).await
+        .map(|out| !out.trim().is_empty())
+        .unwrap_or(false);
+
+    if !already_imported {
+        executor::zpool(&["import", &config.name]).await?;
+        info!("Imported pool '{}'", config.name);
+    } else {
+        info!("Pool '{}' already imported, skipping", config.name);
+    }
+
+    // Load pool-level encryption key if needed
+    if config.encrypted {
+        if let Some(ref kf) = config.key_file {
+            let key_loc = format!("file://{}", kf);
+            executor::zfs(&["load-key", "-L", &key_loc, &config.name]).await
+                .unwrap_or_else(|e| { warn!("load-key failed for '{}': {:?}", config.name, e); String::new() });
+        }
+    }
+
+    // Load per-dataset encryption keys (e.g. pool/nas, pool/s3)
+    for dk in &config.dataset_keys {
+        if dk.dataset.is_empty() || dk.key_file.is_empty() { continue; }
+        let key_loc = format!("file://{}", dk.key_file);
+        executor::zfs(&["load-key", "-L", &key_loc, &dk.dataset]).await
+            .unwrap_or_else(|e| { warn!("load-key failed for dataset '{}': {:?}", dk.dataset, e); String::new() });
+        info!("Loaded key for dataset '{}'", dk.dataset);
+    }
+
+    // If a custom mountpoint is configured, set it on the pool dataset directly.
+    // This makes files written to the path go into the ZFS pool, not just a host directory.
+    if let Some(ref mp) = config.mountpoint_override {
+        let mp = mp.trim();
+        if !mp.is_empty() {
+            let _ = std::fs::create_dir_all(mp);
+            executor::zfs(&["set", &format!("mountpoint={}", mp), &config.name]).await
+                .unwrap_or_else(|e| { warn!("set mountpoint for '{}' failed: {:?}", config.name, e); String::new() });
+            info!("Set mountpoint of '{}' to '{}'", config.name, mp);
+        }
+    }
+
+    // Create mountpoint directories so zfs mount -a doesn't fail on missing dirs
+    if let Ok(output) = executor::zfs(&["list", "-H", "-o", "name,mountpoint"]).await {
+        for line in output.lines() {
+            let mut parts = line.splitn(2, '\t');
+            let _name = parts.next().unwrap_or("");
+            let mp = parts.next().unwrap_or("").trim();
+            if mp.starts_with('/') && mp != "/" {
+                let _ = std::fs::create_dir_all(mp);
+            }
+        }
+    }
+
+    // Mount all datasets
+    executor::zfs(&["mount", "-a"]).await
+        .unwrap_or_else(|e| { warn!("zfs mount -a failed: {:?}", e); String::new() });
+
+    // Apply bind mounts — mirrors the user's bash script pattern:
+    //   mkdir -p $TARGET && mount --rbind /Pool/dataset $TARGET
+    for bm in &config.bind_mounts {
+        if bm.source.is_empty() || bm.target.is_empty() { continue; }
+
+        // Create target directory (e.g. /mnt/nas)
+        let _ = std::fs::create_dir_all(&bm.target);
+
+        // Source must exist and be a mounted ZFS path (e.g. /Toshiba/nas).
+        // Skip if not present to avoid silent errors.
+        if !std::path::Path::new(&bm.source).exists() {
+            warn!("Bind mount source '{}' does not exist — skipping", bm.source);
+            continue;
+        }
+
+        // Skip if target is already bind-mounted (idempotent re-runs)
+        let already = tokio::process::Command::new("mount")
+            .output().await
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains(bm.target.as_str()))
+            .unwrap_or(false);
+        if already {
+            info!("Bind mount target '{}' already active — skipping", bm.target);
+            continue;
+        }
+
+        let out = tokio::process::Command::new("mount")
+            .args(["--rbind", &bm.source, &bm.target])
+            .output().await;
+        match out {
+            Ok(o) if o.status.success() => info!("Bind mounted {} → {}", bm.source, bm.target),
+            Ok(o) => warn!("Bind mount {} → {} failed: {}", bm.source, bm.target,
+                           String::from_utf8_lossy(&o.stderr).trim()),
+            Err(e) => warn!("Bind mount error: {:?}", e),
+        }
+    }
+
+    Ok(())
+}
+
+// ── RAIDZ Expansion feature ───────────────────────────────────────────────────
+
+// Delegates to toggle_pool_feature with hardcoded feature name — needed so the
+// static route "/feature/raidz_expansion" can serve PUT without returning 405.
+async fn toggle_raidz_expansion(
+    Path(name): Path<String>,
+    Json(body): Json<ToggleFeatureBody>,
+) -> Result<Json<Value>, ApiError> {
+    toggle_pool_feature(Path((name, "raidz_expansion".to_string())), Json(body)).await
+}
+
+async fn get_raidz_expansion_feature(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
+    executor::validate_zfs_name(&name, "pool")?;
+    // Use host ZFS tools via nsenter — the container's Alpine zpool may be older
+    // and return wrong results or not support newer features like raidz_expansion.
+    let raw = executor::zpool_host(&["get", "-H", "feature@raidz_expansion", &name]).await?;
+    let value = raw.lines()
+        .next()
+        .and_then(|line| {
+            let c: Vec<&str> = line.split('\t').collect();
+            c.get(2).map(|v| v.trim().to_string())
+        })
+        .unwrap_or_else(|| "disabled".to_string());
+    let enabled = matches!(value.as_str(), "active" | "enabled");
+    Ok(Json(json!({
+        "pool":    name,
+        "feature": "raidz_expansion",
+        "value":   value,
+        "enabled": enabled,
+    })))
+}
+
+async fn enable_raidz_expansion_feature(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
+    executor::validate_zfs_name(&name, "pool")?;
+    // Use host ZFS tools via nsenter so newer features unsupported by the container's
+    // Alpine zpool binary (e.g. feature@raidz_expansion) can be set correctly.
+    executor::zpool_host(&["set", "feature@raidz_expansion=enabled", &name]).await?;
+    Ok(Json(json!({
+        "message": format!("raidz_expansion feature enabled on pool '{name}'"),
+        "pool":    name,
+        "feature": "raidz_expansion",
+        "enabled": true,
+    })))
+}
+
+#[derive(Deserialize)]
+struct ToggleFeatureBody {
+    enabled: bool,
+}
+
+async fn toggle_pool_feature(
+    Path((name, feature_name)): Path<(String, String)>,
+    Json(body): Json<ToggleFeatureBody>,
+) -> Result<Json<Value>, ApiError> {
+    executor::validate_zfs_name(&name, "pool")?;
+
+    // Feature names are alphanumeric + underscores only
+    if feature_name.is_empty() || !feature_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return Err(ApiError::BadRequest("Invalid feature name".into()));
+    }
+
+    let prop  = format!("feature@{feature_name}");
+    let value = if body.enabled { "enabled" } else { "disabled" };
+
+    // Check current state first — refuse to disable active features
+    if !body.enabled {
+        let raw = executor::zpool_host(&["get", "-H", &prop, &name]).await.unwrap_or_default();
+        let current = raw.lines().next()
+            .and_then(|l| l.split('\t').nth(2))
+            .map(|v| v.trim().to_string())
+            .unwrap_or_default();
+        if current == "active" {
+            return Err(ApiError::BadRequest(
+                format!("Feature '{feature_name}' is active (data is using it) and cannot be disabled.")
+            ));
+        }
+    }
+
+    executor::zpool_host(&["set", &format!("{prop}={value}"), &name]).await?;
+
+    Ok(Json(json!({
+        "message": format!("Feature '{feature_name}' set to '{value}' on pool '{name}'"),
+        "pool":    name,
+        "feature": feature_name,
+        "enabled": body.enabled,
     })))
 }

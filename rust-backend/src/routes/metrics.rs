@@ -283,34 +283,75 @@ async fn get_fill_prediction(
         None => return Json(json!({ "predictions": [], "window_used": null, "window_key": null })),
     };
 
-    // Single query: latest free/alloc per pool + avg write rates across all windows
-    // write_bw_mb is in MB/s; daily rate = avg_mb_s * 86400 / 1024 GB/day
+    // Compute actual growth rate from alloc_gb delta across time windows.
+    // This correctly captures shrinkage (negative rate) when data is deleted,
+    // unlike write_bw_mb which stays near zero even when usage is dropping.
     let query = "
         WITH latest_pool AS (
             SELECT DISTINCT ON (pool_name) pool_name, alloc_gb, free_gb
             FROM zfs_metrics WHERE pool_name != ''
             ORDER BY pool_name, collected_at DESC
-        ), rates AS (
+        ),
+        oldest_30d AS (
+            SELECT DISTINCT ON (pool_name) pool_name, alloc_gb as alloc_old, collected_at as ts_old,
+                EXTRACT(EPOCH FROM (NOW() - collected_at)) / 86400.0 as days_ago
+            FROM zfs_metrics WHERE pool_name != '' AND collected_at > NOW() - INTERVAL '30 days'
+            ORDER BY pool_name, collected_at ASC
+        ),
+        oldest_7d AS (
+            SELECT DISTINCT ON (pool_name) pool_name, alloc_gb as alloc_old, collected_at as ts_old,
+                EXTRACT(EPOCH FROM (NOW() - collected_at)) / 86400.0 as days_ago
+            FROM zfs_metrics WHERE pool_name != '' AND collected_at > NOW() - INTERVAL '7 days'
+            ORDER BY pool_name, collected_at ASC
+        ),
+        oldest_1d AS (
+            SELECT DISTINCT ON (pool_name) pool_name, alloc_gb as alloc_old, collected_at as ts_old,
+                EXTRACT(EPOCH FROM (NOW() - collected_at)) / 86400.0 as days_ago
+            FROM zfs_metrics WHERE pool_name != '' AND collected_at > NOW() - INTERVAL '24 hours'
+            ORDER BY pool_name, collected_at ASC
+        ),
+        oldest_6h AS (
+            SELECT DISTINCT ON (pool_name) pool_name, alloc_gb as alloc_old, collected_at as ts_old,
+                EXTRACT(EPOCH FROM (NOW() - collected_at)) / 86400.0 as days_ago
+            FROM zfs_metrics WHERE pool_name != '' AND collected_at > NOW() - INTERVAL '6 hours'
+            ORDER BY pool_name, collected_at ASC
+        ),
+        oldest_1h AS (
+            SELECT DISTINCT ON (pool_name) pool_name, alloc_gb as alloc_old, collected_at as ts_old,
+                EXTRACT(EPOCH FROM (NOW() - collected_at)) / 86400.0 as days_ago
+            FROM zfs_metrics WHERE pool_name != '' AND collected_at > NOW() - INTERVAL '1 hour'
+            ORDER BY pool_name, collected_at ASC
+        ),
+        counts AS (
             SELECT pool_name,
-                AVG(CASE WHEN collected_at > NOW() - INTERVAL '30 days' THEN write_bw_mb END) as avg_30d,
                 COUNT(CASE WHEN collected_at > NOW() - INTERVAL '30 days' THEN 1 END) as cnt_30d,
-                AVG(CASE WHEN collected_at > NOW() - INTERVAL '7 days'  THEN write_bw_mb END) as avg_7d,
                 COUNT(CASE WHEN collected_at > NOW() - INTERVAL '7 days'  THEN 1 END) as cnt_7d,
-                AVG(CASE WHEN collected_at > NOW() - INTERVAL '24 hours' THEN write_bw_mb END) as avg_1d,
                 COUNT(CASE WHEN collected_at > NOW() - INTERVAL '24 hours' THEN 1 END) as cnt_1d,
-                AVG(CASE WHEN collected_at > NOW() - INTERVAL '6 hours'  THEN write_bw_mb END) as avg_6h,
                 COUNT(CASE WHEN collected_at > NOW() - INTERVAL '6 hours'  THEN 1 END) as cnt_6h,
-                AVG(CASE WHEN collected_at > NOW() - INTERVAL '1 hour'   THEN write_bw_mb END) as avg_1h,
                 COUNT(CASE WHEN collected_at > NOW() - INTERVAL '1 hour'   THEN 1 END) as cnt_1h
             FROM zfs_metrics
             WHERE pool_name != '' AND collected_at > NOW() - INTERVAL '30 days'
             GROUP BY pool_name
         )
         SELECT l.pool_name, l.alloc_gb, l.free_gb,
-               r.avg_30d, r.cnt_30d, r.avg_7d, r.cnt_7d,
-               r.avg_1d,  r.cnt_1d,  r.avg_6h, r.cnt_6h,
-               r.avg_1h,  r.cnt_1h
-        FROM latest_pool l LEFT JOIN rates r ON l.pool_name = r.pool_name
+               -- rate = (latest_alloc - oldest_alloc) / days_ago  (GB/day, can be negative)
+               CASE WHEN o30.days_ago > 0 THEN (l.alloc_gb - o30.alloc_old) / o30.days_ago END as rate_30d,
+               c.cnt_30d,
+               CASE WHEN o7.days_ago > 0  THEN (l.alloc_gb - o7.alloc_old)  / o7.days_ago  END as rate_7d,
+               c.cnt_7d,
+               CASE WHEN o1d.days_ago > 0 THEN (l.alloc_gb - o1d.alloc_old) / o1d.days_ago END as rate_1d,
+               c.cnt_1d,
+               CASE WHEN o6h.days_ago > 0 THEN (l.alloc_gb - o6h.alloc_old) / o6h.days_ago END as rate_6h,
+               c.cnt_6h,
+               CASE WHEN o1h.days_ago > 0 THEN (l.alloc_gb - o1h.alloc_old) / o1h.days_ago END as rate_1h,
+               c.cnt_1h
+        FROM latest_pool l
+        LEFT JOIN oldest_30d o30 ON l.pool_name = o30.pool_name
+        LEFT JOIN oldest_7d  o7  ON l.pool_name = o7.pool_name
+        LEFT JOIN oldest_1d  o1d ON l.pool_name = o1d.pool_name
+        LEFT JOIN oldest_6h  o6h ON l.pool_name = o6h.pool_name
+        LEFT JOIN oldest_1h  o1h ON l.pool_name = o1h.pool_name
+        LEFT JOIN counts c       ON l.pool_name = c.pool_name
     ";
 
     let rows = match pg.query(query, &[]).await {
@@ -376,13 +417,21 @@ async fn get_fill_prediction(
             continue; // No write data for this pool in any window — skip
         }
 
-        // rate_gb_day = avg MB/s * 86400 s/day / 1024 MB/GB
-        let rate_gb_day = best_avg * 86400.0 / 1024.0;
-        let single_point = best_cnt == 1;
+        // rate_gb_day is the alloc_gb delta per day (can be negative if shrinking)
+        let rate_gb_day = best_avg;
+        let single_point = best_cnt <= 2;
 
-        let (fill_date, color) = if rate_gb_day <= 0.0 || free_gb <= 0.0 {
-            ("–".to_string(), "muted")
+        // Threshold: changes smaller than 10 MB/day are considered "stable"
+        let stable_threshold_gb = 0.01; // 10 MB/day
+
+        let (fill_date, color) = if rate_gb_day < -stable_threshold_gb {
+            // Pool is shrinking — data is being deleted
+            ("Shrinking – not filling".to_string(), "success")
+        } else if rate_gb_day.abs() <= stable_threshold_gb || free_gb <= 0.0 {
+            // No meaningful growth detected or pool already full
+            ("Stable".to_string(), "muted")
         } else {
+            // Pool is growing — compute fill date
             let days = free_gb / rate_gb_day;
             let fill_dt = today + chrono::Duration::seconds((days * 86400.0) as i64);
             let date_str = if single_point {
