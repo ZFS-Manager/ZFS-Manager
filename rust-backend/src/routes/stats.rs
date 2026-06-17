@@ -112,8 +112,11 @@ async fn get_system_stats(State(state): State<AppState>) -> Result<Json<Value>, 
     // Check Redis cache first (TTL 3s)
     if let Some(ref redis_conn) = state.redis {
         let mut conn = redis_conn.clone();
-        let cached: redis::RedisResult<Option<String>> = conn.get("zfs:system-stats").await;
-        if let Ok(Some(hit)) = cached {
+        let cached = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            conn.get::<_, Option<String>>("zfs:system-stats")
+        ).await;
+        if let Ok(Ok(Some(hit))) = cached {
             if let Ok(val) = serde_json::from_str::<Value>(&hit) {
                 return Ok(Json(val));
             }
@@ -206,7 +209,10 @@ async fn get_system_stats(State(state): State<AppState>) -> Result<Json<Value>, 
     if let Some(ref redis_conn) = state.redis {
         let mut conn = redis_conn.clone();
         if let Ok(json_str) = serde_json::to_string(&result) {
-            let _: redis::RedisResult<()> = conn.set_ex("zfs:system-stats", json_str, 3u64).await;
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                conn.set_ex::<_, _, ()>("zfs:system-stats", json_str, 3u64)
+            ).await;
         }
     }
 
@@ -306,8 +312,11 @@ async fn get_smart_data(
     // Check Redis cache (TTL 60s)
     if let Some(ref redis_conn) = state.redis {
         let mut conn = redis_conn.clone();
-        let cached: redis::RedisResult<Option<String>> = conn.get(&cache_key).await;
-        if let Ok(Some(hit)) = cached {
+        let cached = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            conn.get::<_, Option<String>>(&cache_key)
+        ).await;
+        if let Ok(Ok(Some(hit))) = cached {
             if let Ok(val) = serde_json::from_str::<Value>(&hit) {
                 return Ok(Json(val));
             }
@@ -338,7 +347,10 @@ async fn get_smart_data(
         if let Some(ref redis_conn) = state.redis {
             let mut conn = redis_conn.clone();
             if let Ok(s) = serde_json::to_string(&result) {
-                let _: redis::RedisResult<()> = conn.set_ex(&cache_key, s, 300u64).await;
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_millis(500),
+                    conn.set_ex::<_, _, ()>(&cache_key, s, 300u64)
+                ).await;
             }
         }
         return Ok(Json(result));
@@ -382,9 +394,14 @@ async fn get_smart_data(
     if let Some(ref redis_conn) = state.redis {
         let mut conn = redis_conn.clone();
         if let Ok(json_str) = serde_json::to_string(&result) {
-            let set_result: redis::RedisResult<()> = conn.set_ex(&cache_key, json_str, 60u64).await;
-            if let Err(e) = set_result {
-                warn!("Redis SET failed for {cache_key}: {e}");
+            let set_result = tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                conn.set_ex::<_, _, ()>(&cache_key, json_str, 60u64)
+            ).await;
+            match set_result {
+                Ok(Err(e)) => warn!("Redis SET failed for {cache_key}: {e}"),
+                Err(_) => warn!("Redis SET timed out for {cache_key}"),
+                _ => {}
             }
         }
     }

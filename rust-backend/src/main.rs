@@ -75,8 +75,11 @@ async fn auth_middleware(
             use redis::AsyncCommands;
             let mut conn = redis_conn.clone();
             let session_key = format!("zfs:session:{}", token_hash);
-            let cached: redis::RedisResult<Option<String>> = conn.get(&session_key).await;
-            if let Ok(Some(_)) = cached {
+            let cached = tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                conn.get::<_, Option<String>>(&session_key)
+            ).await;
+            if let Ok(Ok(Some(_))) = cached {
                 return Ok(next.run(req).await);
             }
         }
@@ -93,7 +96,10 @@ async fn auth_middleware(
                     use redis::AsyncCommands;
                     let mut conn = redis_conn.clone();
                     let session_key = format!("zfs:session:{}", token_hash);
-                    let _: redis::RedisResult<()> = conn.set_ex(&session_key, "admin", 86400u64).await;
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_millis(500),
+                        conn.set_ex::<_, _, ()>(&session_key, "admin", 86400u64)
+                    ).await;
                 }
                 return Ok(next.run(req).await);
             }

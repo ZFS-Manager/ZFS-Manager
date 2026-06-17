@@ -115,16 +115,20 @@ async fn get_metrics_history(
     // ── Redis cache check ──────────────────────────────────────────────────
     if let Some(ref redis_conn) = state.redis {
         let mut conn = redis_conn.clone();
-        let cached: redis::RedisResult<Option<String>> = conn.get(&cache_key).await;
+        let cached = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            conn.get::<_, Option<String>>(&cache_key)
+        ).await;
         match cached {
-            Ok(Some(hit)) => {
+            Ok(Ok(Some(hit))) => {
                 if let Ok(val) = serde_json::from_str::<Value>(&hit) {
                     debug!("cache hit: {cache_key}");
                     return Json(val);
                 }
             }
-            Ok(None) => debug!("cache miss: {cache_key}"),
-            Err(e) => warn!("Redis GET error for {cache_key}: {e}"),
+            Ok(Ok(None)) => debug!("cache miss: {cache_key}"),
+            Ok(Err(e)) => warn!("Redis GET error for {cache_key}: {e}"),
+            Err(_) => warn!("Redis GET timed out for {cache_key}"),
         }
     }
 
@@ -181,9 +185,14 @@ async fn get_metrics_history(
         let mut conn = redis_conn.clone();
         if let Ok(json_str) = serde_json::to_string(&result) {
             let ttl = cache_ttl(interval);
-            let set_result: redis::RedisResult<()> = conn.set_ex(&cache_key, json_str, ttl).await;
-            if let Err(e) = set_result {
-                warn!("Redis SET failed for {cache_key}: {e}");
+            let set_result = tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                conn.set_ex::<_, _, ()>(&cache_key, json_str, ttl)
+            ).await;
+            match set_result {
+                Ok(Err(e)) => warn!("Redis SET failed for {cache_key}: {e}"),
+                Err(_) => warn!("Redis SET timed out for {cache_key}"),
+                _ => {}
             }
         }
     }
@@ -197,8 +206,11 @@ async fn get_live_metrics(
     // Fast path: Redis snapshot written every 1s by the live loop.
     if let Some(ref redis_conn) = state.redis {
         let mut conn = redis_conn.clone();
-        let snapshot: redis::RedisResult<Option<String>> = conn.get("zfs:live:snapshot").await;
-        if let Ok(Some(hit)) = snapshot {
+        let snapshot = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            conn.get::<_, Option<String>>("zfs:live:snapshot")
+        ).await;
+        if let Ok(Ok(Some(hit))) = snapshot {
             if let Ok(val) = serde_json::from_str::<Value>(&hit) {
                 return Json(val);
             }
@@ -238,8 +250,11 @@ async fn get_pool_disk_metrics(
     if let Some(ref redis_conn) = state.redis {
         let mut conn = redis_conn.clone();
         let key = format!("zfs:disks:{}:latest", pool);
-        let cached: redis::RedisResult<Option<String>> = conn.get(&key).await;
-        if let Ok(Some(hit)) = cached {
+        let cached = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            conn.get::<_, Option<String>>(&key)
+        ).await;
+        if let Ok(Ok(Some(hit))) = cached {
             if let Ok(val) = serde_json::from_str::<Value>(&hit) {
                 return Json(json!({ "pool": pool, "disks": val }));
             }

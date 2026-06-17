@@ -451,7 +451,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
 
           // Log debug info for 1h to help diagnose total calculation issues
           if (apiInterval === '1h') {
-            const cutoffMs = Date.now() - INTERVAL_MS['1h'];
+            const cutoffMs = Date.now() + serverTimeOffsetMs - INTERVAL_MS['1h'];
             const inWindow = allMetrics.filter((m: any) => new Date(m.collected_at).getTime() >= cutoffMs);
             console.debug('[1h debug] raw points:', allMetrics.length, '/ in-window:', inWindow.length,
               '/ time range:', allMetrics.length > 0 ? `${allMetrics[0].collected_at} → ${allMetrics[allMetrics.length-1].collected_at}` : 'empty');
@@ -726,7 +726,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         );
 
       case 'io-chart': {
-        const ioNowMs = Date.now();
+        const ioNowMs = Date.now() + serverTimeOffsetMs;
         const ioChartData = (() => {
           if (liveMode || windowedChartData.length === 0) return ioDisplayData;
           const last = windowedChartData[windowedChartData.length - 1];
@@ -850,7 +850,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
       }
 
       case 'storage-history': {
-        const capNowMs = Date.now();
+        const capNowMs = Date.now() + serverTimeOffsetMs;
         const capWindowStart = capNowMs - INTERVAL_MS[interval];
 
         const capDisplayData = (() => {
@@ -886,7 +886,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         let forecastColor = 'var(--text-muted)';
         if (avgWriteGbPerDay > 0.000001 && lastFreeGb > 0) {
           const daysUntilFull = lastFreeGb / avgWriteGbPerDay;
-          const fillDate = new Date(Date.now() + daysUntilFull * 86400_000);
+          const fillDate = new Date(Date.now() + serverTimeOffsetMs + daysUntilFull * 86400_000);
           const d = fillDate.getDate().toString().padStart(2, '0');
           const mo = (fillDate.getMonth() + 1).toString().padStart(2, '0');
           forecastDateStr = `${d}.${mo}.${fillDate.getFullYear()}`;
