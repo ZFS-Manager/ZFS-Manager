@@ -142,10 +142,17 @@ async fn get_metrics_history(
 
     let query = build_query(interval);
 
-    let rows = match pg.query(&query, &[]).await {
-        Ok(r) => r,
-        Err(e) => {
+    let rows = match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        pg.query(&query, &[])
+    ).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
             warn!("PG query failed ({interval}): {e}");
+            return Json(json!({ "metrics": [], "interval": interval, "count": 0 }));
+        }
+        Err(_) => {
+            warn!("PG query timed out ({interval})");
             return Json(json!({ "metrics": [], "interval": interval, "count": 0 }));
         }
     };
@@ -292,6 +299,22 @@ async fn get_fill_prediction(
     Query(params): Query<FillPredictionParams>,
 ) -> Json<Value> {
     let window = params.window.as_deref().unwrap_or("auto");
+    let cache_key = format!("zfs:fill-prediction:{window}");
+
+    // ── Redis cache check ──────────────────────────────────────────────────
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        let cached = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            conn.get::<_, Option<String>>(&cache_key)
+        ).await;
+        if let Ok(Ok(Some(hit))) = cached {
+            if let Ok(val) = serde_json::from_str::<Value>(&hit) {
+                debug!("cache hit: {cache_key}");
+                return Json(val);
+            }
+        }
+    }
 
     let pg = match state.pg {
         Some(ref client) => client.clone(),
@@ -369,10 +392,17 @@ async fn get_fill_prediction(
         LEFT JOIN counts c       ON l.pool_name = c.pool_name
     ";
 
-    let rows = match pg.query(query, &[]).await {
-        Ok(r) => r,
-        Err(e) => {
+    let rows = match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        pg.query(query, &[])
+    ).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
             warn!("fill-prediction query failed: {e}");
+            return Json(json!({ "predictions": [], "window_used": null, "window_key": null }));
+        }
+        Err(_) => {
+            warn!("fill-prediction query timed out");
             return Json(json!({ "predictions": [], "window_used": null, "window_key": null }));
         }
     };
@@ -479,9 +509,22 @@ async fn get_fill_prediction(
         }));
     }
 
-    Json(json!({
+    let result = json!({
         "predictions": predictions,
         "window_used": overall_label,
         "window_key":  overall_key,
-    }))
+    });
+
+    // ── Write to Redis cache ───────────────────────────────────────────────
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        if let Ok(json_str) = serde_json::to_string(&result) {
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                conn.set_ex::<_, _, ()>(&cache_key, json_str, 300u64)
+            ).await;
+        }
+    }
+
+    Json(result)
 }
