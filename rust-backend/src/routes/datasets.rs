@@ -13,6 +13,17 @@ use tokio::sync::Mutex as TokioMutex;
 
 use crate::{error::ApiError, executor, state::AppState};
 use tracing::{info, warn};
+use redis::AsyncCommands;
+
+const CACHE_KEY: &str = "zfs:datasets";
+const CACHE_TTL: u64 = 30;
+
+async fn bust_cache(state: &AppState) {
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        let _: redis::RedisResult<()> = conn.del(CACHE_KEY).await;
+    }
+}
 
 struct RewriteInfo {
     total_bytes: u64,
@@ -95,7 +106,17 @@ pub struct DestroyQuery {
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-async fn list_datasets() -> Result<Json<Value>, ApiError> {
+async fn list_datasets(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        let cached: redis::RedisResult<Option<String>> = conn.get(CACHE_KEY).await;
+        if let Ok(Some(hit)) = cached {
+            if let Ok(val) = serde_json::from_str::<Value>(&hit) {
+                return Ok(Json(val));
+            }
+        }
+    }
+
     let raw = executor::zfs(&[
         "list", "-H", "-p", "-t", "filesystem",
         "-o", "name,used,avail,refer,mountpoint,compression,dedup,readonly",
@@ -124,10 +145,18 @@ async fn list_datasets() -> Result<Json<Value>, ApiError> {
             }))
         })
         .collect();
-    Ok(Json(json!({ "datasets": datasets })))
+    let result = json!({ "datasets": datasets });
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        if let Ok(json_str) = serde_json::to_string(&result) {
+            let set_res: redis::RedisResult<()> = conn.set_ex(CACHE_KEY, json_str, CACHE_TTL).await;
+            if let Err(e) = set_res { warn!("Redis SET failed for {CACHE_KEY}: {e}"); }
+        }
+    }
+    Ok(Json(result))
 }
 
-async fn create_dataset(Json(body): Json<CreateDatasetBody>) -> Result<Json<Value>, ApiError> {
+async fn create_dataset(State(state): State<AppState>, Json(body): Json<CreateDatasetBody>) -> Result<Json<Value>, ApiError> {
     if body.name.is_empty() {
         return Err(ApiError::BadRequest("'name' is required".into()));
     }
@@ -157,6 +186,7 @@ async fn create_dataset(Json(body): Json<CreateDatasetBody>) -> Result<Json<Valu
     // Explicitly mount so the dataset is active and propagates via rshared /mnt
     let _ = executor::zfs(&["mount", &body.name]).await;
 
+    bust_cache(&state).await;
     Ok(Json(json!({ "message": format!("Dataset '{}' created", body.name) })))
 }
 
@@ -220,6 +250,7 @@ async fn kill_procs_at_path(mount_path: &str) {
 }
 
 async fn destroy_dataset(
+    State(state): State<AppState>,
     Path(name): Path<String>,
     Query(q): Query<DestroyQuery>,
 ) -> Result<Json<Value>, ApiError> {
@@ -325,7 +356,10 @@ async fn destroy_dataset(
     }
 
     match last_err {
-        None => Ok(Json(json!({ "message": format!("Dataset '{name}' destroyed") }))),
+        None => {
+            bust_cache(&state).await;
+            Ok(Json(json!({ "message": format!("Dataset '{name}' destroyed") })))
+        }
         Some(ApiError::CommandFailed { ref stderr, .. })
             if (stderr.contains("has children") || stderr.contains("filesystem has children"))
                && !q.recursive =>
@@ -457,7 +491,7 @@ async fn unmount_dataset(Json(body): Json<NameBody>) -> Result<Json<Value>, ApiE
     Ok(Json(json!({ "message": format!("Dataset '{}' unmounted", body.name) })))
 }
 
-async fn rename_dataset(Json(body): Json<RenameBody>) -> Result<Json<Value>, ApiError> {
+async fn rename_dataset(State(state): State<AppState>, Json(body): Json<RenameBody>) -> Result<Json<Value>, ApiError> {
     if body.name.is_empty() || body.new_name.is_empty() {
         return Err(ApiError::BadRequest("'name' and 'new_name' are required".into()));
     }
@@ -469,6 +503,7 @@ async fn rename_dataset(Json(body): Json<RenameBody>) -> Result<Json<Value>, Api
     args.push(body.new_name.clone());
     let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     executor::zfs(&refs).await?;
+    bust_cache(&state).await;
     Ok(Json(json!({ "message": format!("Renamed '{}' -> '{}'", body.name, body.new_name) })))
 }
 

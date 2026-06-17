@@ -506,7 +506,21 @@ async fn detect_system_disks() -> std::collections::HashSet<String> {
     system_disks
 }
 
-async fn list_enriched_disks(State(_state): State<AppState>) -> Result<Json<Value>, ApiError> {
+async fn list_enriched_disks(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    const KEY: &str = "zfs:disks-enriched";
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        let cached = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            conn.get::<_, Option<String>>(KEY)
+        ).await;
+        if let Ok(Ok(Some(hit))) = cached {
+            if let Ok(val) = serde_json::from_str::<Value>(&hit) {
+                return Ok(Json(val));
+            }
+        }
+    }
+
     // Detect which disks back the OS — walks lsblk tree recursively
     let system_disk_names = detect_system_disks().await;
 
@@ -613,5 +627,19 @@ async fn list_enriched_disks(State(_state): State<AppState>) -> Result<Json<Valu
         }
     }
 
-    Ok(Json(json!({ "disks": disks })))
+    let result = json!({ "disks": disks });
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        if let Ok(json_str) = serde_json::to_string(&result) {
+            let set_res = tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                conn.set_ex::<_, _, ()>(KEY, json_str, 10u64)
+            ).await;
+            if let Err(e) = set_res {
+                warn!("Redis SET timed out or failed for {KEY}: {e:?}");
+            }
+        }
+    }
+
+    Ok(Json(result))
 }

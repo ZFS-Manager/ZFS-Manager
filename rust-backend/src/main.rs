@@ -465,6 +465,7 @@ async fn main() {
 
     // Startup: warm Redis from PostgreSQL before worker loops
     worker::warm_redis_from_postgres(&app_state).await;
+    worker::warm_list_caches(&app_state).await;
 
     tokio::spawn(worker::run_metrics_worker(app_state.clone()));
 
@@ -491,9 +492,9 @@ async fn main() {
         .merge(routes::settings::router(app_state.clone()))
         .merge(routes::pools::router(app_state.clone()))
         .merge(routes::datasets::router(app_state.clone()))
-        .merge(routes::snapshots::router())
+        .merge(routes::snapshots::router(app_state.clone()))
         .merge(routes::stats::router(app_state.clone()))
-        .merge(routes::volumes::router())
+        .merge(routes::volumes::router(app_state.clone()))
         .merge(routes::clones::router())
         .merge(routes::properties::router())
         .merge(routes::metrics::router(app_state.clone()))

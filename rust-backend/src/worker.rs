@@ -1141,3 +1141,201 @@ pub async fn warm_redis_from_postgres(state: &crate::state::AppState) {
         }
     }
 }
+
+// Startup: warm Redis list caches from ZFS commands so the first web request is instant.
+//
+// Runs zpool/zfs list in parallel and seeds zfs:pools, zfs:datasets,
+// zfs:snapshots, zfs:volumes with a 60s TTL. Also pre-warms the two most-used
+// metrics history intervals (1h, 1d) from PostgreSQL so the Performance tab
+// loads instantly on first visit.
+pub async fn warm_list_caches(state: &crate::state::AppState) {
+    let redis = match &state.redis {
+        Some(r) => r,
+        None => return,
+    };
+    let mut conn = redis.clone();
+
+    // Run all four ZFS list commands in parallel
+    let (pools_out, datasets_out, snaps_out, vols_out) = tokio::join!(
+        tokio::process::Command::new("zpool")
+            .args(["list", "-H", "-p", "-o", "name,size,alloc,free,frag,cap,dedup,health,altroot"])
+            .output(),
+        tokio::process::Command::new("zfs")
+            .args(["list", "-H", "-p", "-t", "filesystem",
+                   "-o", "name,used,avail,refer,mountpoint,compression,dedup,readonly"])
+            .output(),
+        tokio::process::Command::new("zfs")
+            .args(["list", "-H", "-p", "-t", "snapshot",
+                   "-o", "name,used,refer,creation"])
+            .output(),
+        tokio::process::Command::new("zfs")
+            .args(["list", "-H", "-p", "-t", "volume",
+                   "-o", "name,used,avail,refer,volsize"])
+            .output(),
+    );
+
+    if let Ok(out) = pools_out {
+        if out.status.success() {
+            let raw = String::from_utf8_lossy(&out.stdout);
+
+            // Also fetch available/used from zfs get for the pools
+            let avail_raw = crate::executor::zfs(&["get", "-H", "-p", "-o", "name,value", "available"])
+                .await.unwrap_or_default();
+            let used_raw  = crate::executor::zfs(&["get", "-H", "-p", "-o", "name,value", "used"])
+                .await.unwrap_or_default();
+
+            let avail_map: std::collections::HashMap<&str, u64> = avail_raw.lines()
+                .filter_map(|l| { let mut p = l.splitn(2, '\t'); Some((p.next()?, p.next()?.trim().parse().ok()?)) })
+                .collect();
+            let used_map: std::collections::HashMap<&str, u64> = used_raw.lines()
+                .filter_map(|l| { let mut p = l.splitn(2, '\t'); Some((p.next()?, p.next()?.trim().parse().ok()?)) })
+                .collect();
+
+            let pools: Vec<serde_json::Value> = raw.lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|line| {
+                    let c: Vec<&str> = line.split('\t').collect();
+                    let name = c.first().copied().unwrap_or("");
+                    serde_json::json!({
+                        "name": name, "size": c.get(1).unwrap_or(&""),
+                        "alloc": c.get(2).unwrap_or(&""), "free": c.get(3).unwrap_or(&""),
+                        "frag": c.get(4).unwrap_or(&""), "cap": c.get(5).unwrap_or(&""),
+                        "dedup": c.get(6).unwrap_or(&""), "health": c.get(7).unwrap_or(&""),
+                        "altroot": c.get(8).unwrap_or(&""),
+                        "available_bytes": avail_map.get(name).copied().unwrap_or(0),
+                        "used_bytes": used_map.get(name).copied().unwrap_or(0),
+                    })
+                })
+                .collect();
+            let payload = serde_json::json!({ "pools": pools });
+            if let Ok(s) = serde_json::to_string(&payload) {
+                let _: redis::RedisResult<()> = conn.set_ex("zfs:pools", s, 60u64).await;
+                info!("Startup: seeded zfs:pools ({} pools)", pools.len());
+            }
+        }
+    }
+
+    if let Ok(out) = datasets_out {
+        if out.status.success() {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            let datasets: Vec<serde_json::Value> = raw.lines()
+                .filter(|l| !l.trim().is_empty())
+                .filter_map(|line| {
+                    let c: Vec<&str> = line.split('\t').collect();
+                    let name = c.first().unwrap_or(&"");
+                    if name.contains("/.system") || name.contains("/ix-apps") { return None; }
+                    Some(serde_json::json!({
+                        "name": name, "used": c.get(1).unwrap_or(&""),
+                        "available": c.get(2).unwrap_or(&""), "refer": c.get(3).unwrap_or(&""),
+                        "mountpoint": c.get(4).unwrap_or(&""),
+                        "compression": c.get(5).unwrap_or(&"off"),
+                        "dedup": c.get(6).unwrap_or(&"off"),
+                        "readonly": c.get(7).unwrap_or(&"off"),
+                    }))
+                })
+                .collect();
+            let payload = serde_json::json!({ "datasets": datasets });
+            if let Ok(s) = serde_json::to_string(&payload) {
+                let _: redis::RedisResult<()> = conn.set_ex("zfs:datasets", s, 60u64).await;
+                info!("Startup: seeded zfs:datasets ({} datasets)", datasets.len());
+            }
+        }
+    }
+
+    if let Ok(out) = snaps_out {
+        if out.status.success() {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            let snaps: Vec<serde_json::Value> = raw.lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|line| {
+                    let c: Vec<&str> = line.split('\t').collect();
+                    serde_json::json!({
+                        "name": c.first().unwrap_or(&""), "used": c.get(1).unwrap_or(&""),
+                        "refer": c.get(2).unwrap_or(&""), "creation": c.get(3).unwrap_or(&""),
+                    })
+                })
+                .collect();
+            let payload = serde_json::json!({ "snapshots": snaps });
+            if let Ok(s) = serde_json::to_string(&payload) {
+                let _: redis::RedisResult<()> = conn.set_ex("zfs:snapshots", s, 60u64).await;
+                info!("Startup: seeded zfs:snapshots ({} snapshots)", snaps.len());
+            }
+        }
+    }
+
+    if let Ok(out) = vols_out {
+        if out.status.success() {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            let vols: Vec<serde_json::Value> = raw.lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|line| {
+                    let c: Vec<&str> = line.split('\t').collect();
+                    serde_json::json!({
+                        "name": c.first().unwrap_or(&""), "used": c.get(1).unwrap_or(&""),
+                        "avail": c.get(2).unwrap_or(&""), "refer": c.get(3).unwrap_or(&""),
+                        "volsize": c.get(4).unwrap_or(&""),
+                    })
+                })
+                .collect();
+            let payload = serde_json::json!({ "volumes": vols });
+            if let Ok(s) = serde_json::to_string(&payload) {
+                let _: redis::RedisResult<()> = conn.set_ex("zfs:volumes", s, 60u64).await;
+                info!("Startup: seeded zfs:volumes ({} volumes)", vols.len());
+            }
+        }
+    }
+
+    // Pre-warm the two most commonly used metrics history intervals from PostgreSQL
+    // so the Performance tab loads instantly without hitting PG on first visit.
+    if let Some(ref pg) = state.pg {
+        let intervals: &[(&str, &str, u64)] = &[
+            ("1h",
+             "SELECT collected_at, pool_name, read_bw_mb, write_bw_mb, iops, alloc_gb, free_gb, cpu_percent, arc_hit_ratio \
+              FROM zfs_metrics WHERE collected_at > NOW() - INTERVAL '1 hour' ORDER BY collected_at ASC LIMIT 720",
+             60),
+            ("1d",
+             "SELECT to_timestamp(floor(extract(epoch from collected_at) / 300) * 300) AS collected_at, \
+              pool_name, AVG(read_bw_mb), AVG(write_bw_mb), AVG(iops), AVG(alloc_gb), AVG(free_gb), \
+              AVG(cpu_percent), AVG(arc_hit_ratio) \
+              FROM zfs_metrics WHERE collected_at > NOW() - INTERVAL '24 hours' \
+              GROUP BY 1, 2 ORDER BY 1 ASC LIMIT 576",
+             300),
+            ("6h",
+             "SELECT to_timestamp(floor(extract(epoch from collected_at) / 300) * 300) AS collected_at, \
+              pool_name, AVG(read_bw_mb), AVG(write_bw_mb), AVG(iops), AVG(alloc_gb), AVG(free_gb), \
+              AVG(cpu_percent), AVG(arc_hit_ratio) \
+              FROM zfs_metrics WHERE collected_at > NOW() - INTERVAL '6 hours' \
+              GROUP BY 1, 2 ORDER BY 1 ASC LIMIT 144",
+             120),
+        ];
+
+        for (interval, query, ttl) in intervals {
+            match pg.query(*query, &[]).await {
+                Ok(rows) => {
+                    let metrics: Vec<serde_json::Value> = rows.iter().map(|row| {
+                        let collected_at: chrono::DateTime<chrono::Utc> = row.get(0);
+                        serde_json::json!({
+                            "collected_at":  collected_at.to_rfc3339(),
+                            "pool_name":     row.get::<_, String>(1),
+                            "read_bw_mb":    row.get::<_, f64>(2),
+                            "write_bw_mb":   row.get::<_, f64>(3),
+                            "iops":          row.get::<_, f64>(4),
+                            "alloc_gb":      row.get::<_, f64>(5),
+                            "free_gb":       row.get::<_, f64>(6),
+                            "cpu_percent":   row.get::<_, f64>(7),
+                            "arc_hit_ratio": row.get::<_, f64>(8),
+                        })
+                    }).collect();
+                    let count = metrics.len();
+                    let payload = serde_json::json!({ "metrics": metrics, "interval": interval, "count": count });
+                    let cache_key = format!("zfs:history:{interval}");
+                    if let Ok(s) = serde_json::to_string(&payload) {
+                        let _: redis::RedisResult<()> = conn.set_ex(&cache_key, s, *ttl).await;
+                        info!("Startup: seeded {} ({count} points)", cache_key);
+                    }
+                }
+                Err(e) => warn!("Startup: failed to pre-warm zfs:history:{interval}: {e}"),
+            }
+        }
+    }
+}

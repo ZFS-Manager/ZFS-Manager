@@ -439,11 +439,10 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
 
   // Fetch history — filter client-side by pool when multiPool, then restrict to window
   useEffect(() => {
-    setCapacityData([]);
-    setRawMetrics([]);
-    setLoadingCapacity(true);
-    if (!liveMode) { setHistoryData([]); setLoadingHistory(true); }
+    // Don't clear existing data on re-mount — keep old data visible while refreshing
+    // so switching back to this tab shows content immediately instead of a skeleton.
     const apiInterval = INTERVALS.find(i => i.key === interval)?.api ?? interval;
+    let firstFetch = true;
     const fetchHistory = () =>
       api.getMetricsHistory(apiInterval)
         .then(res => {
@@ -461,15 +460,9 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
           const poolFilter = multiPool && effectivePool ? effectivePool : undefined;
           const windowCutoff = Date.now() + serverTimeOffsetMs - INTERVAL_MS[interval];
 
-          // transformHistory with optional pool filter
-          const all = transformHistory(allMetrics, interval, poolFilter);
-
-          // For capacity (Pool Capacity chart), also transform without pool filter to get all-pool data
-          // but we keep it filtered by pool when multiPool
-          const capAll = transformHistory(allMetrics, interval, poolFilter);
-
-          // Restrict to the selected time window to prevent stale/out-of-window points
-          const windowed = all.filter(d => d.tsMs >= windowCutoff);
+          const all     = transformHistory(allMetrics, interval, poolFilter);
+          const capAll  = transformHistory(allMetrics, interval, poolFilter);
+          const windowed    = all.filter(d => d.tsMs >= windowCutoff);
           const capWindowed = capAll.filter(d => d.tsMs >= windowCutoff);
 
           setRawMetrics(allMetrics);
@@ -477,11 +470,13 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
           if (!liveMode) setHistoryData(windowed);
         })
         .catch(() => {
-          setCapacityData([]);
-          setRawMetrics([]);
-          if (!liveMode) setHistoryData([]);
+          if (firstFetch) {
+            setCapacityData([]);
+            setRawMetrics([]);
+            if (!liveMode) setHistoryData([]);
+          }
         })
-        .finally(() => { setLoadingCapacity(false); setLoadingHistory(false); });
+        .finally(() => { setLoadingCapacity(false); setLoadingHistory(false); firstFetch = false; });
     fetchHistory();
     const id = setInterval(fetchHistory, 30_000);
     return () => clearInterval(id);
