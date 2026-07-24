@@ -7,7 +7,7 @@ import {
   Activity, Info, Cpu, Settings, Layers, Search,
 } from 'lucide-react';
 import { ZFSPool } from '../types';
-import { api, formatBytes } from '../api';
+import { api, formatBytes, formatSpeed } from '../api';
 import { useNotifications } from '../context/NotificationContext';
 import PageTransition from './PageTransition';
 import { useIsMobile } from '../hooks/useBreakpoint';
@@ -36,10 +36,9 @@ interface RewriteEntry {
   name: string;
   pool: string;
   total_bytes: number;
+  processed_bytes: number;
   elapsed_secs: number;
 }
-
-const REWRITE_SPEED_BPS = 100 * 1024 * 1024; // 100 MB/s estimate
 
 function fmtBytes(b: number): string { return formatBytes(b); }
 
@@ -52,12 +51,14 @@ function fmtSeconds(s: number): string {
 
 function computeRewrite(r: RewriteEntry) {
   const total = r.total_bytes;
-  const done  = Math.min(r.elapsed_secs * REWRITE_SPEED_BPS, total * 0.99);
+  const done  = r.processed_bytes;
   const pct   = total > 0 ? (done / total) * 100 : 0;
-  const remS  = total > 0 ? (total - done) / REWRITE_SPEED_BPS : 0;
+  const speedBps = r.elapsed_secs > 0 ? done / r.elapsed_secs : 100 * 1024 * 1024;
+  const remS  = speedBps > 0 ? (total - done) / speedBps : 0;
+  const speedStr = formatSpeed(speedBps);
   return {
     pct,
-    label: `Rewriting: ${fmtBytes(done)} / ${fmtBytes(total)} at 100 MB/s, ${pct.toFixed(2)}% done, ${fmtSeconds(remS)} to go`,
+    label: `Rewriting: ${fmtBytes(done)} / ${fmtBytes(total)} at ${speedStr}, ${pct.toFixed(2)}% done, ${fmtSeconds(remS)} to go`,
   };
 }
 

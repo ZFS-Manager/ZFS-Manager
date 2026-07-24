@@ -326,8 +326,6 @@ function StatCard({ label, value, sub, fillLine, icon: Icon, color, minHeight = 
 }
 
 /* ── Rewrite helpers (used in PoolCard) ── */
-const REWRITE_SPEED_BPS_DASH = 100 * 1024 * 1024;
-
 function fmtBytesDash(b: number): string {
   return formatBytes(b);
 }
@@ -339,14 +337,16 @@ function fmtSecsDash(s: number): string {
   return [h, m, sec].map(v => String(v).padStart(2, '0')).join(':');
 }
 
-interface RewriteEntryDash { name: string; pool: string; total_bytes: number; elapsed_secs: number; }
+interface RewriteEntryDash { name: string; pool: string; total_bytes: number; processed_bytes: number; elapsed_secs: number; }
 
 function computeRewriteDash(r: RewriteEntryDash) {
   const total = r.total_bytes;
-  const done  = Math.min(r.elapsed_secs * REWRITE_SPEED_BPS_DASH, total * 0.99);
+  const done  = r.processed_bytes;
   const pct   = total > 0 ? (done / total) * 100 : 0;
-  const remS  = total > 0 ? (total - done) / REWRITE_SPEED_BPS_DASH : 0;
-  return { pct, label: `Rewriting: ${fmtBytesDash(done)} / ${fmtBytesDash(total)} at 100 MB/s, ${pct.toFixed(2)}% done, ${fmtSecsDash(remS)} to go` };
+  const speedBps = r.elapsed_secs > 0 ? done / r.elapsed_secs : 100 * 1024 * 1024;
+  const remS  = speedBps > 0 ? (total - done) / speedBps : 0;
+  const speedStr = formatSpeed(speedBps);
+  return { pct, label: `Rewriting: ${fmtBytesDash(done)} / ${fmtBytesDash(total)} at ${speedStr}, ${pct.toFixed(2)}% done, ${fmtSecsDash(remS)} to go` };
 }
 
 /* ── Pool card ── */
@@ -788,6 +788,11 @@ const WIDGET_LABELS: Record<string, string> = {
   'activity-log':     'Activity Log',
 };
 
+/* ── Module-level caches to persist data across mounts ── */
+const dashboardHistData1dCache: { data: any[] } = { data: [] };
+const dashboardHistData7dCache: { data: any[] } = { data: [] };
+const dashboardDiskMetricsCache: { data: Record<string, any[]> } = { data: {} };
+
 /* ── Main Dashboard ── */
 export default function Dashboard({
   pools, datasets, snapshots,
@@ -803,10 +808,10 @@ export default function Dashboard({
   const [dragFrom, setDragFrom] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
 
-  const [histData1d, setHistData1d] = useState<any[]>([]);
-  const [histData7d, setHistData7d] = useState<any[]>([]);
+  const [histData1d, setHistData1d] = useState<any[]>(() => dashboardHistData1dCache.data);
+  const [histData7d, setHistData7d] = useState<any[]>(() => dashboardHistData7dCache.data);
   const [scrubLive,  setScrubLive]  = useState<Record<string, {inProgress: boolean; progress: number; timeRemaining: string; isResilver: boolean; expansionInProgress: boolean; expansionVdev: string; expansionProgress: number; expansionEta: string}>>({});
-  const [diskMetrics, setDiskMetrics] = useState<Record<string, any[]>>({});
+  const [diskMetrics, setDiskMetrics] = useState<Record<string, any[]>>(() => dashboardDiskMetricsCache.data);
   const [diskPools,   setDiskPools]   = useState<string[]>([]);
   const [ioShowRead,  setIoShowRead]  = useState(true);
   const [ioShowWrite, setIoShowWrite] = useState(true);
@@ -877,7 +882,9 @@ export default function Dashboard({
             });
           }
         }
-        setHistData1d(Array.from(seen.values()));
+        const data = Array.from(seen.values());
+        setHistData1d(data);
+        dashboardHistData1dCache.data = data;
       }).catch(() => {});
 
       api.getMetricsHistory('1w').then(res => {
@@ -887,7 +894,9 @@ export default function Dashboard({
             seen.set(m.collected_at, { write: m.write_bw_mb });
           }
         }
-        setHistData7d(Array.from(seen.values()));
+        const data = Array.from(seen.values());
+        setHistData7d(data);
+        dashboardHistData7dCache.data = data;
       }).catch(() => {});
     };
 
@@ -899,12 +908,12 @@ export default function Dashboard({
   useEffect(() => {
     if (pools.length === 0) return;
     const poll = () => {
-      pools.forEach(p => {
-        api.getScrubStatus(p.name).then(res => {
+      pools.forEach(pool => {
+        api.getScrubStatus(pool.name).then(res => {
           setScrubLive(prev => ({
             ...prev,
-            [p.name]: {
-              inProgress: res.in_progress,
+            [pool.name]: {
+              inProgress: !!(res.in_progress),
               progress: res.progress || 0,
               timeRemaining: res.time_remaining || '',
               isResilver: !!(res.is_resilver),
@@ -932,6 +941,7 @@ export default function Dashboard({
         const map: Record<string, any[]> = {};
         results.forEach((r, i) => { map[names[i]] = r.disks || []; });
         setDiskMetrics(map);
+        dashboardDiskMetricsCache.data = map;
       } catch { /* ignore */ }
     };
     fetchDisks();

@@ -25,10 +25,13 @@ async fn bust_cache(state: &AppState) {
     }
 }
 
-struct RewriteInfo {
-    total_bytes: u64,
-    processed_bytes: Arc<AtomicU64>,
-    started_at_secs: u64,
+use serde::Serialize;
+
+pub struct RewriteInfo {
+    pub total_bytes: u64,
+    pub processed_bytes: Arc<AtomicU64>,
+    pub last_processed_bytes: Arc<AtomicU64>,
+    pub started_at_secs: u64,
 }
 
 fn now_secs() -> u64 {
@@ -41,6 +44,43 @@ fn now_secs() -> u64 {
 fn active_rewrites() -> &'static TokioMutex<HashMap<String, RewriteInfo>> {
     static REWRITES: OnceLock<TokioMutex<HashMap<String, RewriteInfo>>> = OnceLock::new();
     REWRITES.get_or_init(|| TokioMutex::new(HashMap::new()))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompletedRewriteInfo {
+    pub name: String,
+    pub pool: String,
+    pub total_files: usize,
+    pub duration_secs: u64,
+    pub size_before_bytes: u64,
+    pub size_after_bytes: u64,
+    pub du_before_blocks: u64,
+    pub du_after_blocks: u64,
+}
+
+pub fn completed_rewrites() -> &'static TokioMutex<Vec<CompletedRewriteInfo>> {
+    static COMPLETED: OnceLock<TokioMutex<Vec<CompletedRewriteInfo>>> = OnceLock::new();
+    COMPLETED.get_or_init(|| TokioMutex::new(Vec::new()))
+}
+
+pub async fn pop_rewrite_deltas() -> HashMap<String, u64> {
+    let lock = active_rewrites().lock().await;
+    let mut deltas = HashMap::new();
+    for (name, info) in lock.iter() {
+        let pool = name.split('/').next().unwrap_or(name).to_string();
+        let current = info.processed_bytes.load(Ordering::Relaxed);
+        let last = info.last_processed_bytes.load(Ordering::Relaxed);
+        let delta = current.saturating_sub(last);
+        info.last_processed_bytes.store(current, Ordering::Relaxed);
+        *deltas.entry(pool).or_insert(0) += delta;
+    }
+    deltas
+}
+
+async fn pop_completed_rewrites() -> Result<Json<Value>, ApiError> {
+    let mut lock = completed_rewrites().lock().await;
+    let completed = std::mem::take(&mut *lock);
+    Ok(Json(json!({ "completed": completed })))
 }
 
 pub fn router(state: AppState) -> Router {
@@ -58,6 +98,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/datasets/rewrite", post(rewrite_dataset))
         .route("/api/v1/datasets/rewrite/status", get(rewrite_status))
         .route("/api/v1/datasets/rewrite/active", get(list_active_rewrites))
+        .route("/api/v1/datasets/rewrite/completed", get(pop_completed_rewrites))
         .with_state(state)
 }
 
@@ -568,6 +609,7 @@ async fn rewrite_dataset(
         .unwrap_or(0);
 
     let processed = Arc::new(AtomicU64::new(0));
+    let last_processed = Arc::new(AtomicU64::new(0));
 
     let mut lock = active_rewrites().lock().await;
     if lock.contains_key(&body.name) {
@@ -576,6 +618,7 @@ async fn rewrite_dataset(
     lock.insert(body.name.clone(), RewriteInfo {
         total_bytes,
         processed_bytes: Arc::clone(&processed),
+        last_processed_bytes: Arc::clone(&last_processed),
         started_at_secs: now_secs(),
     });
     drop(lock);
@@ -588,6 +631,14 @@ async fn rewrite_dataset(
     // on disk by reading and writing each file in-place (copy-on-write rewrites with
     // current compression settings). Uses nsenter to access the host mount namespace.
     tokio::spawn(async move {
+        let started_at = now_secs();
+        let size_before_bytes: u64 = executor::zfs(&["get", "-H", "-p", "-o", "value", "refer", &ds_name])
+            .await
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+        let du_before_blocks = get_du_blocks(&mountpoint_c).await;
+
         // 1. Re-apply current compression so future writes use it
         let comp = executor::zfs(&["get", "-H", "-p", "-o", "value", "compression", &ds_name])
             .await
@@ -662,6 +713,27 @@ async fn rewrite_dataset(
             }
         }
 
+        let size_after_bytes: u64 = executor::zfs(&["get", "-H", "-p", "-o", "value", "refer", &ds_name])
+            .await
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+        let du_after_blocks = get_du_blocks(&mountpoint_c).await;
+
+        let duration_secs = now_secs().saturating_sub(started_at);
+        let pool = ds_name.split('/').next().unwrap_or(&ds_name).to_string();
+
+        completed_rewrites().lock().await.push(CompletedRewriteInfo {
+            name: ds_name.clone(),
+            pool,
+            total_files,
+            duration_secs,
+            size_before_bytes,
+            size_after_bytes,
+            du_before_blocks,
+            du_after_blocks,
+        });
+
         info!("Dataset rewrite completed for '{}' ({} files)", ds_name, total_files);
         crate::routes::notifications::trigger_rules_for_event(
             &state_clone,
@@ -710,4 +782,24 @@ async fn list_active_rewrites() -> Result<Json<Value>, ApiError> {
     }).collect();
 
     Ok(Json(json!({ "active": active })))
+}
+
+async fn get_du_blocks(mountpoint: &str) -> u64 {
+    let out = tokio::process::Command::new("nsenter")
+        .args(["-t", "1", "-m", "--", "du", "-s", mountpoint])
+        .output()
+        .await;
+    let stdout = match out {
+        Ok(out) if out.status.success() => out.stdout,
+        _ => {
+            tokio::process::Command::new("du")
+                .args(["-s", mountpoint])
+                .output()
+                .await
+                .map(|o| o.stdout)
+                .unwrap_or_default()
+        }
+    };
+    let s = String::from_utf8_lossy(&stdout);
+    s.split_whitespace().next().and_then(|w| w.parse().ok()).unwrap_or(0)
 }

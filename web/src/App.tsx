@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { Menu } from 'lucide-react';
+import { Menu, Activity } from 'lucide-react';
 import Sidebar, { Breakpoint } from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import Performance from './components/Performance';
@@ -236,6 +236,7 @@ export default function App() {
   const [sysNotifications, setSysNotifications] = useState<any[]>([]);
   const [loading, setLoading]       = useState(true);
   const [globalError, setGlobalError] = useState<string | null>(null);
+  const [completedRewrite, setCompletedRewrite] = useState<any | null>(null);
   const [selectedPool, setSelectedPool] = useState<string>(
     () => localStorage.getItem('zfs_default_pool') || ''
   );
@@ -453,7 +454,18 @@ export default function App() {
   useEffect(() => {
     if (isAuthenticated) {
       fetchData();
-      const iv = setInterval(fetchData, 5000);
+      const pollCompleted = () => {
+        api.getCompletedRewrites().then(res => {
+          if (res.completed && res.completed.length > 0) {
+            setCompletedRewrite(res.completed[0]);
+          }
+        }).catch(() => {});
+      };
+      pollCompleted();
+      const iv = setInterval(() => {
+        fetchData();
+        pollCompleted();
+      }, 5000);
       return () => clearInterval(iv);
     }
   }, [isAuthenticated, fetchData]);
@@ -597,6 +609,59 @@ export default function App() {
           </main>
         </div>
       </div>
+
+      {/* Beautiful completed rewrite modal */}
+      {completedRewrite && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(4px)', animation: 'fadeIn 0.2s ease-out' }}>
+          <div style={{ background: 'var(--bg-surface)', padding: 28, borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)', maxWidth: 500, width: '90%', boxShadow: '0 20px 50px rgba(0,0,0,0.6)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--info)' }}>
+                <Activity size={20} />
+              </div>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>Dataset Rewrite Completed</h3>
+            </div>
+            
+            <p style={{ color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.5, marginBottom: 20 }}>
+              The sequential block rewrite for dataset <strong style={{ color: 'var(--text-primary)' }}>"{completedRewrite.name}"</strong> has finished successfully.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24, padding: 16, background: 'rgba(255,255,255,0.015)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                <span style={{ color: 'var(--text-muted)' }}>Duration:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', fontWeight: 600 }}>{Math.floor(completedRewrite.duration_secs / 60)}m {completedRewrite.duration_secs % 60}s</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                <span style={{ color: 'var(--text-muted)' }}>Files Processed:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', fontWeight: 600 }}>{completedRewrite.total_files}</span>
+              </div>
+              <div style={{ borderTop: '1px solid var(--border)', margin: '8px 0' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                <span style={{ color: 'var(--text-muted)' }}>Logical Size Before:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', fontWeight: 600 }}>{formatBytes(completedRewrite.size_before_bytes)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                <span style={{ color: 'var(--text-muted)' }}>Logical Size After:</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--success)', fontWeight: 600 }}>{formatBytes(completedRewrite.size_after_bytes)}</span>
+              </div>
+              <div style={{ borderTop: '1px solid var(--border)', margin: '8px 0' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                <span style={{ color: 'var(--text-muted)' }}>Block Usage Before (du -s):</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', fontWeight: 600 }}>{formatBytes(completedRewrite.du_before_blocks * 1024)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                <span style={{ color: 'var(--text-muted)' }}>Block Usage After (du -s):</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--success)', fontWeight: 600 }}>{formatBytes(completedRewrite.du_after_blocks * 1024)}</span>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="btn btn-primary" onClick={() => setCompletedRewrite(null)} style={{ padding: '8px 24px', fontSize: 13 }}>
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </BrowserRouter>
     </NotificationProvider>

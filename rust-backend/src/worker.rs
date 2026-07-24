@@ -707,6 +707,7 @@ async fn run_slow_loop(state: crate::state::AppState) {
         if do_pg_sync { pg_tick = 0; }
 
         let pools = get_pool_names().await;
+        let rewrite_deltas = crate::routes::datasets::pop_rewrite_deltas().await;
 
         // ── Collect metrics per pool ──────────────────────────────────────────
         let mut agg_read_bw_mb:  f64 = 0.0;
@@ -745,12 +746,21 @@ async fn run_slow_loop(state: crate::state::AppState) {
                     None    => continue,
                 };
 
-                // Accumulate all-time byte totals (bytes/sec × 1 s = bytes)
-                state.total_read_bytes .fetch_add((res.read_bw_bytes  * TICK_SECS) as u64, Ordering::Relaxed);
-                state.total_write_bytes.fetch_add((res.write_bw_bytes * TICK_SECS) as u64, Ordering::Relaxed);
+                let scrub_bps = get_scrub_speed_bps(pool).await;
+                let rewrite_delta = rewrite_deltas.get(pool).copied().unwrap_or(0);
 
-                agg_read_bw_mb  += res.read_bw_mb;
-                agg_write_bw_mb += res.write_bw_mb;
+                let net_read_bw_bytes = (res.read_bw_bytes - scrub_bps as f64 - rewrite_delta as f64).max(0.0);
+                let net_write_bw_bytes = (res.write_bw_bytes - rewrite_delta as f64).max(0.0);
+
+                // Accumulate all-time byte totals (bytes/sec × 1 s = bytes)
+                state.total_read_bytes .fetch_add((net_read_bw_bytes  * TICK_SECS) as u64, Ordering::Relaxed);
+                state.total_write_bytes.fetch_add((net_write_bw_bytes * TICK_SECS) as u64, Ordering::Relaxed);
+
+                let net_read_bw_mb = (net_read_bw_bytes / 1_048_576.0).max(0.0);
+                let net_write_bw_mb = (net_write_bw_bytes / 1_048_576.0).max(0.0);
+
+                agg_read_bw_mb  += net_read_bw_mb;
+                agg_write_bw_mb += net_write_bw_mb;
                 agg_read_iops   += res.read_iops;
                 agg_write_iops  += res.write_iops;
 
@@ -760,8 +770,8 @@ async fn run_slow_loop(state: crate::state::AppState) {
 
                 pool_entries.push(serde_json::json!({
                     "pool_name":     pool,
-                    "read_bw_mb":    res.read_bw_mb,
-                    "write_bw_mb":   res.write_bw_mb,
+                    "read_bw_mb":    net_read_bw_mb,
+                    "write_bw_mb":   net_write_bw_mb,
                     "iops":          res.iops,
                     "alloc_gb":      cap_alloc_gb,
                     "free_gb":       cap_free_gb,
@@ -1338,4 +1348,68 @@ pub async fn warm_list_caches(state: &crate::state::AppState) {
             }
         }
     }
+}
+
+async fn get_scrub_speed_bps(pool: &str) -> u64 {
+    let output = tokio::process::Command::new("zpool")
+        .args(["status", pool])
+        .output()
+        .await;
+    let out = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return 0,
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    
+    let lines: Vec<&str> = stdout.lines().collect();
+    let mut scan_detail = String::new();
+    let mut in_scan = false;
+    for line in lines {
+        if line.trim_start().starts_with("scan:") {
+            scan_detail.push_str(line.trim());
+            in_scan = true;
+        } else if in_scan && (line.starts_with('\t') || line.starts_with("  ")) {
+            if !scan_detail.is_empty() { scan_detail.push(' '); }
+            scan_detail.push_str(line.trim());
+        } else if in_scan {
+            break;
+        }
+    }
+    
+    if scan_detail.is_empty() { return 0; }
+    
+    if !scan_detail.contains("in progress") { return 0; }
+    
+    let speed_str = if scan_detail.contains("resilver in progress") {
+        scan_detail.split("issued at ").nth(1)
+            .and_then(|s| s.split(',').next())
+            .unwrap_or("").trim()
+    } else {
+        scan_detail.split(" at ").nth(1)
+            .and_then(|s| s.split(',').next())
+            .unwrap_or("").trim()
+    };
+    
+    if speed_str.is_empty() { return 0; }
+    
+    let val_str = speed_str.trim_end_matches("/s").trim();
+    if val_str.is_empty() { return 0; }
+    
+    let last = val_str.chars().last().unwrap_or('B');
+    let num_part = if last.is_alphabetic() {
+        &val_str[..val_str.len() - 1]
+    } else {
+        val_str
+    };
+    
+    let num = num_part.parse::<f64>().unwrap_or(0.0);
+    let mult = match last.to_ascii_uppercase() {
+        'T' => 1_099_511_627_776.0,
+        'G' => 1_073_741_824.0,
+        'M' => 1_048_576.0,
+        'K' => 1024.0,
+        _ => 1.0,
+    };
+    
+    (num * mult) as u64
 }

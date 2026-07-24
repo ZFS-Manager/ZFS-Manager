@@ -151,7 +151,13 @@ export const api = {
   getRewriteStatus: (datasetName: string) =>
     request<{ in_progress: boolean, name: string }>(`/datasets/rewrite/status?name=${encodeURIComponent(datasetName)}`),
   getActiveRewrites: () =>
-    request<{ active: Array<{ name: string; pool: string; total_bytes: number; elapsed_secs: number }> }>('/datasets/rewrite/active'),
+    request<{ active: Array<{ name: string; pool: string; total_bytes: number; processed_bytes: number; elapsed_secs: number }> }>('/datasets/rewrite/active'),
+  getCompletedRewrites: () =>
+    request<{ completed: Array<{
+      name: string; pool: string; total_files: number; duration_secs: number;
+      size_before_bytes: number; size_after_bytes: number;
+      du_before_blocks: number; du_after_blocks: number;
+    }> }>('/datasets/rewrite/completed'),
 
   mountDatasetPersistent: (name: string, mountpoint: string, encrypted = false) =>
     request<{ message: string; steps: string[] }>('/datasets/persistent-mount', {

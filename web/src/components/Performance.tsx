@@ -372,6 +372,13 @@ const WIDGET_LABELS: Record<string, string> = {
   'smart-health':    'SMART / Disk Health',
 };
 
+// Module-level caches to persist data across mounts (tab switches)
+const performanceHistoryCache: Record<string, any[]> = {};
+const performanceCapacityCache: Record<string, any[]> = {};
+const performanceRawMetricsCache: Record<string, any[]> = {};
+const performanceSmartDataCache: { data: any[] } = { data: [] };
+const performanceDiskMetricsCache: { data: Record<string, any[]> } = { data: {} };
+
 export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0, pools: poolsProp, selectedPool, onSelectPool }: PerformanceProps) {
   const isMobile = useIsMobile();
   const { widgets, loaded, setVisible, reorder, toast } = useLayout('performance');
@@ -383,26 +390,29 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     const saved = localStorage.getItem('perf_interval') as Interval | null;
     return (saved && INTERVALS.some(i => i.key === saved)) ? saved : '1d';
   });
-  const selectInterval = useCallback((iv: Interval) => {
-    localStorage.setItem('perf_interval', iv);
-    _setInterval(iv);
-  }, []);
-  const [capacityData, setCapacityData] = useState<any[]>([]);
-  const [rawMetrics, setRawMetrics]     = useState<any[]>([]);
-  const [loadingCapacity, setLoadingCapacity] = useState(false);
-  const [liveMode, setLiveMode]         = useState(() => localStorage.getItem('perf_live') === 'true');
-  const [historyData, setHistoryData]   = useState<any[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
-  const [hidden, setHidden]             = useState<Set<string>>(new Set());
-  const [smartData, setSmartData]       = useState<any[]>([]);
-
-  const [diskMetrics, setDiskMetrics]   = useState<Record<string, any[]>>({});
-  const [diskPools, setDiskPools]       = useState<string[]>([]);
 
   const multiPool = (poolsProp || []).length > 1;
   const effectivePool = multiPool
     ? (selectedPool && (poolsProp || []).some((p: any) => p.name === selectedPool) ? selectedPool : (poolsProp || [])[0]?.name || '')
     : '';
+  const cacheKey = `${interval}_${effectivePool}`;
+
+  const selectInterval = useCallback((iv: Interval) => {
+    localStorage.setItem('perf_interval', iv);
+    _setInterval(iv);
+  }, []);
+
+  const [capacityData, setCapacityData] = useState<any[]>(() => performanceCapacityCache[cacheKey] || []);
+  const [rawMetrics, setRawMetrics]     = useState<any[]>(() => performanceRawMetricsCache[cacheKey] || []);
+  const [loadingCapacity, setLoadingCapacity] = useState(false);
+  const [liveMode, setLiveMode]         = useState(() => localStorage.getItem('perf_live') === 'true');
+  const [historyData, setHistoryData]   = useState<any[]>(() => performanceHistoryCache[cacheKey] || []);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [hidden, setHidden]             = useState<Set<string>>(new Set());
+  const [smartData, setSmartData]       = useState<any[]>(() => performanceSmartDataCache.data);
+
+  const [diskMetrics, setDiskMetrics]   = useState<Record<string, any[]>>(() => performanceDiskMetricsCache.data);
+  const [diskPools, setDiskPools]       = useState<string[]>([]);
 
   const liveStats = stats;
   const livePoint = liveStats.length > 0 ? liveStats[liveStats.length - 1] : null;
@@ -468,6 +478,11 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
           setRawMetrics(allMetrics);
           setCapacityData(capWindowed);
           if (!liveMode) setHistoryData(windowed);
+
+          const cacheKey = `${interval}_${effectivePool}`;
+          performanceRawMetricsCache[cacheKey] = allMetrics;
+          performanceCapacityCache[cacheKey] = capWindowed;
+          performanceHistoryCache[cacheKey] = windowed;
         })
         .catch(() => {
           if (firstFetch) {
@@ -490,11 +505,11 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
           api.getSmartData(d.name || d.path).then(s => ({ disk: d, smart: s }))
         )
       );
-      setSmartData(
-        smartResults
-          .filter(r => r.status === 'fulfilled')
-          .map(r => (r as PromiseFulfilledResult<any>).value)
-      );
+      const data = smartResults
+        .filter(r => r.status === 'fulfilled')
+        .map(r => (r as PromiseFulfilledResult<any>).value);
+      setSmartData(data);
+      performanceSmartDataCache.data = data;
     }).catch(() => {});
   }, []);
 
@@ -508,6 +523,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         const map: Record<string, any[]> = {};
         results.forEach((r, i) => { map[names[i]] = r.disks || []; });
         setDiskMetrics(map);
+        performanceDiskMetricsCache.data = map;
       } catch { /* ignore */ }
     };
     fetchDisks();

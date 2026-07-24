@@ -40,7 +40,7 @@ function getLocalLayout(page: string): WidgetConfig[] {
 
 export function useLayout(page: string) {
   const [widgets, setWidgets] = useState<WidgetConfig[]>(() => getLocalLayout(page));
-  const [loaded, setLoaded]   = useState(() => localStorage.getItem(`layout:${page}`) !== null);
+  const [loaded, setLoaded]   = useState(true);
   const [toast, setToast]     = useState<string | null>(null);
   const saveTimer             = useRef<ReturnType<typeof setTimeout> | null>(null);
 
