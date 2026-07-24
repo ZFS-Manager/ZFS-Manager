@@ -694,7 +694,6 @@ async fn run_slow_loop(state: crate::state::AppState) {
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
     let mut pg_tick: u32 = 0;
-    let mut history_tick: u32 = 0;
     let mut prev_tr: u64 = 0;
     let mut prev_tw: u64 = 0;
     let mut last_totals_write = Instant::now() - TOTALS_INTERVAL;
@@ -964,15 +963,6 @@ async fn run_slow_loop(state: crate::state::AppState) {
             last_retention = Instant::now();
         }
 
-        // Every 10 seconds, refresh metrics history & fill prediction caches in background
-        history_tick = history_tick.wrapping_add(1);
-        if history_tick >= 10 {
-            history_tick = 0;
-            let state_c = state.clone();
-            tokio::spawn(async move {
-                refresh_metrics_history_caches(&state_c).await;
-            });
-        }
     }
 }
 
@@ -1033,15 +1023,26 @@ async fn run_scrub_scheduler_loop() {
     }
 }
 
+async fn run_cache_warming_loop(state: crate::state::AppState) {
+    let mut ticker = interval(Duration::from_secs(30));
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    loop {
+        ticker.tick().await;
+        refresh_metrics_history_caches(&state).await;
+    }
+}
+
 pub async fn run_metrics_worker(state: crate::state::AppState) {
     let state_live   = state.clone();
     let state_slow   = state.clone();
-    let state_notify = state;
+    let state_notify = state.clone();
+    let state_warm   = state;
 
     tokio::join!(
         run_live_loop(state_live),
         run_slow_loop(state_slow),
         run_notifications_loop(state_notify),
+        run_cache_warming_loop(state_warm),
         run_scrub_scheduler_loop(),
     );
 }

@@ -182,6 +182,7 @@ async fn init_schema(client: &tokio_postgres::Client) {
         );
         CREATE INDEX IF NOT EXISTS idx_zfs_metrics_time ON zfs_metrics(collected_at DESC);
         CREATE INDEX IF NOT EXISTS idx_zfs_metrics_pool_time ON zfs_metrics(pool_name, collected_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_zfs_metrics_pool_time_asc ON zfs_metrics(pool_name, collected_at ASC);
         CREATE TABLE IF NOT EXISTS ui_layouts (
             page TEXT PRIMARY KEY,
             layout TEXT NOT NULL

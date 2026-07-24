@@ -299,6 +299,27 @@ export default function App() {
     localStorage.setItem('zfs_default_pool', name);
   }, []);
 
+  // ── Global backend connection health checks ──────────────────────────────
+  useEffect(() => {
+    const checkConnection = () => {
+      api.getHealth()
+        .then(() => {
+          setGlobalError(null);
+        })
+        .catch((error: any) => {
+          if (error.message?.includes('401') || error.message?.includes('403')) {
+            // Backend is up and returned auth error - this is expected if unauthenticated!
+            setGlobalError(null);
+          } else {
+            setGlobalError(`Backend connection failed: ${error.message}`);
+          }
+        });
+    };
+    checkConnection();
+    const iv = setInterval(checkConnection, 5000);
+    return () => clearInterval(iv);
+  }, []);
+
   // ── Fetch server time once on login ──────────────────────────────────────
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -469,6 +490,104 @@ export default function App() {
       return () => clearInterval(iv);
     }
   }, [isAuthenticated, fetchData]);
+
+  const isConnectionIssue = !!(globalError && (
+    globalError.toLowerCase().includes('failed') ||
+    globalError.toLowerCase().includes('connection') ||
+    globalError.toLowerCase().includes('network') ||
+    globalError.toLowerCase().includes('refused')
+  ));
+
+  if (isConnectionIssue) {
+    return (
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        height: '100vh', width: '100vw', background: 'radial-gradient(circle at center, #18181b, #09090b)',
+        color: '#f4f4f5', fontFamily: 'var(--font-ui)'
+      }}>
+        {/* Animated pulsing ZFS-Manager loading visual */}
+        <div style={{ position: 'relative', width: 80, height: 80, marginBottom: 24 }}>
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: '50%',
+            border: '2px solid var(--accent)', opacity: 0.1,
+            animation: 'ping 2s cubic-bezier(0, 0, 0.2, 1) infinite'
+          }} />
+          <div style={{
+            position: 'absolute', inset: 8, borderRadius: '50%',
+            border: '3px solid transparent', borderTopColor: 'var(--accent)',
+            animation: 'spin 1s linear infinite'
+          }} />
+          <div style={{
+            position: 'absolute', inset: 16, borderRadius: '50%',
+            background: 'var(--accent-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontWeight: 700, fontSize: '1.2rem', color: 'var(--accent)'
+          }}>
+            ZFS
+          </div>
+        </div>
+
+        <h2 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: 8, letterSpacing: '-0.02em' }}>
+          Starting ZFS-Manager...
+        </h2>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', maxWidth: 400, textAlign: 'center', lineHeight: 1.5, margin: '0 24px 24px 24px' }}>
+          The backend is performing diagnostic checks and preparing ZFS pool mounts. This process completes automatically once ready.
+        </p>
+
+        {/* Diagnostic Check List */}
+        <div style={{
+          width: '100%', maxWidth: 360, background: '#18181b', border: '1px solid var(--border-subtle)',
+          borderRadius: 8, padding: 16, display: 'flex', flexDirection: 'column', gap: 10,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+            <span style={{ color: 'var(--text-muted)' }}>Infrastructure check</span>
+            <span style={{ color: 'var(--warning)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span className="dot-pulse" /> Pending
+            </span>
+          </div>
+          <div style={{ height: 1, background: 'var(--border-subtle)' }} />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+            <span style={{ color: 'var(--text-muted)' }}>ZFS pool mounts & imports</span>
+            <span style={{ color: 'var(--warning)', fontWeight: 500 }}>Pending</span>
+          </div>
+          <div style={{ height: 1, background: 'var(--border-subtle)' }} />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+            <span style={{ color: 'var(--text-muted)' }}>Database connection</span>
+            <span style={{ color: 'var(--warning)', fontWeight: 500 }}>Connecting</span>
+          </div>
+        </div>
+
+        {/* Retrying label */}
+        <div style={{ marginTop: 24, fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="spinner-mini" />
+          Retrying connection to backend...
+        </div>
+
+        <style>{`
+          @keyframes ping {
+            75%, 100% { transform: scale(2); opacity: 0; }
+          }
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+          .dot-pulse {
+            width: 8px; height: 8px; background: var(--warning); border-radius: 50%;
+            animation: pulse 1.5s infinite;
+          }
+          @keyframes pulse {
+            0% { transform: scale(0.9); opacity: 0.5; }
+            50% { transform: scale(1.1); opacity: 1; }
+            100% { transform: scale(0.9); opacity: 0.5; }
+          }
+          .spinner-mini {
+            width: 12px; height: 12px; border: 2px solid transparent;
+            border-top-color: var(--text-muted); border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+          }
+        `}</style>
+      </div>
+    );
+  }
 
   if (!isAuthenticated) return <Login onLogin={handleLogin} />;
 
