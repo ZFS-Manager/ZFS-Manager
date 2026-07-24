@@ -528,21 +528,46 @@ async fn sync_redis_to_postgres(
         arc_hit_ratio: f64,
     }
 
-    let mut rows: Vec<MetricRow> = Vec::with_capacity(items.len());
+    // Group by pool_name and average the values in the 5-minute block
+    let mut pool_sums: std::collections::HashMap<String, (f64, f64, f64, f64, f64, f64, f64, usize)> = std::collections::HashMap::new();
     for item in &items {
         let v: serde_json::Value = match serde_json::from_str(item) {
             Ok(val) => val,
             Err(e)  => { warn!("Failed to parse metric JSON: {e}"); continue; }
         };
+        let pool_name = v["pool_name"].as_str().unwrap_or("").to_string();
+        let read_bw   = v["read_bw_mb"].as_f64().unwrap_or(0.0);
+        let write_bw  = v["write_bw_mb"].as_f64().unwrap_or(0.0);
+        let iops      = v["iops"].as_f64().unwrap_or(0.0);
+        let alloc     = v["alloc_gb"].as_f64().unwrap_or(0.0);
+        let free      = v["free_gb"].as_f64().unwrap_or(0.0);
+        let cpu       = v["cpu_percent"].as_f64().unwrap_or(0.0);
+        let arc       = v["arc_hit_ratio"].as_f64().unwrap_or(0.0);
+
+        let entry = pool_sums.entry(pool_name).or_insert((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0));
+        entry.0 += read_bw;
+        entry.1 += write_bw;
+        entry.2 += iops;
+        entry.3 = alloc; // Keep the latest capacity alloc_gb
+        entry.4 = free;  // Keep the latest capacity free_gb
+        entry.5 += cpu;
+        entry.6 += arc;
+        entry.7 += 1;
+    }
+
+    let mut rows: Vec<MetricRow> = Vec::with_capacity(pool_sums.len());
+    for (pool_name, (read_bw, write_bw, iops, alloc, free, cpu, arc, count)) in pool_sums {
+        if count == 0 { continue; }
+        let divisor = count as f64;
         rows.push(MetricRow {
-            pool_name:     v["pool_name"].as_str().unwrap_or("").to_string(),
-            read_bw_mb:    v["read_bw_mb"].as_f64().unwrap_or(0.0),
-            write_bw_mb:   v["write_bw_mb"].as_f64().unwrap_or(0.0),
-            iops:          v["iops"].as_f64().unwrap_or(0.0),
-            alloc_gb:      v["alloc_gb"].as_f64().unwrap_or(0.0),
-            free_gb:       v["free_gb"].as_f64().unwrap_or(0.0),
-            cpu_percent:   v["cpu_percent"].as_f64().unwrap_or(0.0),
-            arc_hit_ratio: v["arc_hit_ratio"].as_f64().unwrap_or(0.0),
+            pool_name,
+            read_bw_mb:    read_bw / divisor,
+            write_bw_mb:   write_bw / divisor,
+            iops:          iops / divisor,
+            alloc_gb:      alloc,
+            free_gb:       free,
+            cpu_percent:   cpu / divisor,
+            arc_hit_ratio: arc / divisor,
         });
     }
 
@@ -703,7 +728,7 @@ async fn run_slow_loop(state: crate::state::AppState) {
     loop {
         ticker.tick().await;
         pg_tick = pg_tick.wrapping_add(1);
-        let do_pg_sync = pg_tick >= 6;
+        let do_pg_sync = pg_tick >= 300; // 300 seconds = 5 minutes
         if do_pg_sync { pg_tick = 0; }
 
         let pools = get_pool_names().await;
