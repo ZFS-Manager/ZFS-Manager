@@ -693,7 +693,8 @@ async fn run_slow_loop(state: crate::state::AppState) {
     // If the iostat call overruns 1 s, wait for the full interval rather than bursting.
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-    let mut pg_tick: u8 = 0;
+    let mut pg_tick: u32 = 0;
+    let mut history_tick: u32 = 0;
     let mut prev_tr: u64 = 0;
     let mut prev_tw: u64 = 0;
     let mut last_totals_write = Instant::now() - TOTALS_INTERVAL;
@@ -961,6 +962,16 @@ async fn run_slow_loop(state: crate::state::AppState) {
                 enforce_retention(pg_client).await;
             }
             last_retention = Instant::now();
+        }
+
+        // Every 10 seconds, refresh metrics history & fill prediction caches in background
+        history_tick = history_tick.wrapping_add(1);
+        if history_tick >= 10 {
+            history_tick = 0;
+            let state_c = state.clone();
+            tokio::spawn(async move {
+                refresh_metrics_history_caches(&state_c).await;
+            });
         }
     }
 }
@@ -1293,59 +1304,9 @@ pub async fn warm_list_caches(state: &crate::state::AppState) {
         }
     }
 
-    // Pre-warm the two most commonly used metrics history intervals from PostgreSQL
-    // so the Performance tab loads instantly without hitting PG on first visit.
-    if let Some(ref pg) = state.pg {
-        let intervals: &[(&str, &str, u64)] = &[
-            ("1h",
-             "SELECT collected_at, pool_name, read_bw_mb, write_bw_mb, iops, alloc_gb, free_gb, cpu_percent, arc_hit_ratio \
-              FROM zfs_metrics WHERE collected_at > NOW() - INTERVAL '1 hour' ORDER BY collected_at ASC LIMIT 720",
-             60),
-            ("1d",
-             "SELECT to_timestamp(floor(extract(epoch from collected_at) / 300) * 300) AS collected_at, \
-              pool_name, AVG(read_bw_mb), AVG(write_bw_mb), AVG(iops), AVG(alloc_gb), AVG(free_gb), \
-              AVG(cpu_percent), AVG(arc_hit_ratio) \
-              FROM zfs_metrics WHERE collected_at > NOW() - INTERVAL '24 hours' \
-              GROUP BY 1, 2 ORDER BY 1 ASC LIMIT 576",
-             300),
-            ("6h",
-             "SELECT to_timestamp(floor(extract(epoch from collected_at) / 300) * 300) AS collected_at, \
-              pool_name, AVG(read_bw_mb), AVG(write_bw_mb), AVG(iops), AVG(alloc_gb), AVG(free_gb), \
-              AVG(cpu_percent), AVG(arc_hit_ratio) \
-              FROM zfs_metrics WHERE collected_at > NOW() - INTERVAL '6 hours' \
-              GROUP BY 1, 2 ORDER BY 1 ASC LIMIT 144",
-             120),
-        ];
-
-        for (interval, query, ttl) in intervals {
-            match pg.query(*query, &[]).await {
-                Ok(rows) => {
-                    let metrics: Vec<serde_json::Value> = rows.iter().map(|row| {
-                        let collected_at: chrono::DateTime<chrono::Utc> = row.get(0);
-                        serde_json::json!({
-                            "collected_at":  collected_at.to_rfc3339(),
-                            "pool_name":     row.get::<_, String>(1),
-                            "read_bw_mb":    row.get::<_, f64>(2),
-                            "write_bw_mb":   row.get::<_, f64>(3),
-                            "iops":          row.get::<_, f64>(4),
-                            "alloc_gb":      row.get::<_, f64>(5),
-                            "free_gb":       row.get::<_, f64>(6),
-                            "cpu_percent":   row.get::<_, f64>(7),
-                            "arc_hit_ratio": row.get::<_, f64>(8),
-                        })
-                    }).collect();
-                    let count = metrics.len();
-                    let payload = serde_json::json!({ "metrics": metrics, "interval": interval, "count": count });
-                    let cache_key = format!("zfs:history:{interval}");
-                    if let Ok(s) = serde_json::to_string(&payload) {
-                        let _: redis::RedisResult<()> = conn.set_ex(&cache_key, s, *ttl).await;
-                        info!("Startup: seeded {} ({count} points)", cache_key);
-                    }
-                }
-                Err(e) => warn!("Startup: failed to pre-warm zfs:history:{interval}: {e}"),
-            }
-        }
-    }
+    // Pre-warm metrics history & fill prediction caches in Redis
+    // so the Performance tab and Dashboard load instantly.
+    refresh_metrics_history_caches(state).await;
 }
 
 async fn get_scrub_speed_bps(pool: &str) -> u64 {
@@ -1412,4 +1373,72 @@ async fn get_scrub_speed_bps(pool: &str) -> u64 {
     };
     
     (num * mult) as u64
+}
+
+pub async fn refresh_metrics_history_caches(state: &crate::state::AppState) {
+    let pg = match &state.pg {
+        Some(pg) => pg,
+        None => return,
+    };
+    let redis_conn = match &state.redis {
+        Some(conn) => conn,
+        None => return,
+    };
+    let mut conn = redis_conn.clone();
+
+    let intervals: &[(&str, &str, u64)] = &[
+        ("1h",
+         "SELECT collected_at, pool_name, read_bw_mb, write_bw_mb, iops, alloc_gb, free_gb, cpu_percent, arc_hit_ratio \
+          FROM zfs_metrics WHERE collected_at > NOW() - INTERVAL '1 hour' \
+          ORDER BY collected_at ASC LIMIT 720",
+          30),
+        ("1d",
+         "SELECT to_timestamp(floor(extract(epoch from collected_at) / 300) * 300) AS collected_at, \
+          pool_name, AVG(read_bw_mb), AVG(write_bw_mb), AVG(iops), AVG(alloc_gb), AVG(free_gb), \
+          AVG(cpu_percent), AVG(arc_hit_ratio) \
+          FROM zfs_metrics WHERE collected_at > NOW() - INTERVAL '24 hours' \
+          GROUP BY 1, 2 ORDER BY 1 ASC LIMIT 576",
+         300),
+        ("6h",
+         "SELECT to_timestamp(floor(extract(epoch from collected_at) / 300) * 300) AS collected_at, \
+          pool_name, AVG(read_bw_mb), AVG(write_bw_mb), AVG(iops), AVG(alloc_gb), AVG(free_gb), \
+          AVG(cpu_percent), AVG(arc_hit_ratio) \
+          FROM zfs_metrics WHERE collected_at > NOW() - INTERVAL '6 hours' \
+          GROUP BY 1, 2 ORDER BY 1 ASC LIMIT 144",
+         120),
+    ];
+
+    for (interval, query, ttl) in intervals {
+        match pg.query(*query, &[]).await {
+            Ok(rows) => {
+                let metrics: Vec<serde_json::Value> = rows.iter().map(|row| {
+                    let collected_at: chrono::DateTime<chrono::Utc> = row.get(0);
+                    serde_json::json!({
+                        "collected_at":  collected_at.to_rfc3339(),
+                        "pool_name":     row.get::<_, String>(1),
+                        "read_bw_mb":    row.get::<_, f64>(2),
+                        "write_bw_mb":   row.get::<_, f64>(3),
+                        "iops":          row.get::<_, f64>(4),
+                        "alloc_gb":      row.get::<_, f64>(5),
+                        "free_gb":       row.get::<_, f64>(6),
+                        "cpu_percent":   row.get::<_, f64>(7),
+                        "arc_hit_ratio": row.get::<_, f64>(8),
+                    })
+                }).collect();
+                let count = metrics.len();
+                let payload = serde_json::json!({ "metrics": metrics, "interval": interval, "count": count });
+                let cache_key = format!("zfs:history:{interval}");
+                if let Ok(s) = serde_json::to_string(&payload) {
+                    let _: redis::RedisResult<()> = conn.set_ex(&cache_key, s, *ttl).await;
+                }
+            }
+            Err(e) => warn!("Background: failed to refresh zfs:history:{interval}: {e}"),
+        }
+    }
+
+    // Refresh fill prediction caches in Redis
+    let windows = &["auto", "1h", "6h", "1d", "7d", "30d"];
+    for w in windows {
+        let _ = crate::routes::metrics::compute_and_cache_fill_prediction_inner(state, w).await;
+    }
 }

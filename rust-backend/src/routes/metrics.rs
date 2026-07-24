@@ -274,7 +274,7 @@ async fn get_pool_disk_metrics(
         cache.pool_disks.get(&pool).map(|disks| {
             disks.iter().map(|d| json!({
                 "name":           d.name,
-                "read_bw_mb":     d.read_bw_mb,
+                 "read_bw_mb":     d.read_bw_mb,
                 "write_bw_mb":    d.write_bw_mb,
                 "read_iops":      d.read_iops,
                 "write_iops":     d.write_iops,
@@ -316,9 +316,14 @@ async fn get_fill_prediction(
         }
     }
 
+    let val = compute_and_cache_fill_prediction_inner(&state, window).await;
+    Json(val)
+}
+
+pub async fn compute_and_cache_fill_prediction_inner(state: &AppState, window: &str) -> Value {
     let pg = match state.pg {
         Some(ref client) => client.clone(),
-        None => return Json(json!({ "predictions": [], "window_used": null, "window_key": null })),
+        None => return json!({ "predictions": [], "window_used": null, "window_key": null }),
     };
 
     // Compute actual growth rate from alloc_gb delta across time windows.
@@ -372,7 +377,6 @@ async fn get_fill_prediction(
             GROUP BY pool_name
         )
         SELECT l.pool_name, l.alloc_gb, l.free_gb,
-               -- rate = (latest_alloc - oldest_alloc) / days_ago  (GB/day, can be negative)
                CASE WHEN o30.days_ago > 0 THEN (l.alloc_gb - o30.alloc_old) / o30.days_ago END as rate_30d,
                c.cnt_30d,
                CASE WHEN o7.days_ago > 0  THEN (l.alloc_gb - o7.alloc_old)  / o7.days_ago  END as rate_7d,
@@ -399,19 +403,18 @@ async fn get_fill_prediction(
         Ok(Ok(r)) => r,
         Ok(Err(e)) => {
             warn!("fill-prediction query failed: {e}");
-            return Json(json!({ "predictions": [], "window_used": null, "window_key": null }));
+            return json!({ "predictions": [], "window_used": null, "window_key": null });
         }
         Err(_) => {
             warn!("fill-prediction query timed out");
-            return Json(json!({ "predictions": [], "window_used": null, "window_key": null }));
+            return json!({ "predictions": [], "window_used": null, "window_key": null });
         }
     };
 
     if rows.is_empty() {
-        return Json(json!({ "predictions": [], "window_used": null, "window_key": null }));
+        return json!({ "predictions": [], "window_used": null, "window_key": null });
     }
 
-    // Windows ordered longest to shortest: (key, label, avg_col, cnt_col)
     let all_windows: &[(&str, &str, usize, usize)] = &[
         ("30d", "30 days",  3,  4),
         ("7d",  "7 days",   5,  6),
@@ -420,7 +423,6 @@ async fn get_fill_prediction(
         ("1h",  "1 hour",   11, 12),
     ];
 
-    // Start index for the preferred window based on the requested window param
     let preferred_start: usize = match window {
         "auto" | "30d" | "1m" | "1y" => 0,
         "7d" | "1w"                  => 1,
@@ -440,7 +442,6 @@ async fn get_fill_prediction(
         let alloc_gb:  f64         = row.get(1);
         let free_gb:   f64         = row.get(2);
 
-        // Find the best (longest) window with ≥1 data point
         let mut best_avg:   f64   = 0.0;
         let mut best_cnt:   i64   = 0;
         let mut best_key:   &str  = "";
@@ -449,8 +450,7 @@ async fn get_fill_prediction(
         for &(key, label, avg_col, cnt_col) in &all_windows[preferred_start..] {
             let cnt: i64 = row.get::<_, Option<i64>>(cnt_col).unwrap_or(0);
             if cnt > 0 {
-                let avg: f64 = row.get::<_, Option<f64>>(avg_col).unwrap_or(0.0);
-                best_avg   = avg;
+                best_avg   = row.get::<_, Option<f64>>(avg_col).unwrap_or(0.0);
                 best_cnt   = cnt;
                 best_key   = key;
                 best_label = label;
@@ -458,25 +458,16 @@ async fn get_fill_prediction(
             }
         }
 
-        if best_cnt == 0 {
-            continue; // No write data for this pool in any window — skip
-        }
-
-        // rate_gb_day is the alloc_gb delta per day (can be negative if shrinking)
         let rate_gb_day = best_avg;
-        let single_point = best_cnt <= 2;
+        let single_point = best_cnt < 2;
 
-        // Threshold: changes smaller than 10 MB/day are considered "stable"
-        let stable_threshold_gb = 0.01; // 10 MB/day
-
-        let (fill_date, color) = if rate_gb_day < -stable_threshold_gb {
-            // Pool is shrinking — data is being deleted
-            ("Shrinking – not filling".to_string(), "success")
-        } else if rate_gb_day.abs() <= stable_threshold_gb || free_gb <= 0.0 {
-            // No meaningful growth detected or pool already full
-            ("Stable".to_string(), "muted")
+        let (fill_date, color) = if rate_gb_day <= 0.000001 {
+            let label = if rate_gb_day < -0.000001 { "Shrinking – not filling" } else { "Stable" };
+            let c     = if rate_gb_day < -0.000001 { "success" } else { "secondary" };
+            (label.to_string(), c)
+        } else if free_gb <= 0.0 {
+            ("Full".to_string(), "danger")
         } else {
-            // Pool is growing — compute fill date
             let days = free_gb / rate_gb_day;
             let fill_dt = today + chrono::Duration::seconds((days * 86400.0) as i64);
             let date_str = if single_point {
@@ -515,6 +506,7 @@ async fn get_fill_prediction(
         "window_key":  overall_key,
     });
 
+    let cache_key = format!("zfs:fill-prediction:{window}");
     // ── Write to Redis cache ───────────────────────────────────────────────
     if let Some(ref redis_conn) = state.redis {
         let mut conn = redis_conn.clone();
@@ -526,5 +518,5 @@ async fn get_fill_prediction(
         }
     }
 
-    Json(result)
+    result
 }
