@@ -752,15 +752,13 @@ async fn run_slow_loop(state: crate::state::AppState) {
                 let net_read_bw_bytes = (res.read_bw_bytes - scrub_bps as f64 - rewrite_delta as f64).max(0.0);
                 let net_write_bw_bytes = (res.write_bw_bytes - rewrite_delta as f64).max(0.0);
 
-                // Accumulate all-time byte totals (bytes/sec × 1 s = bytes)
+                // Accumulate all-time byte totals (bytes/sec × 1 s = bytes) - excluding scrub & rewrite
                 state.total_read_bytes .fetch_add((net_read_bw_bytes  * TICK_SECS) as u64, Ordering::Relaxed);
                 state.total_write_bytes.fetch_add((net_write_bw_bytes * TICK_SECS) as u64, Ordering::Relaxed);
 
-                let net_read_bw_mb = (net_read_bw_bytes / 1_048_576.0).max(0.0);
-                let net_write_bw_mb = (net_write_bw_bytes / 1_048_576.0).max(0.0);
-
-                agg_read_bw_mb  += net_read_bw_mb;
-                agg_write_bw_mb += net_write_bw_mb;
+                // Keep real physical metrics in the charts/live dashboard displays
+                agg_read_bw_mb  += res.read_bw_mb;
+                agg_write_bw_mb += res.write_bw_mb;
                 agg_read_iops   += res.read_iops;
                 agg_write_iops  += res.write_iops;
 
@@ -770,8 +768,8 @@ async fn run_slow_loop(state: crate::state::AppState) {
 
                 pool_entries.push(serde_json::json!({
                     "pool_name":     pool,
-                    "read_bw_mb":    net_read_bw_mb,
-                    "write_bw_mb":   net_write_bw_mb,
+                    "read_bw_mb":    res.read_bw_mb,
+                    "write_bw_mb":   res.write_bw_mb,
                     "iops":          res.iops,
                     "alloc_gb":      cap_alloc_gb,
                     "free_gb":       cap_free_gb,
@@ -1351,12 +1349,14 @@ pub async fn warm_list_caches(state: &crate::state::AppState) {
 }
 
 async fn get_scrub_speed_bps(pool: &str) -> u64 {
-    let output = tokio::process::Command::new("zpool")
-        .args(["status", pool])
-        .output()
-        .await;
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tokio::process::Command::new("zpool")
+            .args(["status", pool])
+            .output()
+    ).await;
     let out = match output {
-        Ok(o) if o.status.success() => o,
+        Ok(Ok(o)) if o.status.success() => o,
         _ => return 0,
     };
     let stdout = String::from_utf8_lossy(&out.stdout);

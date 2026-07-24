@@ -639,14 +639,11 @@ async fn rewrite_dataset(
             .unwrap_or(0);
         let du_before_blocks = get_du_blocks(&mountpoint_c).await;
 
-        // 1. Re-apply current compression so future writes use it
-        let comp = executor::zfs(&["get", "-H", "-p", "-o", "value", "compression", &ds_name])
-            .await
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty() && s != "-")
-            .unwrap_or_else(|| "on".to_string());
-        let _ = executor::zfs(&["set", &format!("compression={}", comp), &ds_name]).await;
+        crate::routes::notifications::trigger_rules_for_event(
+            &state_clone,
+            "dataset_rewrite_start",
+            &format!("Dataset rewrite started for '{}'", ds_name)
+        ).await;
 
         info!("Dataset rewrite starting for '{}' at '{}'", ds_name, mountpoint_c);
 
@@ -785,19 +782,25 @@ async fn list_active_rewrites() -> Result<Json<Value>, ApiError> {
 }
 
 async fn get_du_blocks(mountpoint: &str) -> u64 {
-    let out = tokio::process::Command::new("nsenter")
-        .args(["-t", "1", "-m", "--", "du", "-s", mountpoint])
-        .output()
-        .await;
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::process::Command::new("nsenter")
+            .args(["-t", "1", "-m", "--", "du", "-s", mountpoint])
+            .output()
+    ).await;
     let stdout = match out {
-        Ok(out) if out.status.success() => out.stdout,
+        Ok(Ok(o)) if o.status.success() => o.stdout,
         _ => {
-            tokio::process::Command::new("du")
-                .args(["-s", mountpoint])
-                .output()
-                .await
-                .map(|o| o.stdout)
-                .unwrap_or_default()
+            let fallback = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                tokio::process::Command::new("du")
+                    .args(["-s", mountpoint])
+                    .output()
+            ).await;
+            match fallback {
+                Ok(Ok(o)) if o.status.success() => o.stdout,
+                _ => Vec::new(),
+            }
         }
     };
     let s = String::from_utf8_lossy(&stdout);

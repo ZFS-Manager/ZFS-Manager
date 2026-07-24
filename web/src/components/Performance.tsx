@@ -414,6 +414,15 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
   const [diskMetrics, setDiskMetrics]   = useState<Record<string, any[]>>(() => performanceDiskMetricsCache.data);
   const [diskPools, setDiskPools]       = useState<string[]>([]);
 
+  // Synchronously update state from cache when cacheKey changes, to prevent showing old data or showing empty state if cache has data
+  useEffect(() => {
+    setCapacityData(performanceCapacityCache[cacheKey] || []);
+    setRawMetrics(performanceRawMetricsCache[cacheKey] || []);
+    if (!liveMode) {
+      setHistoryData(performanceHistoryCache[cacheKey] || []);
+    }
+  }, [cacheKey, liveMode]);
+
   const liveStats = stats;
   const livePoint = liveStats.length > 0 ? liveStats[liveStats.length - 1] : null;
 
@@ -887,10 +896,19 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         };
 
         const lastFreeGb = correctedCapacityData.length > 0 ? (correctedCapacityData[correctedCapacityData.length - 1].free || 0) : 0;
-        const avgWriteMbPerSec = capacityData.length > 0
-          ? capacityData.reduce((s, d) => s + (d.write || 0), 0) / capacityData.length
-          : 0;
-        const avgWriteGbPerDay = (avgWriteMbPerSec / 1024) * 86400;
+        
+        // Calculate average space growth rate from allocated capacity slope (GB/day)
+        // This is highly accurate and naturally ignores scrub/resilver and rewrite operations.
+        let avgWriteGbPerDay = 0;
+        if (capacityData.length > 1) {
+          const first = capacityData[0];
+          const last = capacityData[capacityData.length - 1];
+          const timeDeltaDays = (last.tsMs - first.tsMs) / (86400 * 1000);
+          if (timeDeltaDays > 0.01) {
+            const allocDeltaGb = (last.alloc || 0) - (first.alloc || 0);
+            avgWriteGbPerDay = Math.max(0, allocDeltaGb / timeDeltaDays);
+          }
+        }
 
         let forecastDateStr: string | null = null;
         let forecastTimeStr: string | null = null;
