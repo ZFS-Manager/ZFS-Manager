@@ -320,6 +320,199 @@ async fn get_fill_prediction(
     Json(val)
 }
 
+pub async fn prewarm_all_fill_predictions(state: &AppState) {
+    let pg = match &state.pg {
+        Some(ref client) => client.clone(),
+        None => return,
+    };
+
+    // Compute actual growth rate from alloc_gb delta across time windows.
+    // This correctly captures shrinkage (negative rate) when data is deleted,
+    // unlike write_bw_mb which stays near zero even when usage is dropping.
+    let query = "
+        WITH latest_pool AS (
+            SELECT DISTINCT ON (pool_name) pool_name, alloc_gb, free_gb
+            FROM zfs_metrics WHERE pool_name != ''
+            ORDER BY pool_name, collected_at DESC
+        ),
+        oldest_30d AS (
+            SELECT DISTINCT ON (pool_name) pool_name, alloc_gb as alloc_old, collected_at as ts_old,
+                EXTRACT(EPOCH FROM (NOW() - collected_at)) / 86400.0 as days_ago
+            FROM zfs_metrics WHERE pool_name != '' AND collected_at > NOW() - INTERVAL '30 days'
+            ORDER BY pool_name, collected_at ASC
+        ),
+        oldest_7d AS (
+            SELECT DISTINCT ON (pool_name) pool_name, alloc_gb as alloc_old, collected_at as ts_old,
+                EXTRACT(EPOCH FROM (NOW() - collected_at)) / 86400.0 as days_ago
+            FROM zfs_metrics WHERE pool_name != '' AND collected_at > NOW() - INTERVAL '7 days'
+            ORDER BY pool_name, collected_at ASC
+        ),
+        oldest_1d AS (
+            SELECT DISTINCT ON (pool_name) pool_name, alloc_gb as alloc_old, collected_at as ts_old,
+                EXTRACT(EPOCH FROM (NOW() - collected_at)) / 86400.0 as days_ago
+            FROM zfs_metrics WHERE pool_name != '' AND collected_at > NOW() - INTERVAL '24 hours'
+            ORDER BY pool_name, collected_at ASC
+        ),
+        oldest_6h AS (
+            SELECT DISTINCT ON (pool_name) pool_name, alloc_gb as alloc_old, collected_at as ts_old,
+                EXTRACT(EPOCH FROM (NOW() - collected_at)) / 86400.0 as days_ago
+            FROM zfs_metrics WHERE pool_name != '' AND collected_at > NOW() - INTERVAL '6 hours'
+            ORDER BY pool_name, collected_at ASC
+        ),
+        oldest_1h AS (
+            SELECT DISTINCT ON (pool_name) pool_name, alloc_gb as alloc_old, collected_at as ts_old,
+                EXTRACT(EPOCH FROM (NOW() - collected_at)) / 86400.0 as days_ago
+            FROM zfs_metrics WHERE pool_name != '' AND collected_at > NOW() - INTERVAL '1 hour'
+            ORDER BY pool_name, collected_at ASC
+        ),
+        counts AS (
+            SELECT pool_name,
+                COUNT(CASE WHEN collected_at > NOW() - INTERVAL '30 days' THEN 1 END) as cnt_30d,
+                COUNT(CASE WHEN collected_at > NOW() - INTERVAL '7 days'  THEN 1 END) as cnt_7d,
+                COUNT(CASE WHEN collected_at > NOW() - INTERVAL '24 hours' THEN 1 END) as cnt_1d,
+                COUNT(CASE WHEN collected_at > NOW() - INTERVAL '6 hours'  THEN 1 END) as cnt_6h,
+                COUNT(CASE WHEN collected_at > NOW() - INTERVAL '1 hour'   THEN 1 END) as cnt_1h
+            FROM zfs_metrics
+            WHERE pool_name != '' AND collected_at > NOW() - INTERVAL '30 days'
+            GROUP BY pool_name
+        )
+        SELECT l.pool_name, l.alloc_gb, l.free_gb,
+               CASE WHEN o30.days_ago > 0 THEN (l.alloc_gb - o30.alloc_old) / o30.days_ago END as rate_30d,
+               c.cnt_30d,
+               CASE WHEN o7.days_ago > 0  THEN (l.alloc_gb - o7.alloc_old)  / o7.days_ago  END as rate_7d,
+               c.cnt_7d,
+               CASE WHEN o1d.days_ago > 0 THEN (l.alloc_gb - o1d.alloc_old) / o1d.days_ago END as rate_1d,
+               c.cnt_1d,
+               CASE WHEN o6h.days_ago > 0 THEN (l.alloc_gb - o6h.alloc_old) / o6h.days_ago END as rate_6h,
+               c.cnt_6h,
+               CASE WHEN o1h.days_ago > 0 THEN (l.alloc_gb - o1h.alloc_old) / o1h.days_ago END as rate_1h,
+               c.cnt_1h
+        FROM latest_pool l
+        LEFT JOIN oldest_30d o30 ON l.pool_name = o30.pool_name
+        LEFT JOIN oldest_7d  o7  ON l.pool_name = o7.pool_name
+        LEFT JOIN oldest_1d  o1d ON l.pool_name = o1d.pool_name
+        LEFT JOIN oldest_6h  o6h ON l.pool_name = o6h.pool_name
+        LEFT JOIN oldest_1h  o1h ON l.pool_name = o1h.pool_name
+        LEFT JOIN counts c       ON l.pool_name = c.pool_name
+    ";
+
+    let rows = match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        pg.query(query, &[])
+    ).await {
+        Ok(Ok(r)) => r,
+        _ => return,
+    };
+
+    if rows.is_empty() { return; }
+
+    let all_windows: &[(&str, &str, usize, usize)] = &[
+        ("30d", "30 days",  3,  4),
+        ("7d",  "7 days",   5,  6),
+        ("1d",  "24 hours", 7,  8),
+        ("6h",  "6 hours",  9,  10),
+        ("1h",  "1 hour",   11, 12),
+    ];
+
+    let windows_to_cache = &["auto", "1h", "6h", "1d", "7d", "30d"];
+
+    for window in windows_to_cache {
+        let preferred_start: usize = match *window {
+            "auto" | "30d" | "1m" | "1y" => 0,
+            "7d" | "1w"                  => 1,
+            "1d"                         => 2,
+            "6h"                         => 3,
+            "1h"                         => 4,
+            _                            => 0,
+        };
+
+        let today = chrono::Local::now();
+        let mut predictions: Vec<Value> = Vec::new();
+        let mut overall_key:   Option<&str> = None;
+        let mut overall_label: Option<&str> = None;
+
+        for row in &rows {
+            let pool_name: String      = row.get(0);
+            let alloc_gb:  f64         = row.get(1);
+            let free_gb:   f64         = row.get(2);
+
+            let mut best_avg:   f64   = 0.0;
+            let mut best_cnt:   i64   = 0;
+            let mut best_key:   &str  = "";
+            let mut best_label: &str  = "";
+
+            for &(key, label, avg_col, cnt_col) in &all_windows[preferred_start..] {
+                let cnt: i64 = row.get::<_, Option<i64>>(cnt_col).unwrap_or(0);
+                if cnt > 0 {
+                    best_avg   = row.get::<_, Option<f64>>(avg_col).unwrap_or(0.0);
+                    best_cnt   = cnt;
+                    best_key   = key;
+                    best_label = label;
+                    break;
+                }
+            }
+
+            let rate_gb_day = best_avg;
+            let single_point = best_cnt < 2;
+
+            let (fill_date, color) = if rate_gb_day <= 0.000001 {
+                let label = if rate_gb_day < -0.000001 { "Shrinking – not filling" } else { "Stable" };
+                let c     = if rate_gb_day < -0.000001 { "success" } else { "secondary" };
+                (label.to_string(), c)
+            } else if free_gb <= 0.0 {
+                ("Full".to_string(), "danger")
+            } else {
+                let days = free_gb / rate_gb_day;
+                let fill_dt = today + chrono::Duration::seconds((days * 86400.0) as i64);
+                let date_str = if single_point {
+                    format!("~{}", fill_dt.format("%d.%m.%Y"))
+                } else {
+                    fill_dt.format("%d.%m.%Y").to_string()
+                };
+                let c = if days < 14.0 { "danger" }
+                        else if days < 90.0 { "warning" }
+                        else { "secondary" };
+                (date_str, c)
+            };
+
+            if overall_key.is_none() {
+                overall_key   = Some(best_key);
+                overall_label = Some(best_label);
+            }
+
+            predictions.push(json!({
+                "pool":        pool_name,
+                "fill_date":   fill_date,
+                "color":       color,
+                "rate_gb_day": format!("{:.4}", rate_gb_day),
+                "window_used": best_label,
+                "window_key":  best_key,
+                "alloc_gb":    alloc_gb,
+                "free_gb":     free_gb,
+                "points":      best_cnt,
+                "fallback":    single_point,
+            }));
+        }
+
+        let result = json!({
+            "predictions": predictions,
+            "window_used": overall_label,
+            "window_key":  overall_key,
+        });
+
+        let cache_key = format!("zfs:fill-prediction:{window}");
+        if let Some(ref redis_conn) = state.redis {
+            let mut conn = redis_conn.clone();
+            if let Ok(json_str) = serde_json::to_string(&result) {
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_millis(500),
+                    conn.set_ex::<_, _, ()>(&cache_key, json_str, 300u64)
+                ).await;
+            }
+        }
+    }
+}
+
 pub async fn compute_and_cache_fill_prediction_inner(state: &AppState, window: &str) -> Value {
     let pg = match state.pg {
         Some(ref client) => client.clone(),

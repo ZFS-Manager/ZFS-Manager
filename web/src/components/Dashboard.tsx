@@ -337,13 +337,13 @@ function fmtSecsDash(s: number): string {
   return [h, m, sec].map(v => String(v).padStart(2, '0')).join(':');
 }
 
-interface RewriteEntryDash { name: string; pool: string; total_bytes: number; processed_bytes: number; elapsed_secs: number; }
+interface RewriteEntryDash { name: string; pool: string; total_bytes: number; processed_bytes: number; elapsed_secs: number; speed_bps?: number; }
 
 function computeRewriteDash(r: RewriteEntryDash) {
   const total = r.total_bytes;
   const done  = r.processed_bytes;
-  const pct   = total > 0 ? Math.min((done / total) * 100, 99.9) : 0;
-  const speedBps = r.elapsed_secs > 0 ? done / r.elapsed_secs : 100 * 1024 * 1024;
+  const pct   = total > 0 ? Math.min((done / total) * 100, 100) : 0;
+  const speedBps = r.speed_bps ?? (r.elapsed_secs > 0 ? done / r.elapsed_secs : 100 * 1024 * 1024);
   const remS  = speedBps > 0 ? Math.max(total - done, 0) / speedBps : 0;
   const speedStr = formatSpeed(speedBps);
   return { pct, label: `Rewriting: ${fmtBytesDash(done)} / ${fmtBytesDash(total)} at ${speedStr}, ${pct.toFixed(2)}% done, ${fmtSecsDash(remS)} to go` };

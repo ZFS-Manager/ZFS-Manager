@@ -1420,9 +1420,6 @@ pub async fn refresh_metrics_history_caches(state: &crate::state::AppState) {
         }
     }
 
-    // Refresh fill prediction caches in Redis
-    let windows = &["auto", "1h", "6h", "1d", "7d", "30d"];
-    for w in windows {
-        let _ = crate::routes::metrics::compute_and_cache_fill_prediction_inner(state, w).await;
-    }
+    // Refresh fill prediction caches in Redis with a single consolidated query
+    crate::routes::metrics::prewarm_all_fill_predictions(state).await;
 }

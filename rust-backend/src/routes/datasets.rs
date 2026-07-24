@@ -31,6 +31,7 @@ pub struct RewriteInfo {
     pub total_bytes: u64,
     pub processed_bytes: Arc<AtomicU64>,
     pub last_processed_bytes: Arc<AtomicU64>,
+    pub instant_speed_bps: Arc<AtomicU64>,
     pub started_at_secs: u64,
 }
 
@@ -72,6 +73,7 @@ pub async fn pop_rewrite_deltas() -> HashMap<String, u64> {
         let last = info.last_processed_bytes.load(Ordering::Relaxed);
         let delta = current.saturating_sub(last);
         info.last_processed_bytes.store(current, Ordering::Relaxed);
+        info.instant_speed_bps.store(delta, Ordering::Relaxed);
         *deltas.entry(pool).or_insert(0) += delta;
     }
     deltas
@@ -610,6 +612,7 @@ async fn rewrite_dataset(
 
     let processed = Arc::new(AtomicU64::new(0));
     let last_processed = Arc::new(AtomicU64::new(0));
+    let instant_speed = Arc::new(AtomicU64::new(0));
 
     let mut lock = active_rewrites().lock().await;
     if lock.contains_key(&body.name) {
@@ -619,6 +622,7 @@ async fn rewrite_dataset(
         total_bytes,
         processed_bytes: Arc::clone(&processed),
         last_processed_bytes: Arc::clone(&last_processed),
+        instant_speed_bps: Arc::clone(&instant_speed),
         started_at_secs: now_secs(),
     });
     drop(lock);
@@ -769,12 +773,14 @@ async fn list_active_rewrites() -> Result<Json<Value>, ApiError> {
         let pool = name.split('/').next().unwrap_or(name);
         let elapsed_secs = now.saturating_sub(info.started_at_secs);
         let processed = info.processed_bytes.load(Ordering::Relaxed);
+        let speed_bps = info.instant_speed_bps.load(Ordering::Relaxed);
         json!({
             "name":            name,
             "pool":            pool,
             "total_bytes":     info.total_bytes,
             "processed_bytes": processed,
             "elapsed_secs":    elapsed_secs,
+            "speed_bps":       speed_bps,
         })
     }).collect();
 
