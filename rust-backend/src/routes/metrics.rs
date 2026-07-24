@@ -25,7 +25,7 @@ struct HistoryParams {
 }
 
 // Redis TTL per interval: shorter windows expire faster so fresh data shows quickly
-fn cache_ttl(interval: &str) -> u64 {
+pub fn cache_ttl(interval: &str) -> u64 {
     match interval {
         "1h" => 20,   // 20s — data changes every 5s, keep brief
         "6h" => 30,   // 30s
@@ -37,7 +37,7 @@ fn cache_ttl(interval: &str) -> u64 {
     }
 }
 
-fn build_query(interval: &str) -> String {
+pub fn build_query(interval: &str) -> String {
     match interval {
         "1h" => "SELECT collected_at, pool_name, \
                  read_bw_mb, write_bw_mb, iops, alloc_gb, free_gb, cpu_percent, arc_hit_ratio \

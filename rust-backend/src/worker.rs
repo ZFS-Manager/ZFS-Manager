@@ -1386,30 +1386,13 @@ pub async fn refresh_metrics_history_caches(state: &crate::state::AppState) {
     };
     let mut conn = redis_conn.clone();
 
-    let intervals: &[(&str, &str, u64)] = &[
-        ("1h",
-         "SELECT collected_at, pool_name, read_bw_mb, write_bw_mb, iops, alloc_gb, free_gb, cpu_percent, arc_hit_ratio \
-          FROM zfs_metrics WHERE collected_at > NOW() - INTERVAL '1 hour' \
-          ORDER BY collected_at ASC LIMIT 720",
-          30),
-        ("1d",
-         "SELECT to_timestamp(floor(extract(epoch from collected_at) / 300) * 300) AS collected_at, \
-          pool_name, AVG(read_bw_mb), AVG(write_bw_mb), AVG(iops), AVG(alloc_gb), AVG(free_gb), \
-          AVG(cpu_percent), AVG(arc_hit_ratio) \
-          FROM zfs_metrics WHERE collected_at > NOW() - INTERVAL '24 hours' \
-          GROUP BY 1, 2 ORDER BY 1 ASC LIMIT 576",
-         300),
-        ("6h",
-         "SELECT to_timestamp(floor(extract(epoch from collected_at) / 300) * 300) AS collected_at, \
-          pool_name, AVG(read_bw_mb), AVG(write_bw_mb), AVG(iops), AVG(alloc_gb), AVG(free_gb), \
-          AVG(cpu_percent), AVG(arc_hit_ratio) \
-          FROM zfs_metrics WHERE collected_at > NOW() - INTERVAL '6 hours' \
-          GROUP BY 1, 2 ORDER BY 1 ASC LIMIT 144",
-         120),
-    ];
+    let intervals = &["1h", "6h", "1d", "1w", "1m", "1y"];
 
-    for (interval, query, ttl) in intervals {
-        match pg.query(*query, &[]).await {
+    for interval in intervals {
+        let query = crate::routes::metrics::build_query(interval);
+        let ttl = crate::routes::metrics::cache_ttl(interval);
+
+        match pg.query(&query, &[]).await {
             Ok(rows) => {
                 let metrics: Vec<serde_json::Value> = rows.iter().map(|row| {
                     let collected_at: chrono::DateTime<chrono::Utc> = row.get(0);
@@ -1429,7 +1412,7 @@ pub async fn refresh_metrics_history_caches(state: &crate::state::AppState) {
                 let payload = serde_json::json!({ "metrics": metrics, "interval": interval, "count": count });
                 let cache_key = format!("zfs:history:{interval}");
                 if let Ok(s) = serde_json::to_string(&payload) {
-                    let _: redis::RedisResult<()> = conn.set_ex(&cache_key, s, *ttl).await;
+                    let _: redis::RedisResult<()> = conn.set_ex(&cache_key, s, ttl).await;
                 }
             }
             Err(e) => warn!("Background: failed to refresh zfs:history:{interval}: {e}"),

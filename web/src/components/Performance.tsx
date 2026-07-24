@@ -462,8 +462,10 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     // so switching back to this tab shows content immediately instead of a skeleton.
     const apiInterval = INTERVALS.find(i => i.key === interval)?.api ?? interval;
     let firstFetch = true;
-    const fetchHistory = () =>
-      api.getMetricsHistory(apiInterval)
+    const fetchHistory = () => {
+      setLoadingCapacity(true);
+      setLoadingHistory(true);
+      return api.getMetricsHistory(apiInterval)
         .then(res => {
           const allMetrics: any[] = res.metrics || [];
 
@@ -501,6 +503,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
           }
         })
         .finally(() => { setLoadingCapacity(false); setLoadingHistory(false); firstFetch = false; });
+    };
     fetchHistory();
     const id = setInterval(fetchHistory, 30_000);
     return () => clearInterval(id);
