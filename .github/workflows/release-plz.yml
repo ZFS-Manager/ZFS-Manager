@@ -22,5 +22,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Run release-plz
         uses: release-plz/action@v0.5.131
+        with:
+          manifest_path: rust-backend/Cargo.toml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
