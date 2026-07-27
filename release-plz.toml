@@ -4,4 +4,5 @@ git_release_enable = true
 
 [[package]]
 name = "zfs-manager"
+git_only = true
 publish = false
