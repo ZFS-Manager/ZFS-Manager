@@ -46,6 +46,12 @@ jobs:
           CLEAN_BRANCH=$(echo "$BRANCH_NAME" | tr '/' '-' | sed 's/[^a-zA-Z0-9._-]/-/g')
           echo "branch=$CLEAN_BRANCH" >> $GITHUB_OUTPUT
 
+      - name: Extract version from Cargo.toml
+        id: cargo_version
+        run: |
+          VERSION=$(grep '^version =' rust-backend/Cargo.toml | head -n 1 | cut -d '"' -f 2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -63,6 +69,8 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ matrix.image }}
           tags: |
             type=semver,pattern={{version}}
+            # NEU: Liest die Version direkt aus der Cargo.toml, wenn auf main gepusht wird
+            type=raw,value=${{ steps.cargo_version.outputs.version }},enable=${{ github.ref == 'refs/heads/main' }}
             # Nutzt immer den oben extrahierten Branch-Namen als Tag
             type=raw,value=${{ steps.extract_branch.outputs.branch }}
             # Optional: Immer noch den kurzen SHA-Tag mitgeben (gute Praxis)
