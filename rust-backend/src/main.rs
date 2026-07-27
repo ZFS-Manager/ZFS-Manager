@@ -511,7 +511,7 @@ async fn main() {
         .await
         .expect("Failed to bind port");
 
-    info!("zfs-manager listening on http://0.0.0.0:{port}");
+    info!("zfs-manager service listening on http://0.0.0.0:{port}");
     info!("   API base: http://0.0.0.0:{port}/api/v1");
     if std::env::var("ZFS_API_KEY").is_ok() {
         info!("API Key Authentication enabled!");
