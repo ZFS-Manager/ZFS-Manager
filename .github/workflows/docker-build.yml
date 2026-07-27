@@ -7,6 +7,8 @@ on:
   pull_request:
     branches:
       - '**'
+  release:
+    types: [published]
 
 env:
   REGISTRY: ghcr.io
@@ -60,12 +62,13 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ matrix.image }}
           tags: |
+            type=semver,pattern={{version}}
             # Nutzt immer den oben extrahierten Branch-Namen als Tag
             type=raw,value=${{ steps.extract_branch.outputs.branch }}
             # Optional: Immer noch den kurzen SHA-Tag mitgeben (gute Praxis)
             type=sha,format=short
-            # NEU: Vergibt den Tag 'latest' exklusiv bei Pushes in den main-Branch
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            # NEU: Vergibt den Tag 'latest' exklusiv bei Pushes in den main-Branch oder bei Releases
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'release' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
