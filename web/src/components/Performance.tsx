@@ -372,6 +372,13 @@ const WIDGET_LABELS: Record<string, string> = {
   'smart-health':    'SMART / Disk Health',
 };
 
+// Module-level caches to persist data across mounts (tab switches)
+const performanceHistoryCache: Record<string, any[]> = {};
+const performanceCapacityCache: Record<string, any[]> = {};
+const performanceRawMetricsCache: Record<string, any[]> = {};
+const performanceSmartDataCache: { data: any[] } = { data: [] };
+const performanceDiskMetricsCache: { data: Record<string, any[]> } = { data: {} };
+
 export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0, pools: poolsProp, selectedPool, onSelectPool }: PerformanceProps) {
   const isMobile = useIsMobile();
   const { widgets, loaded, setVisible, reorder, toast } = useLayout('performance');
@@ -383,26 +390,38 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
     const saved = localStorage.getItem('perf_interval') as Interval | null;
     return (saved && INTERVALS.some(i => i.key === saved)) ? saved : '1d';
   });
-  const selectInterval = useCallback((iv: Interval) => {
-    localStorage.setItem('perf_interval', iv);
-    _setInterval(iv);
-  }, []);
-  const [capacityData, setCapacityData] = useState<any[]>([]);
-  const [rawMetrics, setRawMetrics]     = useState<any[]>([]);
-  const [loadingCapacity, setLoadingCapacity] = useState(false);
-  const [liveMode, setLiveMode]         = useState(() => localStorage.getItem('perf_live') === 'true');
-  const [historyData, setHistoryData]   = useState<any[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
-  const [hidden, setHidden]             = useState<Set<string>>(new Set());
-  const [smartData, setSmartData]       = useState<any[]>([]);
-
-  const [diskMetrics, setDiskMetrics]   = useState<Record<string, any[]>>({});
-  const [diskPools, setDiskPools]       = useState<string[]>([]);
 
   const multiPool = (poolsProp || []).length > 1;
   const effectivePool = multiPool
     ? (selectedPool && (poolsProp || []).some((p: any) => p.name === selectedPool) ? selectedPool : (poolsProp || [])[0]?.name || '')
     : '';
+  const cacheKey = `${interval}_${effectivePool}`;
+
+  const selectInterval = useCallback((iv: Interval) => {
+    localStorage.setItem('perf_interval', iv);
+    _setInterval(iv);
+  }, []);
+
+  const [capacityData, setCapacityData] = useState<any[]>(() => performanceCapacityCache[cacheKey] || []);
+  const [rawMetrics, setRawMetrics]     = useState<any[]>(() => performanceRawMetricsCache[cacheKey] || []);
+  const [loadingCapacity, setLoadingCapacity] = useState(false);
+  const [liveMode, setLiveMode]         = useState(() => localStorage.getItem('perf_live') === 'true');
+  const [historyData, setHistoryData]   = useState<any[]>(() => performanceHistoryCache[cacheKey] || []);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [hidden, setHidden]             = useState<Set<string>>(new Set());
+  const [smartData, setSmartData]       = useState<any[]>(() => performanceSmartDataCache.data);
+
+  const [diskMetrics, setDiskMetrics]   = useState<Record<string, any[]>>(() => performanceDiskMetricsCache.data);
+  const [diskPools, setDiskPools]       = useState<string[]>([]);
+
+  // Synchronously update state from cache when cacheKey changes, to prevent showing old data or showing empty state if cache has data
+  useEffect(() => {
+    setCapacityData(performanceCapacityCache[cacheKey] || []);
+    setRawMetrics(performanceRawMetricsCache[cacheKey] || []);
+    if (!liveMode) {
+      setHistoryData(performanceHistoryCache[cacheKey] || []);
+    }
+  }, [cacheKey, liveMode]);
 
   const liveStats = stats;
   const livePoint = liveStats.length > 0 ? liveStats[liveStats.length - 1] : null;
@@ -439,19 +458,20 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
 
   // Fetch history — filter client-side by pool when multiPool, then restrict to window
   useEffect(() => {
-    setCapacityData([]);
-    setRawMetrics([]);
-    setLoadingCapacity(true);
-    if (!liveMode) { setHistoryData([]); setLoadingHistory(true); }
+    // Don't clear existing data on re-mount — keep old data visible while refreshing
+    // so switching back to this tab shows content immediately instead of a skeleton.
     const apiInterval = INTERVALS.find(i => i.key === interval)?.api ?? interval;
-    const fetchHistory = () =>
-      api.getMetricsHistory(apiInterval)
+    let firstFetch = true;
+    const fetchHistory = () => {
+      setLoadingCapacity(true);
+      setLoadingHistory(true);
+      return api.getMetricsHistory(apiInterval)
         .then(res => {
           const allMetrics: any[] = res.metrics || [];
 
           // Log debug info for 1h to help diagnose total calculation issues
           if (apiInterval === '1h') {
-            const cutoffMs = Date.now() - INTERVAL_MS['1h'];
+            const cutoffMs = Date.now() + serverTimeOffsetMs - INTERVAL_MS['1h'];
             const inWindow = allMetrics.filter((m: any) => new Date(m.collected_at).getTime() >= cutoffMs);
             console.debug('[1h debug] raw points:', allMetrics.length, '/ in-window:', inWindow.length,
               '/ time range:', allMetrics.length > 0 ? `${allMetrics[0].collected_at} → ${allMetrics[allMetrics.length-1].collected_at}` : 'empty');
@@ -461,27 +481,29 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
           const poolFilter = multiPool && effectivePool ? effectivePool : undefined;
           const windowCutoff = Date.now() + serverTimeOffsetMs - INTERVAL_MS[interval];
 
-          // transformHistory with optional pool filter
-          const all = transformHistory(allMetrics, interval, poolFilter);
-
-          // For capacity (Pool Capacity chart), also transform without pool filter to get all-pool data
-          // but we keep it filtered by pool when multiPool
-          const capAll = transformHistory(allMetrics, interval, poolFilter);
-
-          // Restrict to the selected time window to prevent stale/out-of-window points
-          const windowed = all.filter(d => d.tsMs >= windowCutoff);
+          const all     = transformHistory(allMetrics, interval, poolFilter);
+          const capAll  = transformHistory(allMetrics, interval, poolFilter);
+          const windowed    = all.filter(d => d.tsMs >= windowCutoff);
           const capWindowed = capAll.filter(d => d.tsMs >= windowCutoff);
 
           setRawMetrics(allMetrics);
           setCapacityData(capWindowed);
           if (!liveMode) setHistoryData(windowed);
+
+          const cacheKey = `${interval}_${effectivePool}`;
+          performanceRawMetricsCache[cacheKey] = allMetrics;
+          performanceCapacityCache[cacheKey] = capWindowed;
+          performanceHistoryCache[cacheKey] = windowed;
         })
         .catch(() => {
-          setCapacityData([]);
-          setRawMetrics([]);
-          if (!liveMode) setHistoryData([]);
+          if (firstFetch) {
+            setCapacityData([]);
+            setRawMetrics([]);
+            if (!liveMode) setHistoryData([]);
+          }
         })
-        .finally(() => { setLoadingCapacity(false); setLoadingHistory(false); });
+        .finally(() => { setLoadingCapacity(false); setLoadingHistory(false); firstFetch = false; });
+    };
     fetchHistory();
     const id = setInterval(fetchHistory, 30_000);
     return () => clearInterval(id);
@@ -495,11 +517,11 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
           api.getSmartData(d.name || d.path).then(s => ({ disk: d, smart: s }))
         )
       );
-      setSmartData(
-        smartResults
-          .filter(r => r.status === 'fulfilled')
-          .map(r => (r as PromiseFulfilledResult<any>).value)
-      );
+      const data = smartResults
+        .filter(r => r.status === 'fulfilled')
+        .map(r => (r as PromiseFulfilledResult<any>).value);
+      setSmartData(data);
+      performanceSmartDataCache.data = data;
     }).catch(() => {});
   }, []);
 
@@ -513,6 +535,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         const map: Record<string, any[]> = {};
         results.forEach((r, i) => { map[names[i]] = r.disks || []; });
         setDiskMetrics(map);
+        performanceDiskMetricsCache.data = map;
       } catch { /* ignore */ }
     };
     fetchDisks();
@@ -726,7 +749,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         );
 
       case 'io-chart': {
-        const ioNowMs = Date.now();
+        const ioNowMs = Date.now() + serverTimeOffsetMs;
         const ioChartData = (() => {
           if (liveMode || windowedChartData.length === 0) return ioDisplayData;
           const last = windowedChartData[windowedChartData.length - 1];
@@ -850,7 +873,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
       }
 
       case 'storage-history': {
-        const capNowMs = Date.now();
+        const capNowMs = Date.now() + serverTimeOffsetMs;
         const capWindowStart = capNowMs - INTERVAL_MS[interval];
 
         const capDisplayData = (() => {
@@ -876,17 +899,26 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         };
 
         const lastFreeGb = correctedCapacityData.length > 0 ? (correctedCapacityData[correctedCapacityData.length - 1].free || 0) : 0;
-        const avgWriteMbPerSec = capacityData.length > 0
-          ? capacityData.reduce((s, d) => s + (d.write || 0), 0) / capacityData.length
-          : 0;
-        const avgWriteGbPerDay = (avgWriteMbPerSec / 1024) * 86400;
+        
+        // Calculate average space growth rate from allocated capacity slope (GB/day)
+        // This is highly accurate and naturally ignores scrub/resilver and rewrite operations.
+        let avgWriteGbPerDay = 0;
+        if (capacityData.length > 1) {
+          const first = capacityData[0];
+          const last = capacityData[capacityData.length - 1];
+          const timeDeltaDays = (last.tsMs - first.tsMs) / (86400 * 1000);
+          if (timeDeltaDays > 0.01) {
+            const allocDeltaGb = (last.alloc || 0) - (first.alloc || 0);
+            avgWriteGbPerDay = Math.max(0, allocDeltaGb / timeDeltaDays);
+          }
+        }
 
         let forecastDateStr: string | null = null;
         let forecastTimeStr: string | null = null;
         let forecastColor = 'var(--text-muted)';
         if (avgWriteGbPerDay > 0.000001 && lastFreeGb > 0) {
           const daysUntilFull = lastFreeGb / avgWriteGbPerDay;
-          const fillDate = new Date(Date.now() + daysUntilFull * 86400_000);
+          const fillDate = new Date(Date.now() + serverTimeOffsetMs + daysUntilFull * 86400_000);
           const d = fillDate.getDate().toString().padStart(2, '0');
           const mo = (fillDate.getMonth() + 1).toString().padStart(2, '0');
           forecastDateStr = `${d}.${mo}.${fillDate.getFullYear()}`;

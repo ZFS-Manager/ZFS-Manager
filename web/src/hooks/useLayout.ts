@@ -28,9 +28,19 @@ function getApiKey() {
   return localStorage.getItem('zfs_access_token') || '';
 }
 
+function getLocalLayout(page: string): WidgetConfig[] {
+  const cached = localStorage.getItem(`layout:${page}`);
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch (_) {}
+  }
+  return DEFAULTS[page] ?? [];
+}
+
 export function useLayout(page: string) {
-  const [widgets, setWidgets] = useState<WidgetConfig[]>(DEFAULTS[page] ?? []);
-  const [loaded, setLoaded]   = useState(false);
+  const [widgets, setWidgets] = useState<WidgetConfig[]>(() => getLocalLayout(page));
+  const [loaded, setLoaded]   = useState(true);
   const [toast, setToast]     = useState<string | null>(null);
   const saveTimer             = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -51,6 +61,7 @@ export function useLayout(page: string) {
             })),
           ];
           setWidgets(merged);
+          localStorage.setItem(`layout:${page}`, JSON.stringify(merged));
         }
       })
       .catch(() => showToast('Could not load saved layout'))
@@ -64,6 +75,7 @@ export function useLayout(page: string) {
 
   const save = useCallback((newWidgets: WidgetConfig[]) => {
     setWidgets(newWidgets);
+    localStorage.setItem(`layout:${page}`, JSON.stringify(newWidgets));
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       fetch(`/api/v1/layout/${page}`, {

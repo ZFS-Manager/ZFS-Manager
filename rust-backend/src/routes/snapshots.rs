@@ -1,14 +1,26 @@
 use axum::{
-    extract::{Path, Query},
+    extract::{Path, Query, State},
     routing::{get, post},
     Json, Router,
 };
+use redis::AsyncCommands;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tracing::warn;
 
-use crate::{error::ApiError, executor};
+use crate::{error::ApiError, executor, state::AppState};
 
-pub fn router() -> Router {
+const CACHE_KEY: &str = "zfs:snapshots";
+const CACHE_TTL: u64 = 30;
+
+async fn bust_cache(state: &AppState) {
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        let _: redis::RedisResult<()> = conn.del(CACHE_KEY).await;
+    }
+}
+
+pub fn router(state: AppState) -> Router {
     Router::new()
         // Collection
         .route("/api/v1/snapshots", get(list_snapshots).post(create_snapshot))
@@ -21,6 +33,7 @@ pub fn router() -> Router {
         .route("/api/v1/snapshots/holds",    get(list_holds))
         .route("/api/v1/snapshots/diff",     get(diff_snapshot))
         .route("/api/v1/snapshots/send",     post(send_recv))
+        .with_state(state)
 }
 
 // ── Bodies ────────────────────────────────────────────────────────────────────
@@ -69,7 +82,17 @@ pub struct SendRecvBody {
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-async fn list_snapshots() -> Result<Json<Value>, ApiError> {
+async fn list_snapshots(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        let cached: redis::RedisResult<Option<String>> = conn.get(CACHE_KEY).await;
+        if let Ok(Some(hit)) = cached {
+            if let Ok(val) = serde_json::from_str::<Value>(&hit) {
+                return Ok(Json(val));
+            }
+        }
+    }
+
     let raw = executor::zfs(&[
         "list", "-H", "-p", "-t", "snapshot",
         "-o", "name,used,refer,creation",
@@ -88,10 +111,19 @@ async fn list_snapshots() -> Result<Json<Value>, ApiError> {
             })
         })
         .collect();
-    Ok(Json(json!({ "snapshots": snaps })))
+
+    let result = json!({ "snapshots": snaps });
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        if let Ok(json_str) = serde_json::to_string(&result) {
+            let set_res: redis::RedisResult<()> = conn.set_ex(CACHE_KEY, json_str, CACHE_TTL).await;
+            if let Err(e) = set_res { warn!("Redis SET failed for {CACHE_KEY}: {e}"); }
+        }
+    }
+    Ok(Json(result))
 }
 
-async fn create_snapshot(Json(body): Json<CreateSnapshotBody>) -> Result<Json<Value>, ApiError> {
+async fn create_snapshot(State(state): State<AppState>, Json(body): Json<CreateSnapshotBody>) -> Result<Json<Value>, ApiError> {
     if body.name.is_empty() {
         return Err(ApiError::BadRequest("'name' is required (e.g. 'tank/data@snap1')".into()));
     }
@@ -106,6 +138,7 @@ async fn create_snapshot(Json(body): Json<CreateSnapshotBody>) -> Result<Json<Va
     }
     args.push(&body.name);
     executor::zfs(&args).await?;
+    bust_cache(&state).await;
     Ok(Json(json!({ "message": format!("Snapshot '{}' created", body.name) })))
 }
 
@@ -130,13 +163,14 @@ async fn get_snapshot(Path(name): Path<String>) -> Result<Json<Value>, ApiError>
     })))
 }
 
-async fn destroy_snapshot(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
+async fn destroy_snapshot(State(state): State<AppState>, Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
     executor::validate_zfs_name(&name, "snapshot")?;
     executor::zfs(&["destroy", &name]).await?;
+    bust_cache(&state).await;
     Ok(Json(json!({ "message": format!("Snapshot '{name}' destroyed") })))
 }
 
-async fn rollback(Json(body): Json<RollbackBody>) -> Result<Json<Value>, ApiError> {
+async fn rollback(State(state): State<AppState>, Json(body): Json<RollbackBody>) -> Result<Json<Value>, ApiError> {
     if body.name.is_empty() {
         return Err(ApiError::BadRequest("'name' is required".into()));
     }
@@ -147,6 +181,7 @@ async fn rollback(Json(body): Json<RollbackBody>) -> Result<Json<Value>, ApiErro
     }
     args.push(&body.name);
     executor::zfs(&args).await?;
+    bust_cache(&state).await;
     Ok(Json(json!({ "message": format!("Rolled back to snapshot '{}'", body.name) })))
 }
 

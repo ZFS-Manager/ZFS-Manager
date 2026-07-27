@@ -8,6 +8,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{error::ApiError, executor, state::AppState};
+use tracing::warn;
+
+const POOLS_CACHE_KEY: &str = "zfs:pools";
+const POOLS_CACHE_TTL: u64 = 30;
+
+async fn bust_pools_cache(state: &AppState) {
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        let _: redis::RedisResult<()> = conn.del(POOLS_CACHE_KEY).await;
+    }
+}
 
 // ── Pool import config storage ────────────────────────────────────────────────
 
@@ -405,7 +416,17 @@ fn extract_time_remaining(detail: &str) -> String {
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-async fn list_pools() -> Result<Json<Value>, ApiError> {
+async fn list_pools(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        let cached: redis::RedisResult<Option<String>> = conn.get(POOLS_CACHE_KEY).await;
+        if let Ok(Some(hit)) = cached {
+            if let Ok(val) = serde_json::from_str::<Value>(&hit) {
+                return Ok(Json(val));
+            }
+        }
+    }
+
     let raw = executor::zpool(&["list", "-H", "-p", "-o", "name,size,alloc,free,frag,cap,dedup,health,altroot"]).await?;
 
     let avail_raw = executor::zfs(&["get", "-H", "-p", "-o", "name,value", "available"])
@@ -454,7 +475,15 @@ async fn list_pools() -> Result<Json<Value>, ApiError> {
             })
         })
         .collect();
-    Ok(Json(json!({ "pools": pools })))
+    let result = json!({ "pools": pools });
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        if let Ok(json_str) = serde_json::to_string(&result) {
+            let set_res: redis::RedisResult<()> = conn.set_ex(POOLS_CACHE_KEY, json_str, POOLS_CACHE_TTL).await;
+            if let Err(e) = set_res { warn!("Redis SET failed for {POOLS_CACHE_KEY}: {e}"); }
+        }
+    }
+    Ok(Json(result))
 }
 
 async fn list_importable_pools() -> Result<Json<Value>, ApiError> {
@@ -490,7 +519,7 @@ async fn list_importable_pools() -> Result<Json<Value>, ApiError> {
     Ok(Json(json!({ "pools": pools })))
 }
 
-async fn create_pool(Json(body): Json<CreatePoolBody>) -> Result<Json<Value>, ApiError> {
+async fn create_pool(State(state): State<AppState>, Json(body): Json<CreatePoolBody>) -> Result<Json<Value>, ApiError> {
     if body.name.is_empty() {
         return Err(ApiError::BadRequest("'name' is required".into()));
     }
@@ -535,6 +564,12 @@ async fn create_pool(Json(body): Json<CreatePoolBody>) -> Result<Json<Value>, Ap
     }
     let _ = executor::zfs(&["mount", &body.name]).await;
 
+    bust_pools_cache(&state).await;
+    // New pool creates a root dataset — invalidate dataset list too, and invalidate disks list
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        let _: redis::RedisResult<()> = conn.del(&["zfs:datasets", "zfs:disks-enriched"][..]).await;
+    }
     Ok(Json(json!({ "message": format!("Pool '{}' created", body.name) })))
 }
 
@@ -601,10 +636,12 @@ async fn destroy_pool(
             .await;
     }
 
-    // Bust caches so disks immediately appear free and the pool list is stale
+    // Bust caches so disks immediately appear free and the pool/dataset lists are stale
     if let Some(ref redis_conn) = state.redis {
         let mut conn = redis_conn.clone();
-        let _: redis::RedisResult<()> = conn.del(&["zfs:disks-enriched", "zfs:system-stats"][..]).await;
+        let _: redis::RedisResult<()> = conn.del(
+            &["zfs:disks-enriched", "zfs:system-stats", POOLS_CACHE_KEY, "zfs:datasets"][..]
+        ).await;
     }
 
     Ok(Json(json!({ "message": format!("Pool '{name}' destroyed") })))

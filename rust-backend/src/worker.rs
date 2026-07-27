@@ -528,21 +528,46 @@ async fn sync_redis_to_postgres(
         arc_hit_ratio: f64,
     }
 
-    let mut rows: Vec<MetricRow> = Vec::with_capacity(items.len());
+    // Group by pool_name and average the values in the 5-minute block
+    let mut pool_sums: std::collections::HashMap<String, (f64, f64, f64, f64, f64, f64, f64, usize)> = std::collections::HashMap::new();
     for item in &items {
         let v: serde_json::Value = match serde_json::from_str(item) {
             Ok(val) => val,
             Err(e)  => { warn!("Failed to parse metric JSON: {e}"); continue; }
         };
+        let pool_name = v["pool_name"].as_str().unwrap_or("").to_string();
+        let read_bw   = v["read_bw_mb"].as_f64().unwrap_or(0.0);
+        let write_bw  = v["write_bw_mb"].as_f64().unwrap_or(0.0);
+        let iops      = v["iops"].as_f64().unwrap_or(0.0);
+        let alloc     = v["alloc_gb"].as_f64().unwrap_or(0.0);
+        let free      = v["free_gb"].as_f64().unwrap_or(0.0);
+        let cpu       = v["cpu_percent"].as_f64().unwrap_or(0.0);
+        let arc       = v["arc_hit_ratio"].as_f64().unwrap_or(0.0);
+
+        let entry = pool_sums.entry(pool_name).or_insert((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0));
+        entry.0 += read_bw;
+        entry.1 += write_bw;
+        entry.2 += iops;
+        entry.3 = alloc; // Keep the latest capacity alloc_gb
+        entry.4 = free;  // Keep the latest capacity free_gb
+        entry.5 += cpu;
+        entry.6 += arc;
+        entry.7 += 1;
+    }
+
+    let mut rows: Vec<MetricRow> = Vec::with_capacity(pool_sums.len());
+    for (pool_name, (read_bw, write_bw, iops, alloc, free, cpu, arc, count)) in pool_sums {
+        if count == 0 { continue; }
+        let divisor = count as f64;
         rows.push(MetricRow {
-            pool_name:     v["pool_name"].as_str().unwrap_or("").to_string(),
-            read_bw_mb:    v["read_bw_mb"].as_f64().unwrap_or(0.0),
-            write_bw_mb:   v["write_bw_mb"].as_f64().unwrap_or(0.0),
-            iops:          v["iops"].as_f64().unwrap_or(0.0),
-            alloc_gb:      v["alloc_gb"].as_f64().unwrap_or(0.0),
-            free_gb:       v["free_gb"].as_f64().unwrap_or(0.0),
-            cpu_percent:   v["cpu_percent"].as_f64().unwrap_or(0.0),
-            arc_hit_ratio: v["arc_hit_ratio"].as_f64().unwrap_or(0.0),
+            pool_name,
+            read_bw_mb:    read_bw / divisor,
+            write_bw_mb:   write_bw / divisor,
+            iops:          iops / divisor,
+            alloc_gb:      alloc,
+            free_gb:       free,
+            cpu_percent:   cpu / divisor,
+            arc_hit_ratio: arc / divisor,
         });
     }
 
@@ -693,7 +718,7 @@ async fn run_slow_loop(state: crate::state::AppState) {
     // If the iostat call overruns 1 s, wait for the full interval rather than bursting.
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-    let mut pg_tick: u8 = 0;
+    let mut pg_tick: u32 = 0;
     let mut prev_tr: u64 = 0;
     let mut prev_tw: u64 = 0;
     let mut last_totals_write = Instant::now() - TOTALS_INTERVAL;
@@ -703,10 +728,11 @@ async fn run_slow_loop(state: crate::state::AppState) {
     loop {
         ticker.tick().await;
         pg_tick = pg_tick.wrapping_add(1);
-        let do_pg_sync = pg_tick >= 6;
+        let do_pg_sync = pg_tick >= 300; // 300 seconds = 5 minutes
         if do_pg_sync { pg_tick = 0; }
 
         let pools = get_pool_names().await;
+        let rewrite_deltas = crate::routes::datasets::pop_rewrite_deltas().await;
 
         // ── Collect metrics per pool ──────────────────────────────────────────
         let mut agg_read_bw_mb:  f64 = 0.0;
@@ -745,10 +771,17 @@ async fn run_slow_loop(state: crate::state::AppState) {
                     None    => continue,
                 };
 
-                // Accumulate all-time byte totals (bytes/sec × 1 s = bytes)
-                state.total_read_bytes .fetch_add((res.read_bw_bytes  * TICK_SECS) as u64, Ordering::Relaxed);
-                state.total_write_bytes.fetch_add((res.write_bw_bytes * TICK_SECS) as u64, Ordering::Relaxed);
+                let scrub_bps = get_scrub_speed_bps(pool).await;
+                let rewrite_delta = rewrite_deltas.get(pool).copied().unwrap_or(0);
 
+                let net_read_bw_bytes = (res.read_bw_bytes - scrub_bps as f64 - rewrite_delta as f64).max(0.0);
+                let net_write_bw_bytes = (res.write_bw_bytes - rewrite_delta as f64).max(0.0);
+
+                // Accumulate all-time byte totals (bytes/sec × 1 s = bytes) - excluding scrub & rewrite
+                state.total_read_bytes .fetch_add((net_read_bw_bytes  * TICK_SECS) as u64, Ordering::Relaxed);
+                state.total_write_bytes.fetch_add((net_write_bw_bytes * TICK_SECS) as u64, Ordering::Relaxed);
+
+                // Keep real physical metrics in the charts/live dashboard displays
                 agg_read_bw_mb  += res.read_bw_mb;
                 agg_write_bw_mb += res.write_bw_mb;
                 agg_read_iops   += res.read_iops;
@@ -954,6 +987,7 @@ async fn run_slow_loop(state: crate::state::AppState) {
             }
             last_retention = Instant::now();
         }
+
     }
 }
 
@@ -1014,15 +1048,26 @@ async fn run_scrub_scheduler_loop() {
     }
 }
 
+async fn run_cache_warming_loop(state: crate::state::AppState) {
+    let mut ticker = interval(Duration::from_secs(30));
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    loop {
+        ticker.tick().await;
+        refresh_metrics_history_caches(&state).await;
+    }
+}
+
 pub async fn run_metrics_worker(state: crate::state::AppState) {
     let state_live   = state.clone();
     let state_slow   = state.clone();
-    let state_notify = state;
+    let state_notify = state.clone();
+    let state_warm   = state;
 
     tokio::join!(
         run_live_loop(state_live),
         run_slow_loop(state_slow),
         run_notifications_loop(state_notify),
+        run_cache_warming_loop(state_warm),
         run_scrub_scheduler_loop(),
     );
 }
@@ -1140,4 +1185,266 @@ pub async fn warm_redis_from_postgres(state: &crate::state::AppState) {
             info!("Startup: seeded Redis + io_cache per-disk keys ({n} disks across several pools)");
         }
     }
+}
+
+// Startup: warm Redis list caches from ZFS commands so the first web request is instant.
+//
+// Runs zpool/zfs list in parallel and seeds zfs:pools, zfs:datasets,
+// zfs:snapshots, zfs:volumes with a 60s TTL. Also pre-warms the two most-used
+// metrics history intervals (1h, 1d) from PostgreSQL so the Performance tab
+// loads instantly on first visit.
+pub async fn warm_list_caches(state: &crate::state::AppState) {
+    let redis = match &state.redis {
+        Some(r) => r,
+        None => return,
+    };
+    let mut conn = redis.clone();
+
+    // Run all four ZFS list commands in parallel
+    let (pools_out, datasets_out, snaps_out, vols_out) = tokio::join!(
+        tokio::process::Command::new("zpool")
+            .args(["list", "-H", "-p", "-o", "name,size,alloc,free,frag,cap,dedup,health,altroot"])
+            .output(),
+        tokio::process::Command::new("zfs")
+            .args(["list", "-H", "-p", "-t", "filesystem",
+                   "-o", "name,used,avail,refer,mountpoint,compression,dedup,readonly"])
+            .output(),
+        tokio::process::Command::new("zfs")
+            .args(["list", "-H", "-p", "-t", "snapshot",
+                   "-o", "name,used,refer,creation"])
+            .output(),
+        tokio::process::Command::new("zfs")
+            .args(["list", "-H", "-p", "-t", "volume",
+                   "-o", "name,used,avail,refer,volsize"])
+            .output(),
+    );
+
+    if let Ok(out) = pools_out {
+        if out.status.success() {
+            let raw = String::from_utf8_lossy(&out.stdout);
+
+            // Also fetch available/used from zfs get for the pools
+            let avail_raw = crate::executor::zfs(&["get", "-H", "-p", "-o", "name,value", "available"])
+                .await.unwrap_or_default();
+            let used_raw  = crate::executor::zfs(&["get", "-H", "-p", "-o", "name,value", "used"])
+                .await.unwrap_or_default();
+
+            let avail_map: std::collections::HashMap<&str, u64> = avail_raw.lines()
+                .filter_map(|l| { let mut p = l.splitn(2, '\t'); Some((p.next()?, p.next()?.trim().parse().ok()?)) })
+                .collect();
+            let used_map: std::collections::HashMap<&str, u64> = used_raw.lines()
+                .filter_map(|l| { let mut p = l.splitn(2, '\t'); Some((p.next()?, p.next()?.trim().parse().ok()?)) })
+                .collect();
+
+            let pools: Vec<serde_json::Value> = raw.lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|line| {
+                    let c: Vec<&str> = line.split('\t').collect();
+                    let name = c.first().copied().unwrap_or("");
+                    serde_json::json!({
+                        "name": name, "size": c.get(1).unwrap_or(&""),
+                        "alloc": c.get(2).unwrap_or(&""), "free": c.get(3).unwrap_or(&""),
+                        "frag": c.get(4).unwrap_or(&""), "cap": c.get(5).unwrap_or(&""),
+                        "dedup": c.get(6).unwrap_or(&""), "health": c.get(7).unwrap_or(&""),
+                        "altroot": c.get(8).unwrap_or(&""),
+                        "available_bytes": avail_map.get(name).copied().unwrap_or(0),
+                        "used_bytes": used_map.get(name).copied().unwrap_or(0),
+                    })
+                })
+                .collect();
+            let payload = serde_json::json!({ "pools": pools });
+            if let Ok(s) = serde_json::to_string(&payload) {
+                let _: redis::RedisResult<()> = conn.set_ex("zfs:pools", s, 60u64).await;
+                info!("Startup: seeded zfs:pools ({} pools)", pools.len());
+            }
+        }
+    }
+
+    if let Ok(out) = datasets_out {
+        if out.status.success() {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            let datasets: Vec<serde_json::Value> = raw.lines()
+                .filter(|l| !l.trim().is_empty())
+                .filter_map(|line| {
+                    let c: Vec<&str> = line.split('\t').collect();
+                    let name = c.first().unwrap_or(&"");
+                    if name.contains("/.system") || name.contains("/ix-apps") { return None; }
+                    Some(serde_json::json!({
+                        "name": name, "used": c.get(1).unwrap_or(&""),
+                        "available": c.get(2).unwrap_or(&""), "refer": c.get(3).unwrap_or(&""),
+                        "mountpoint": c.get(4).unwrap_or(&""),
+                        "compression": c.get(5).unwrap_or(&"off"),
+                        "dedup": c.get(6).unwrap_or(&"off"),
+                        "readonly": c.get(7).unwrap_or(&"off"),
+                    }))
+                })
+                .collect();
+            let payload = serde_json::json!({ "datasets": datasets });
+            if let Ok(s) = serde_json::to_string(&payload) {
+                let _: redis::RedisResult<()> = conn.set_ex("zfs:datasets", s, 60u64).await;
+                info!("Startup: seeded zfs:datasets ({} datasets)", datasets.len());
+            }
+        }
+    }
+
+    if let Ok(out) = snaps_out {
+        if out.status.success() {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            let snaps: Vec<serde_json::Value> = raw.lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|line| {
+                    let c: Vec<&str> = line.split('\t').collect();
+                    serde_json::json!({
+                        "name": c.first().unwrap_or(&""), "used": c.get(1).unwrap_or(&""),
+                        "refer": c.get(2).unwrap_or(&""), "creation": c.get(3).unwrap_or(&""),
+                    })
+                })
+                .collect();
+            let payload = serde_json::json!({ "snapshots": snaps });
+            if let Ok(s) = serde_json::to_string(&payload) {
+                let _: redis::RedisResult<()> = conn.set_ex("zfs:snapshots", s, 60u64).await;
+                info!("Startup: seeded zfs:snapshots ({} snapshots)", snaps.len());
+            }
+        }
+    }
+
+    if let Ok(out) = vols_out {
+        if out.status.success() {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            let vols: Vec<serde_json::Value> = raw.lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|line| {
+                    let c: Vec<&str> = line.split('\t').collect();
+                    serde_json::json!({
+                        "name": c.first().unwrap_or(&""), "used": c.get(1).unwrap_or(&""),
+                        "avail": c.get(2).unwrap_or(&""), "refer": c.get(3).unwrap_or(&""),
+                        "volsize": c.get(4).unwrap_or(&""),
+                    })
+                })
+                .collect();
+            let payload = serde_json::json!({ "volumes": vols });
+            if let Ok(s) = serde_json::to_string(&payload) {
+                let _: redis::RedisResult<()> = conn.set_ex("zfs:volumes", s, 60u64).await;
+                info!("Startup: seeded zfs:volumes ({} volumes)", vols.len());
+            }
+        }
+    }
+
+    // Pre-warm metrics history & fill prediction caches in Redis
+    // so the Performance tab and Dashboard load instantly.
+    refresh_metrics_history_caches(state).await;
+}
+
+async fn get_scrub_speed_bps(pool: &str) -> u64 {
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tokio::process::Command::new("zpool")
+            .args(["status", pool])
+            .output()
+    ).await;
+    let out = match output {
+        Ok(Ok(o)) if o.status.success() => o,
+        _ => return 0,
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    
+    let lines: Vec<&str> = stdout.lines().collect();
+    let mut scan_detail = String::new();
+    let mut in_scan = false;
+    for line in lines {
+        if line.trim_start().starts_with("scan:") {
+            scan_detail.push_str(line.trim());
+            in_scan = true;
+        } else if in_scan && (line.starts_with('\t') || line.starts_with("  ")) {
+            if !scan_detail.is_empty() { scan_detail.push(' '); }
+            scan_detail.push_str(line.trim());
+        } else if in_scan {
+            break;
+        }
+    }
+    
+    if scan_detail.is_empty() { return 0; }
+    
+    if !scan_detail.contains("in progress") { return 0; }
+    
+    let speed_str = if scan_detail.contains("resilver in progress") {
+        scan_detail.split("issued at ").nth(1)
+            .and_then(|s| s.split(',').next())
+            .unwrap_or("").trim()
+    } else {
+        scan_detail.split(" at ").nth(1)
+            .and_then(|s| s.split(',').next())
+            .unwrap_or("").trim()
+    };
+    
+    if speed_str.is_empty() { return 0; }
+    
+    let val_str = speed_str.trim_end_matches("/s").trim();
+    if val_str.is_empty() { return 0; }
+    
+    let last = val_str.chars().last().unwrap_or('B');
+    let num_part = if last.is_alphabetic() {
+        &val_str[..val_str.len() - 1]
+    } else {
+        val_str
+    };
+    
+    let num = num_part.parse::<f64>().unwrap_or(0.0);
+    let mult = match last.to_ascii_uppercase() {
+        'T' => 1_099_511_627_776.0,
+        'G' => 1_073_741_824.0,
+        'M' => 1_048_576.0,
+        'K' => 1024.0,
+        _ => 1.0,
+    };
+    
+    (num * mult) as u64
+}
+
+pub async fn refresh_metrics_history_caches(state: &crate::state::AppState) {
+    let pg = match &state.pg {
+        Some(pg) => pg,
+        None => return,
+    };
+    let redis_conn = match &state.redis {
+        Some(conn) => conn,
+        None => return,
+    };
+    let mut conn = redis_conn.clone();
+
+    let intervals = &["1h", "6h", "1d", "1w", "1m", "1y"];
+
+    for interval in intervals {
+        let query = crate::routes::metrics::build_query(interval);
+        let ttl = crate::routes::metrics::cache_ttl(interval);
+
+        match pg.query(&query, &[]).await {
+            Ok(rows) => {
+                let metrics: Vec<serde_json::Value> = rows.iter().map(|row| {
+                    let collected_at: chrono::DateTime<chrono::Utc> = row.get(0);
+                    serde_json::json!({
+                        "collected_at":  collected_at.to_rfc3339(),
+                        "pool_name":     row.get::<_, String>(1),
+                        "read_bw_mb":    row.get::<_, f64>(2),
+                        "write_bw_mb":   row.get::<_, f64>(3),
+                        "iops":          row.get::<_, f64>(4),
+                        "alloc_gb":      row.get::<_, f64>(5),
+                        "free_gb":       row.get::<_, f64>(6),
+                        "cpu_percent":   row.get::<_, f64>(7),
+                        "arc_hit_ratio": row.get::<_, f64>(8),
+                    })
+                }).collect();
+                let count = metrics.len();
+                let payload = serde_json::json!({ "metrics": metrics, "interval": interval, "count": count });
+                let cache_key = format!("zfs:history:{interval}");
+                if let Ok(s) = serde_json::to_string(&payload) {
+                    let _: redis::RedisResult<()> = conn.set_ex(&cache_key, s, ttl).await;
+                }
+            }
+            Err(e) => warn!("Background: failed to refresh zfs:history:{interval}: {e}"),
+        }
+    }
+
+    // Refresh fill prediction caches in Redis with a single consolidated query
+    crate::routes::metrics::prewarm_all_fill_predictions(state).await;
 }

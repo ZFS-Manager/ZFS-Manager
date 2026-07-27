@@ -75,8 +75,11 @@ async fn auth_middleware(
             use redis::AsyncCommands;
             let mut conn = redis_conn.clone();
             let session_key = format!("zfs:session:{}", token_hash);
-            let cached: redis::RedisResult<Option<String>> = conn.get(&session_key).await;
-            if let Ok(Some(_)) = cached {
+            let cached = tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                conn.get::<_, Option<String>>(&session_key)
+            ).await;
+            if let Ok(Ok(Some(_))) = cached {
                 return Ok(next.run(req).await);
             }
         }
@@ -93,7 +96,10 @@ async fn auth_middleware(
                     use redis::AsyncCommands;
                     let mut conn = redis_conn.clone();
                     let session_key = format!("zfs:session:{}", token_hash);
-                    let _: redis::RedisResult<()> = conn.set_ex(&session_key, "admin", 86400u64).await;
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_millis(500),
+                        conn.set_ex::<_, _, ()>(&session_key, "admin", 86400u64)
+                    ).await;
                 }
                 return Ok(next.run(req).await);
             }
@@ -176,6 +182,8 @@ async fn init_schema(client: &tokio_postgres::Client) {
         );
         CREATE INDEX IF NOT EXISTS idx_zfs_metrics_time ON zfs_metrics(collected_at DESC);
         CREATE INDEX IF NOT EXISTS idx_zfs_metrics_pool_time ON zfs_metrics(pool_name, collected_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_zfs_metrics_pool_time_asc ON zfs_metrics(pool_name, collected_at ASC);
+        ANALYZE zfs_metrics;
         CREATE TABLE IF NOT EXISTS ui_layouts (
             page TEXT PRIMARY KEY,
             layout TEXT NOT NULL
@@ -459,6 +467,7 @@ async fn main() {
 
     // Startup: warm Redis from PostgreSQL before worker loops
     worker::warm_redis_from_postgres(&app_state).await;
+    worker::warm_list_caches(&app_state).await;
 
     tokio::spawn(worker::run_metrics_worker(app_state.clone()));
 
@@ -485,9 +494,9 @@ async fn main() {
         .merge(routes::settings::router(app_state.clone()))
         .merge(routes::pools::router(app_state.clone()))
         .merge(routes::datasets::router(app_state.clone()))
-        .merge(routes::snapshots::router())
+        .merge(routes::snapshots::router(app_state.clone()))
         .merge(routes::stats::router(app_state.clone()))
-        .merge(routes::volumes::router())
+        .merge(routes::volumes::router(app_state.clone()))
         .merge(routes::clones::router())
         .merge(routes::properties::router())
         .merge(routes::metrics::router(app_state.clone()))

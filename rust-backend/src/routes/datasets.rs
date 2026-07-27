@@ -13,11 +13,26 @@ use tokio::sync::Mutex as TokioMutex;
 
 use crate::{error::ApiError, executor, state::AppState};
 use tracing::{info, warn};
+use redis::AsyncCommands;
 
-struct RewriteInfo {
-    total_bytes: u64,
-    processed_bytes: Arc<AtomicU64>,
-    started_at_secs: u64,
+const CACHE_KEY: &str = "zfs:datasets";
+const CACHE_TTL: u64 = 30;
+
+async fn bust_cache(state: &AppState) {
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        let _: redis::RedisResult<()> = conn.del(CACHE_KEY).await;
+    }
+}
+
+use serde::Serialize;
+
+pub struct RewriteInfo {
+    pub total_bytes: u64,
+    pub processed_bytes: Arc<AtomicU64>,
+    pub last_processed_bytes: Arc<AtomicU64>,
+    pub instant_speed_bps: Arc<AtomicU64>,
+    pub started_at_secs: u64,
 }
 
 fn now_secs() -> u64 {
@@ -30,6 +45,44 @@ fn now_secs() -> u64 {
 fn active_rewrites() -> &'static TokioMutex<HashMap<String, RewriteInfo>> {
     static REWRITES: OnceLock<TokioMutex<HashMap<String, RewriteInfo>>> = OnceLock::new();
     REWRITES.get_or_init(|| TokioMutex::new(HashMap::new()))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompletedRewriteInfo {
+    pub name: String,
+    pub pool: String,
+    pub total_files: usize,
+    pub duration_secs: u64,
+    pub size_before_bytes: u64,
+    pub size_after_bytes: u64,
+    pub du_before_blocks: u64,
+    pub du_after_blocks: u64,
+}
+
+pub fn completed_rewrites() -> &'static TokioMutex<Vec<CompletedRewriteInfo>> {
+    static COMPLETED: OnceLock<TokioMutex<Vec<CompletedRewriteInfo>>> = OnceLock::new();
+    COMPLETED.get_or_init(|| TokioMutex::new(Vec::new()))
+}
+
+pub async fn pop_rewrite_deltas() -> HashMap<String, u64> {
+    let lock = active_rewrites().lock().await;
+    let mut deltas = HashMap::new();
+    for (name, info) in lock.iter() {
+        let pool = name.split('/').next().unwrap_or(name).to_string();
+        let current = info.processed_bytes.load(Ordering::Relaxed);
+        let last = info.last_processed_bytes.load(Ordering::Relaxed);
+        let delta = current.saturating_sub(last);
+        info.last_processed_bytes.store(current, Ordering::Relaxed);
+        info.instant_speed_bps.store(delta, Ordering::Relaxed);
+        *deltas.entry(pool).or_insert(0) += delta;
+    }
+    deltas
+}
+
+async fn pop_completed_rewrites() -> Result<Json<Value>, ApiError> {
+    let mut lock = completed_rewrites().lock().await;
+    let completed = std::mem::take(&mut *lock);
+    Ok(Json(json!({ "completed": completed })))
 }
 
 pub fn router(state: AppState) -> Router {
@@ -47,6 +100,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/datasets/rewrite", post(rewrite_dataset))
         .route("/api/v1/datasets/rewrite/status", get(rewrite_status))
         .route("/api/v1/datasets/rewrite/active", get(list_active_rewrites))
+        .route("/api/v1/datasets/rewrite/completed", get(pop_completed_rewrites))
         .with_state(state)
 }
 
@@ -95,7 +149,17 @@ pub struct DestroyQuery {
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-async fn list_datasets() -> Result<Json<Value>, ApiError> {
+async fn list_datasets(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        let cached: redis::RedisResult<Option<String>> = conn.get(CACHE_KEY).await;
+        if let Ok(Some(hit)) = cached {
+            if let Ok(val) = serde_json::from_str::<Value>(&hit) {
+                return Ok(Json(val));
+            }
+        }
+    }
+
     let raw = executor::zfs(&[
         "list", "-H", "-p", "-t", "filesystem",
         "-o", "name,used,avail,refer,mountpoint,compression,dedup,readonly",
@@ -124,10 +188,18 @@ async fn list_datasets() -> Result<Json<Value>, ApiError> {
             }))
         })
         .collect();
-    Ok(Json(json!({ "datasets": datasets })))
+    let result = json!({ "datasets": datasets });
+    if let Some(ref redis_conn) = state.redis {
+        let mut conn = redis_conn.clone();
+        if let Ok(json_str) = serde_json::to_string(&result) {
+            let set_res: redis::RedisResult<()> = conn.set_ex(CACHE_KEY, json_str, CACHE_TTL).await;
+            if let Err(e) = set_res { warn!("Redis SET failed for {CACHE_KEY}: {e}"); }
+        }
+    }
+    Ok(Json(result))
 }
 
-async fn create_dataset(Json(body): Json<CreateDatasetBody>) -> Result<Json<Value>, ApiError> {
+async fn create_dataset(State(state): State<AppState>, Json(body): Json<CreateDatasetBody>) -> Result<Json<Value>, ApiError> {
     if body.name.is_empty() {
         return Err(ApiError::BadRequest("'name' is required".into()));
     }
@@ -157,6 +229,7 @@ async fn create_dataset(Json(body): Json<CreateDatasetBody>) -> Result<Json<Valu
     // Explicitly mount so the dataset is active and propagates via rshared /mnt
     let _ = executor::zfs(&["mount", &body.name]).await;
 
+    bust_cache(&state).await;
     Ok(Json(json!({ "message": format!("Dataset '{}' created", body.name) })))
 }
 
@@ -220,6 +293,7 @@ async fn kill_procs_at_path(mount_path: &str) {
 }
 
 async fn destroy_dataset(
+    State(state): State<AppState>,
     Path(name): Path<String>,
     Query(q): Query<DestroyQuery>,
 ) -> Result<Json<Value>, ApiError> {
@@ -325,7 +399,10 @@ async fn destroy_dataset(
     }
 
     match last_err {
-        None => Ok(Json(json!({ "message": format!("Dataset '{name}' destroyed") }))),
+        None => {
+            bust_cache(&state).await;
+            Ok(Json(json!({ "message": format!("Dataset '{name}' destroyed") })))
+        }
         Some(ApiError::CommandFailed { ref stderr, .. })
             if (stderr.contains("has children") || stderr.contains("filesystem has children"))
                && !q.recursive =>
@@ -457,7 +534,7 @@ async fn unmount_dataset(Json(body): Json<NameBody>) -> Result<Json<Value>, ApiE
     Ok(Json(json!({ "message": format!("Dataset '{}' unmounted", body.name) })))
 }
 
-async fn rename_dataset(Json(body): Json<RenameBody>) -> Result<Json<Value>, ApiError> {
+async fn rename_dataset(State(state): State<AppState>, Json(body): Json<RenameBody>) -> Result<Json<Value>, ApiError> {
     if body.name.is_empty() || body.new_name.is_empty() {
         return Err(ApiError::BadRequest("'name' and 'new_name' are required".into()));
     }
@@ -469,6 +546,7 @@ async fn rename_dataset(Json(body): Json<RenameBody>) -> Result<Json<Value>, Api
     args.push(body.new_name.clone());
     let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     executor::zfs(&refs).await?;
+    bust_cache(&state).await;
     Ok(Json(json!({ "message": format!("Renamed '{}' -> '{}'", body.name, body.new_name) })))
 }
 
@@ -533,6 +611,8 @@ async fn rewrite_dataset(
         .unwrap_or(0);
 
     let processed = Arc::new(AtomicU64::new(0));
+    let last_processed = Arc::new(AtomicU64::new(0));
+    let instant_speed = Arc::new(AtomicU64::new(0));
 
     let mut lock = active_rewrites().lock().await;
     if lock.contains_key(&body.name) {
@@ -541,6 +621,8 @@ async fn rewrite_dataset(
     lock.insert(body.name.clone(), RewriteInfo {
         total_bytes,
         processed_bytes: Arc::clone(&processed),
+        last_processed_bytes: Arc::clone(&last_processed),
+        instant_speed_bps: Arc::clone(&instant_speed),
         started_at_secs: now_secs(),
     });
     drop(lock);
@@ -553,14 +635,19 @@ async fn rewrite_dataset(
     // on disk by reading and writing each file in-place (copy-on-write rewrites with
     // current compression settings). Uses nsenter to access the host mount namespace.
     tokio::spawn(async move {
-        // 1. Re-apply current compression so future writes use it
-        let comp = executor::zfs(&["get", "-H", "-p", "-o", "value", "compression", &ds_name])
+        let started_at = now_secs();
+        let size_before_bytes: u64 = executor::zfs(&["get", "-H", "-p", "-o", "value", "refer", &ds_name])
             .await
             .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty() && s != "-")
-            .unwrap_or_else(|| "on".to_string());
-        let _ = executor::zfs(&["set", &format!("compression={}", comp), &ds_name]).await;
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+        let du_before_blocks = get_du_blocks(&mountpoint_c).await;
+
+        crate::routes::notifications::trigger_rules_for_event(
+            &state_clone,
+            "dataset_rewrite_start",
+            &format!("Dataset rewrite started for '{}'", ds_name)
+        ).await;
 
         info!("Dataset rewrite starting for '{}' at '{}'", ds_name, mountpoint_c);
 
@@ -627,6 +714,27 @@ async fn rewrite_dataset(
             }
         }
 
+        let size_after_bytes: u64 = executor::zfs(&["get", "-H", "-p", "-o", "value", "refer", &ds_name])
+            .await
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+        let du_after_blocks = get_du_blocks(&mountpoint_c).await;
+
+        let duration_secs = now_secs().saturating_sub(started_at);
+        let pool = ds_name.split('/').next().unwrap_or(&ds_name).to_string();
+
+        completed_rewrites().lock().await.push(CompletedRewriteInfo {
+            name: ds_name.clone(),
+            pool,
+            total_files,
+            duration_secs,
+            size_before_bytes,
+            size_after_bytes,
+            du_before_blocks,
+            du_after_blocks,
+        });
+
         info!("Dataset rewrite completed for '{}' ({} files)", ds_name, total_files);
         crate::routes::notifications::trigger_rules_for_event(
             &state_clone,
@@ -665,14 +773,42 @@ async fn list_active_rewrites() -> Result<Json<Value>, ApiError> {
         let pool = name.split('/').next().unwrap_or(name);
         let elapsed_secs = now.saturating_sub(info.started_at_secs);
         let processed = info.processed_bytes.load(Ordering::Relaxed);
+        let speed_bps = info.instant_speed_bps.load(Ordering::Relaxed);
         json!({
             "name":            name,
             "pool":            pool,
             "total_bytes":     info.total_bytes,
             "processed_bytes": processed,
             "elapsed_secs":    elapsed_secs,
+            "speed_bps":       speed_bps,
         })
     }).collect();
 
     Ok(Json(json!({ "active": active })))
+}
+
+async fn get_du_blocks(mountpoint: &str) -> u64 {
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::process::Command::new("nsenter")
+            .args(["-t", "1", "-m", "--", "du", "-s", mountpoint])
+            .output()
+    ).await;
+    let stdout = match out {
+        Ok(Ok(o)) if o.status.success() => o.stdout,
+        _ => {
+            let fallback = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                tokio::process::Command::new("du")
+                    .args(["-s", mountpoint])
+                    .output()
+            ).await;
+            match fallback {
+                Ok(Ok(o)) if o.status.success() => o.stdout,
+                _ => Vec::new(),
+            }
+        }
+    };
+    let s = String::from_utf8_lossy(&stdout);
+    s.split_whitespace().next().and_then(|w| w.parse().ok()).unwrap_or(0)
 }

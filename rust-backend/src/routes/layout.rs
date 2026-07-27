@@ -46,11 +46,12 @@ async fn get_layout(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, ApiError> {
     if let Some(pg) = &state.pg {
-        if let Ok(Some(row)) = pg.query_opt(
-            "SELECT layout FROM ui_layouts WHERE page = $1",
-            &[&page],
-        ).await {
-            let layout_str: String = row.get(0);
+        let row = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            pg.query_opt("SELECT layout FROM ui_layouts WHERE page = $1", &[&page])
+        ).await;
+        if let Ok(Ok(Some(r))) = row {
+            let layout_str: String = r.get(0);
             if let Ok(v) = serde_json::from_str::<Value>(&layout_str) {
                 return Ok(Json(v));
             }
@@ -66,10 +67,13 @@ async fn save_layout(
 ) -> Result<Json<Value>, ApiError> {
     if let Some(pg) = &state.pg {
         let layout_str = serde_json::to_string(&body).unwrap_or_default();
-        let _ = pg.execute(
-            "INSERT INTO ui_layouts(page, layout) VALUES($1, $2) \
-             ON CONFLICT(page) DO UPDATE SET layout = EXCLUDED.layout",
-            &[&page, &layout_str],
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            pg.execute(
+                "INSERT INTO ui_layouts(page, layout) VALUES($1, $2) \
+                 ON CONFLICT(page) DO UPDATE SET layout = EXCLUDED.layout",
+                &[&page, &layout_str],
+            )
         ).await;
     }
     Ok(Json(json!({ "ok": true })))

@@ -299,6 +299,7 @@ pub async fn trigger_rules_for_event(state: &AppState, trigger_type: &str, messa
     let level = match trigger_type {
         "login_failed" | "pool_unhealthy" => "error",
         "dataset_rewrite_success" | "scrub_finished" | "resilver_finished" => "success",
+        "dataset_rewrite_start" | "scrub_started" | "resilver_started" => "info",
         _ => "warning",
     };
 

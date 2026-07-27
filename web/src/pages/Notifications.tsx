@@ -37,10 +37,16 @@ const labelStyle: React.CSSProperties = {
   letterSpacing: '0.08em', marginBottom: 8,
 };
 
+/* ── Module-level caches to persist data across mounts ── */
+const notificationsCache: { data: any[] } = { data: [] };
+const channelsCache: { data: any[] } = { data: [] };
+const rulesCache: { data: any[] } = { data: [] };
+const datasetsCache: { data: any[] } = { data: [] };
+
 export default function Notifications() {
-  const [notifications, setNotifications] = useState<any[]>([]);
-  const [channels, setChannels] = useState<any[]>([]);
-  const [rules, setRules] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<any[]>(() => notificationsCache.data);
+  const [channels, setChannels] = useState<any[]>(() => channelsCache.data);
+  const [rules, setRules] = useState<any[]>(() => rulesCache.data);
 
   // Modals state
   const [showChannelModal, setShowChannelModal] = useState(false);
@@ -125,9 +131,13 @@ export default function Notifications() {
         fetch('/api/v1/datasets', { headers: { 'Authorization': `Bearer ${localStorage.getItem('zfs_access_token')}` } }).then(r => r.json()).catch(() => ({ datasets: [] })),
       ]);
       setNotifications(nRes || []);
+      notificationsCache.data = nRes || [];
       setChannels(cRes || []);
+      channelsCache.data = cRes || [];
       setRules(rRes || []);
+      rulesCache.data = rRes || [];
       setDatasets(dRes?.datasets || []);
+      datasetsCache.data = dRes?.datasets || [];
     } catch (e) {
       console.error("Failed to fetch notifications data", e);
     }
