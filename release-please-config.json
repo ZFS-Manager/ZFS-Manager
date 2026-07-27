@@ -3,11 +3,8 @@
   "include-component-in-tag": false,
   "include-v-in-tag": true,
   "packages": {
-    ".": {
-      "release-type": "rust",
-      "extra-files": [
-        "rust-backend/Cargo.toml"
-      ]
+    "rust-backend": {
+      "release-type": "rust"
     }
   }
 }
