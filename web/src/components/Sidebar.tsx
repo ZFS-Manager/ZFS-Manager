@@ -58,7 +58,7 @@ export default function Sidebar({
   const [githubVersion, setGithubVersion] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('https://api.github.com/repos/EinNiki/ZFS-Manager/releases/latest')
+    fetch('https://api.github.com/repos/ZFS-Manager/ZFS-Manager/releases/latest')
       .then(r => r.json())
       .then(d => { if (d?.tag_name) setGithubVersion(d.tag_name); })
       .catch(() => {});
@@ -66,6 +66,22 @@ export default function Sidebar({
 
   const isMobile = breakpoint === 'mobile';
   const isTablet = breakpoint === 'tablet';
+
+  const isUpdateAvailable = React.useMemo(() => {
+    if (!githubVersion || !healthData?.version) return false;
+    const remote = githubVersion.replace(/^v/, '');
+    const local = healthData.version.replace(/^v/, '');
+    if (remote === local) return false;
+    const rParts = remote.split('.').map(Number);
+    const lParts = local.split('.').map(Number);
+    for (let i = 0; i < Math.max(rParts.length, lParts.length); i++) {
+      const r = rParts[i] || 0;
+      const l = lParts[i] || 0;
+      if (r > l) return true;
+      if (r < l) return false;
+    }
+    return false;
+  }, [githubVersion, healthData?.version]);
 
   const isCollapsed = isMobile
     ? false
@@ -230,32 +246,33 @@ export default function Sidebar({
               </div>
             )}
             {(githubVersion || healthData?.version) && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', fontWeight: 600 }}>ZFS-Manager</span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                  {healthData?.git?.status === 'out-of-date' || healthData?.git?.upstream_status === 'out-of-date' ? (
-                    <span
-                      title="Update available!"
-                      style={{
-                        width: 6, height: 6, borderRadius: '50%',
-                        background: 'var(--warning)', boxShadow: '0 0 6px var(--warning)',
-                        display: 'inline-block'
-                      }}
-                    />
-                  ) : healthData?.git?.status === 'up-to-date' ? (
-                    <span
-                      title="Up to date"
-                      style={{
-                        width: 6, height: 6, borderRadius: '50%',
-                        background: 'var(--success)',
-                        display: 'inline-block'
-                      }}
-                    />
-                  ) : null}
-                  <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
-                    {githubVersion || healthData?.version}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 4 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', fontWeight: 600 }}>ZFS-Manager</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+                      {healthData?.version || githubVersion}
+                    </span>
                   </span>
-                </span>
+                </div>
+                {isUpdateAvailable && !isCollapsed && (
+                  <div style={{
+                    background: 'rgba(245, 158, 11, 0.15)', color: 'var(--warning)',
+                    fontSize: 10, padding: '4px 6px', borderRadius: 4,
+                    textAlign: 'center', fontWeight: 600, fontFamily: 'var(--font-ui)',
+                    border: '1px solid rgba(245, 158, 11, 0.3)'
+                  }}>
+                    Update available ({githubVersion})
+                  </div>
+                )}
+                {isUpdateAvailable && isCollapsed && (
+                  <div style={{ display: 'flex', justifyContent: 'center' }}>
+                    <span title={`Update available (${githubVersion})`} style={{
+                      width: 8, height: 8, borderRadius: '50%',
+                      background: 'var(--warning)', boxShadow: '0 0 6px var(--warning)',
+                    }} />
+                  </div>
+                )}
               </div>
             )}
             {systemStats?.zfs_version && (
