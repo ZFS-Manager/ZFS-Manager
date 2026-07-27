@@ -2,6 +2,7 @@
 name = "zfs-manager"
 version = "1.0.0"
 edition = "2021"
+publish = false
 
 [[bin]]
 name = "zfs-manager"
