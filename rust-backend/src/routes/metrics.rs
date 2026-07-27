@@ -463,11 +463,21 @@ pub async fn prewarm_all_fill_predictions(state: &AppState) {
                 ("Full".to_string(), "danger")
             } else {
                 let days = free_gb / rate_gb_day;
-                let fill_dt = today + chrono::Duration::seconds((days * 86400.0) as i64);
-                let date_str = if single_point {
-                    format!("~{}", fill_dt.format("%d.%m.%Y"))
+                let seconds_opt = if days * 86400.0 < (i64::MAX as f64) {
+                    chrono::Duration::try_seconds((days * 86400.0) as i64)
                 } else {
-                    fill_dt.format("%d.%m.%Y").to_string()
+                    None
+                };
+                let fill_dt = seconds_opt.and_then(|dur| today.checked_add_signed(dur));
+                let date_str = match fill_dt {
+                    Some(dt) => {
+                        if single_point {
+                            format!("~{}", dt.format("%d.%m.%Y"))
+                        } else {
+                            dt.format("%d.%m.%Y").to_string()
+                        }
+                    }
+                    None => "Far future".to_string(),
                 };
                 let c = if days < 14.0 { "danger" }
                         else if days < 90.0 { "warning" }
@@ -662,11 +672,21 @@ pub async fn compute_and_cache_fill_prediction_inner(state: &AppState, window: &
             ("Full".to_string(), "danger")
         } else {
             let days = free_gb / rate_gb_day;
-            let fill_dt = today + chrono::Duration::seconds((days * 86400.0) as i64);
-            let date_str = if single_point {
-                format!("~{}", fill_dt.format("%d.%m.%Y"))
+            let seconds_opt = if days * 86400.0 < (i64::MAX as f64) {
+                chrono::Duration::try_seconds((days * 86400.0) as i64)
             } else {
-                fill_dt.format("%d.%m.%Y").to_string()
+                None
+            };
+            let fill_dt = seconds_opt.and_then(|dur| today.checked_add_signed(dur));
+            let date_str = match fill_dt {
+                Some(dt) => {
+                    if single_point {
+                        format!("~{}", dt.format("%d.%m.%Y"))
+                    } else {
+                        dt.format("%d.%m.%Y").to_string()
+                    }
+                }
+                None => "Far future".to_string(),
             };
             let c = if days < 14.0 { "danger" }
                     else if days < 90.0 { "warning" }
