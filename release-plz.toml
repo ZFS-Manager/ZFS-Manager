@@ -1,12 +1,7 @@
 [workspace]
-# Der Bot soll für alle Packages arbeiten, auch wenn "publish = false" in der Cargo.toml steht
-release = true
-
-# Verhindert, dass der Bot versucht, den Code bei crates.io hochzuladen
-publish = false
+changelog_update = true
+git_release_enable = true
 
 [[package]]
 name = "zfs-manager"
-release = true
-git_only = true
 publish = false
