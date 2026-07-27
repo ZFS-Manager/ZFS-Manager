@@ -8,4 +8,5 @@ publish = false
 [[package]]
 name = "zfs-manager"
 release = true
+git_only = true
 publish = false
