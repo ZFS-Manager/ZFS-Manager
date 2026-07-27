@@ -1,8 +1,0 @@
-[workspace]
-changelog_update = true
-git_release_enable = true
-
-[[package]]
-name = "zfs-manager"
-publish = false
-git_only = true
