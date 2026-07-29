@@ -19,13 +19,7 @@ use std::sync::Mutex;
 
 static UI_FIRST_CONTACT: AtomicBool = AtomicBool::new(false);
 
-mod error;
-mod executor;
-mod modules;
-mod routes;
-mod state;
-mod startup;
-mod worker;
+use zfs_dashboard::{modules, routes, startup, state, worker};
 
 use state::AppState;
 

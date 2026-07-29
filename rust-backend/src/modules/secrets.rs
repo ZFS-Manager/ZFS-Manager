@@ -29,16 +29,25 @@ pub fn load_master_key() -> Result<[u8; KEY_LEN], String> {
         Err(_) => {
             let mut key = [0u8; KEY_LEN];
             OsRng.fill_bytes(&mut key);
-            std::fs::write(&key_path, key).map_err(|e| format!("cannot write {key_path}: {e}"))?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600));
-            }
+            write_owner_only(&key_path, &key).map_err(|e| format!("cannot write {key_path}: {e}"))?;
             warn!("ZFS_SECRETS_MASTER_KEY not set — generated a key at {key_path}. Set the env var for proper secret management.");
             Ok(key)
         }
     }
+}
+
+/// Creates the file with owner-only permissions from the start — no window
+/// where the key material is world-readable.
+fn write_owner_only(path: &str, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)?.write_all(data)
 }
 
 /// Encrypts a secrets map to `nonce || ciphertext`.

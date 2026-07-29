@@ -75,6 +75,18 @@ struct HostState {
     metrics_written: u32,
     logs: Vec<String>,
     limits: StoreLimits,
+    /// Locked-down WASI context: no filesystem, no sockets, no env, no stdio.
+    wasi: wasmtime_wasi::WasiCtx,
+    table: wasmtime::component::ResourceTable,
+}
+
+impl wasmtime_wasi::WasiView for HostState {
+    fn ctx(&mut self) -> wasmtime_wasi::WasiCtxView<'_> {
+        wasmtime_wasi::WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
+    }
 }
 
 impl HostState {
@@ -279,6 +291,10 @@ impl ModuleRuntime {
         let mut linker: Linker<HostState> = Linker::new(&self.engine);
         Module::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)
             .map_err(|e| format!("linker setup failed: {e}"))?;
+        // WASI base for the guest's std: everything stays denied — no
+        // preopened dirs, no sockets, no env, no stdio inheritance.
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)
+            .map_err(|e| format!("wasi linker setup failed: {e}"))?;
 
         let config_json = ctx.config_json.clone();
         let state = HostState {
@@ -293,6 +309,8 @@ impl ModuleRuntime {
                 .tables(16)
                 .instances(4)
                 .build(),
+            wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
+            table: wasmtime::component::ResourceTable::new(),
         };
 
         let mut store = Store::new(&self.engine, state);

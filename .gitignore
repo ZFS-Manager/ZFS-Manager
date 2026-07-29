@@ -4,3 +4,4 @@ rust-backend/target/
 web/node_modules/
 /target/
 /Cargo.lock
+modules/*/target/
