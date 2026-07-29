@@ -4,7 +4,8 @@ use serde_json::Value;
 use tracing::{info, warn};
 
 use super::manifest::Manifest;
-use super::runtime::{hosts_from_config_urls, ModuleCtx, RunLimits, RunOutcome};
+use super::net::hosts_from_config_urls;
+use super::runtime::{ModuleCtx, RunLimits, RunOutcome};
 use super::{registry, secrets};
 use crate::state::AppState;
 

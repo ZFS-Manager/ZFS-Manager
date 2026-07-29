@@ -1,9 +1,6 @@
 data/redis/
 data/postgres/
-rust-backend/target/
 web/node_modules/
-/target/
-modules/*/target/
 web/dist/
 
-tests/malicious-module/target/
+**/target/
