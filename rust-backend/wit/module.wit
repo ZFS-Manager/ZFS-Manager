@@ -1,0 +1,39 @@
+package zfs-dashboard:module@0.1.0;
+
+interface host-api {
+    /// Result of an outbound HTTP request performed by the host on behalf of
+    /// the module.
+    record http-response {
+        status: u16,
+        body: string,
+    }
+
+    /// Fetch a URL. The host enforces the module's domain allowlist; requests
+    /// to any other host are rejected.
+    http-fetch: func(url: string, headers: list<tuple<string, string>>) -> result<http-response, string>;
+
+    /// Write one metric value. The host binds the metric to the calling
+    /// module — a module can never write metrics under another module's id.
+    db-write-metric: func(metric-name: string, value: f64) -> result<_, string>;
+
+    /// Read a secret configured for this module. Returns none when unset.
+    get-secret: func(key: string) -> option<string>;
+
+    /// Structured log line. Level is one of: trace, debug, info, warn, error.
+    log: func(level: string, message: string);
+}
+
+world module {
+    import host-api;
+
+    record run-result {
+        success: bool,
+        message: string,
+        metrics-written: u32,
+        error: option<string>,
+    }
+
+    /// Module entry point. `config-json` carries the user configuration as a
+    /// JSON object (secrets excluded — those come via get-secret).
+    export run: func(config-json: string) -> run-result;
+}

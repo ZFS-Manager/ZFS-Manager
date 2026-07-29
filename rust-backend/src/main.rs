@@ -21,6 +21,7 @@ static UI_FIRST_CONTACT: AtomicBool = AtomicBool::new(false);
 
 mod error;
 mod executor;
+mod modules;
 mod routes;
 mod state;
 mod startup;
@@ -382,10 +383,38 @@ async fn main() {
             HashMap::new()
         };
 
+    let module_runtime = match modules::runtime::ModuleRuntime::new() {
+        Ok(rt) => Some(Arc::new(rt)),
+        Err(e) => {
+            warn!("Module runtime unavailable: {e}");
+            None
+        }
+    };
+    let master_key = match modules::secrets::load_master_key() {
+        Ok(key) => {
+            modules::secrets::verify_master_key(&key);
+            Some(key)
+        }
+        Err(e) => {
+            warn!("Secrets master key unavailable: {e} — module secrets disabled");
+            None
+        }
+    };
+    if let Some(ref pg) = pg_client {
+        let _ = pg
+            .execute(
+                "INSERT INTO module_registries(url, is_default) VALUES($1, TRUE) ON CONFLICT (url) DO NOTHING",
+                &[&modules::registry::DEFAULT_REGISTRY_URL],
+            )
+            .await;
+    }
+
     let app_state = AppState {
         redis: redis_conn,
         pg: pg_client,
         rate_limit,
+        module_runtime,
+        master_key,
         total_read_bytes: Arc::new(AtomicU64::new(init_read)),
         total_write_bytes: Arc::new(AtomicU64::new(init_write)),
         io_cache: Arc::new(tokio::sync::RwLock::new(state::CachedIoSnapshot::default())),
@@ -397,6 +426,7 @@ async fn main() {
     worker::warm_list_caches(&app_state).await;
 
     tokio::spawn(worker::run_metrics_worker(app_state.clone()));
+    tokio::spawn(modules::scheduler::run_module_scheduler(app_state.clone()));
 
     let cors = {
         let origin = std::env::var("CORS_ORIGIN").unwrap_or_default();
@@ -429,6 +459,8 @@ async fn main() {
         .merge(routes::metrics::router(app_state.clone()))
         .merge(routes::layout::router(app_state.clone()))
         .merge(routes::notifications::router(app_state.clone()))
+        .merge(routes::module_store::router(app_state.clone()))
+        .merge(routes::modules::router(app_state.clone()))
         .layer(middleware::from_fn_with_state(app_state.clone(), auth_middleware))
         .layer(middleware::from_fn(security_headers))
         .layer(cors)
