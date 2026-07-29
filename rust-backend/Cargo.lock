@@ -2654,7 +2654,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "zfs-manager"
+name = "zfs-dashboard"
 version = "1.0.0"
 dependencies = [
  "axum",

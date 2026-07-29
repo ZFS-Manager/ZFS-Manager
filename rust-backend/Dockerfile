@@ -28,7 +28,7 @@ FROM alpine:3.20
 # Install ZFS tools
 RUN apk add --no-cache zfs util-linux smartmontools
 
-COPY --from=builder /app/target/release/zfs-manager /usr/local/bin/zfs-manager
+COPY --from=builder /app/target/release/zfs-dashboard /usr/local/bin/zfs-dashboard
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
@@ -39,7 +39,7 @@ EXPOSE 3000
 
 ENV ZFS_API_PORT=3000
 ENV RUST_LOG=info
-ENV ZFS_MANAGER_DATA=/home/docker/zfs-manager
+ENV ZFS_DASHBOARD_DATA=/home/docker/zfs-manager
 
 WORKDIR /home/docker/zfs-manager
 

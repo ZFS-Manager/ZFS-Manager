@@ -2,3 +2,5 @@ data/redis/
 data/postgres/
 rust-backend/target/
 web/node_modules/
+/target/
+/Cargo.lock

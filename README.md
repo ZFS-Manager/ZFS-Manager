@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>ZFS Manager</h1>
+  <h1>ZFS Dashboard</h1>
   <p>A modern, high-performance web dashboard for managing ZFS storage pools.</p>
   
   ![Rust](https://img.shields.io/badge/Rust-Axum-orange?style=flat-square) 
@@ -13,7 +13,7 @@
 
 ## 🌟 Overview
 
-ZFS Manager is a completely reimagined, dark-themed control panel designed to bring enterprise-grade ZFS administration into a sleek, user-friendly interface. 
+ZFS Dashboard (formerly ZFS Manager) is a completely reimagined, dark-themed control panel designed to bring enterprise-grade ZFS administration into a sleek, user-friendly interface. 
 
 Built with a lightning-fast **Rust/Axum** backend and a dynamic **React + Tailwind** frontend, it provides real-time metrics, historical performance data, global notification rules, and complete control over your storage arrays.
 
@@ -98,6 +98,7 @@ Environment variables can be adjusted directly in the `compose.yaml` or via a `.
 
 ## ⚠️ Important Notes & Limitations
 
+- **Product rename**: The project was renamed from **ZFS Manager** to **ZFS Dashboard**. `ZFS_*` environment variable prefixes are unchanged; `ZFS_MANAGER_DATA` is now `ZFS_DASHBOARD_DATA` (the old name still works as a fallback). The ZFS user property `zfsmanager:scrub_schedule` keeps its name so existing pools don't lose their scrub schedules.
 - **Kernel Compatibility**: The container uses Alpine 3.20 (which ships ZFS 2.2.5). This provides the best compatibility for 2.2.x host kernels. If your host kernel module is 2.4.x, you should change `FROM alpine:3.20` to `FROM alpine:latest` in `rust-backend/Dockerfile`.
 - **Privileged Mode**: The backend container runs as `privileged: true` and mounts host paths (`/dev`, `/proc`, `/sys/module/zfs`) to allow the ZFS utilities inside the container to interact with your host's kernel and block devices.
 

@@ -1,11 +1,11 @@
 [package]
-name = "zfs-manager"
+name = "zfs-dashboard"
 version = "1.0.0"
 edition = "2021"
 publish = false
 
 [[bin]]
-name = "zfs-manager"
+name = "zfs-dashboard"
 path = "src/main.rs"
 
 [dependencies]

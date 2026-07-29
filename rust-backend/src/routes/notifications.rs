@@ -180,7 +180,7 @@ async fn test_channel(
     let ctype: String = row.get(0);
     let config: serde_json::Value = row.get(1);
 
-    let test_msg = "Hello! This is a test notification from your ZFS-Manager alert diagnostics.";
+    let test_msg = "Hello! This is a test notification from your ZFS Dashboard alert diagnostics.";
     match dispatch_notification(&ctype, &config, test_msg).await {
         Ok(_) => (StatusCode::OK, "Test notification dispatched successfully!").into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, format!("Failed to dispatch: {}", e)).into_response(),
@@ -228,7 +228,7 @@ pub async fn dispatch_notification(ctype: &str, config: &serde_json::Value, mess
         }
         "discord" => {
             let url = config.get("url").and_then(|v| v.as_str()).ok_or("Missing url")?;
-            let username = config.get("username").and_then(|v| v.as_str()).unwrap_or("ZFS-Manager");
+            let username = config.get("username").and_then(|v| v.as_str()).unwrap_or("ZFS Dashboard");
             let avatar_url = config.get("avatar_url").and_then(|v| v.as_str()).unwrap_or("");
 
             let mut body = serde_json::json!({
@@ -253,7 +253,7 @@ pub async fn dispatch_notification(ctype: &str, config: &serde_json::Value, mess
 
             let url = format!("{}/message?token={}", base_url.trim_end_matches('/'), token);
             let body = serde_json::json!({
-                "title": "ZFS Manager",
+                "title": "ZFS Dashboard",
                 "message": message,
                 "priority": priority
             });

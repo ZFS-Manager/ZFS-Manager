@@ -93,7 +93,7 @@ function TopBar({
 }) {
   const location = useLocation();
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const title = PAGE_TITLES[location.pathname] || 'ZFS Manager';
+  const title = PAGE_TITLES[location.pathname] || 'ZFS Dashboard';
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { unreadCount, notifications, notify } = useNotifications();
   const shownSysNotifIds = useRef<Set<number>>(new Set());
@@ -505,7 +505,7 @@ export default function App() {
         height: '100vh', width: '100vw', background: 'radial-gradient(circle at center, #18181b, #09090b)',
         color: '#f4f4f5', fontFamily: 'var(--font-ui)'
       }}>
-        {/* Animated pulsing ZFS-Manager loading visual */}
+        {/* Animated pulsing ZFS Dashboard loading visual */}
         <div style={{ position: 'relative', width: 80, height: 80, marginBottom: 24 }}>
           <div style={{
             position: 'absolute', inset: 0, borderRadius: '50%',
@@ -527,7 +527,7 @@ export default function App() {
         </div>
 
         <h2 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: 8, letterSpacing: '-0.02em' }}>
-          Starting ZFS-Manager...
+          Starting ZFS Dashboard...
         </h2>
         <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', maxWidth: 400, textAlign: 'center', lineHeight: 1.5, margin: '0 24px 24px 24px' }}>
           The backend is performing diagnostic checks and preparing ZFS pool mounts. This process completes automatically once ready.

@@ -90,7 +90,7 @@ fn read_cpu_jiffies() -> (u64, u64) {
                 .skip(1)
                 .map(|s| s.parse().unwrap_or(0))
                 .collect();
-            let user = vals.get(0).copied().unwrap_or(0);
+            let user = vals.first().copied().unwrap_or(0);
             let nice = vals.get(1).copied().unwrap_or(0);
             let system = vals.get(2).copied().unwrap_or(0);
             let idle = vals.get(3).copied().unwrap_or(0);
@@ -201,7 +201,7 @@ async fn get_system_stats(State(state): State<AppState>) -> Result<Json<Value>, 
             "free":      mem_free,
             "available": mem_available,
             // Subtract ARC size because it is kernel memory but effectively cache
-            "used":      (mem_total - mem_available).saturating_sub(arc_size as i64)
+            "used":      (mem_total - mem_available).saturating_sub(arc_size)
         }
     });
 
@@ -295,11 +295,6 @@ async fn find_zfs_disk_info(short_name: &str) -> Option<DiskZfsInfo> {
         }
     }
     None
-}
-
-/// Thin wrapper kept for callers that only need the state string.
-async fn find_zfs_disk_state(short_name: &str) -> Option<String> {
-    find_zfs_disk_info(short_name).await.map(|i| i.state)
 }
 
 async fn get_smart_data(

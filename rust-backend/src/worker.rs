@@ -152,7 +152,7 @@ fn read_cpu_jiffies() -> (u64, u64) {
                 .skip(1)
                 .map(|s| s.parse().unwrap_or(0))
                 .collect();
-            let user = vals.get(0).copied().unwrap_or(0);
+            let user = vals.first().copied().unwrap_or(0);
             let nice = vals.get(1).copied().unwrap_or(0);
             let system = vals.get(2).copied().unwrap_or(0);
             let idle = vals.get(3).copied().unwrap_or(0);
@@ -222,24 +222,11 @@ fn is_vdev_group(name: &str) -> bool {
     VDEV_GROUP_PREFIXES.iter().any(|p| name.starts_with(p))
 }
 
-/// Resolves a raw disk name from zpool iostat output to a short kernel device name.
-///
-/// zpool may report disks as:
-///   - SCSI-ID symlinks:  scsi-0QEMU_QEMU_HARDDISK_drive-scsi0
-///   - Full paths:        /dev/sda, /dev/disk/by-id/...
-///   - Already short:     sda, sdb, loop10, nvme0n1
-///
-/// Strategy (in order):
-///   1. Already a short device name (no path separator, no common ID prefix) → return as-is.
-///   2. /dev/disk/by-id/{name} exists → readlink → basename.
-///   3. lsblk -no name {resolved_path} → first line.
-///   4. Strip well-known ID prefixes (scsi-, ata-, wwn-, usb-) → take remainder up to first '-' … → last dash segment.
-///   5. Final fallback: last path component of the name.
 /// Strips trailing partition digits from a list of device names when the suffix is unambiguous.
 /// "sdc1" → "sdc"  only when no "sdc2" (or "sdc3", …) is present in the same list.
 /// If both "sdc1" and "sdc2" exist, both names are kept as-is.
 /// Used by both the iostat disk list and the pool_vdevs route.
-pub fn strip_partition_suffix_list(names: &mut Vec<String>) {
+pub fn strip_partition_suffix_list(names: &mut [String]) {
     let bases: Vec<String> = names.iter().filter_map(|n| {
         let b = n.trim_end_matches(|c: char| c.is_ascii_digit());
         if b.len() < n.len() { Some(b.to_string()) } else { None }
@@ -256,7 +243,7 @@ pub fn strip_partition_suffix_list(names: &mut Vec<String>) {
     }
 }
 
-fn strip_partition_suffix(disks: &mut Vec<crate::state::DiskMetric>) {
+fn strip_partition_suffix(disks: &mut [crate::state::DiskMetric]) {
     let mut names: Vec<String> = disks.iter().map(|d| d.name.clone()).collect();
     strip_partition_suffix_list(&mut names);
     for (disk, name) in disks.iter_mut().zip(names) {
@@ -264,6 +251,19 @@ fn strip_partition_suffix(disks: &mut Vec<crate::state::DiskMetric>) {
     }
 }
 
+/// Resolves a raw disk name from zpool iostat output to a short kernel device name.
+///
+/// zpool may report disks as:
+/// - SCSI-ID symlinks:  scsi-0QEMU_QEMU_HARDDISK_drive-scsi0
+/// - Full paths:        /dev/sda, /dev/disk/by-id/...
+/// - Already short:     sda, sdb, loop10, nvme0n1
+///
+/// Strategy (in order):
+/// 1. Already a short device name (no path separator, no common ID prefix) → return as-is.
+/// 2. /dev/disk/by-id/{name} exists → readlink → basename.
+/// 3. lsblk -no name {resolved_path} → first line.
+/// 4. Strip well-known ID prefixes (scsi-, ata-, wwn-, usb-) → take remainder up to first '-' … → last dash segment.
+/// 5. Final fallback: last path component of the name.
 pub async fn resolve_disk_short_name(name: &str) -> String {
     // Already a short name (no '/', no ID-style prefix)?
     if !name.contains('/')
@@ -529,7 +529,9 @@ async fn sync_redis_to_postgres(
     }
 
     // Group by pool_name and average the values in the 5-minute block
-    let mut pool_sums: std::collections::HashMap<String, (f64, f64, f64, f64, f64, f64, f64, usize)> = std::collections::HashMap::new();
+    // Sum tuple: (read_bw, write_bw, iops, alloc, free, cpu, arc_hit, sample_count)
+    type PoolSums = (f64, f64, f64, f64, f64, f64, f64, usize);
+    let mut pool_sums: std::collections::HashMap<String, PoolSums> = std::collections::HashMap::new();
     for item in &items {
         let v: serde_json::Value = match serde_json::from_str(item) {
             Ok(val) => val,
@@ -609,7 +611,7 @@ async fn sync_redis_to_postgres(
 
     match pg.execute(sql.as_str(), param_refs.as_slice()).await {
         Ok(n) => {
-            *write_counter += n as u64;
+            *write_counter += n;
             info!("Batch-inserted {n} metric rows (total writes: {})", write_counter);
         }
         Err(e) => warn!("Batch INSERT into zfs_metrics failed: {e}"),
@@ -922,7 +924,7 @@ async fn run_slow_loop(state: crate::state::AppState) {
                         params.iter().map(|b| b.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync)).collect();
                     match pg_client.execute(sql.as_str(), param_refs.as_slice()).await {
                         Ok(n) => {
-                            write_counter += n as u64;
+                            write_counter += n;
                             info!("Direct batch-inserted {n} metric rows (total writes: {write_counter})");
                         }
                         Err(e) => warn!("Direct batch INSERT failed: {e}"),
@@ -1032,7 +1034,7 @@ async fn run_scrub_scheduler_loop() {
                             let one_min_ago = now - chrono::Duration::minutes(1);
                             if let Some(next_run) = schedule.after(&one_min_ago).next() {
                                 let diff = now.signed_duration_since(next_run).num_seconds();
-                                if diff >= 0 && diff < 60 {
+                                if (0..60).contains(&diff) {
                                     info!("Triggering scheduled scrub for pool: {}", pool);
                                     let _ = tokio::process::Command::new("zpool")
                                         .args(["scrub", &pool])
