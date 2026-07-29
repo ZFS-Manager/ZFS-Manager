@@ -1,0 +1,18 @@
+# Deliberately hostile module used to prove the sandbox holds. Built to
+# wasm32-wasip2 and driven by tests/sandbox_escape.rs.
+[workspace]
+
+[package]
+name = "malicious-module"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "=0.46.0"
+
+[profile.release]
+opt-level = "s"

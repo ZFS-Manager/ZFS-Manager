@@ -1,0 +1,14 @@
+/home/ice/Coding/ZFS-Manager/rust-backend/tests/malicious-module/target/release/deps/serde-ad7fb4c445802aed.d: /home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /home/ice/Coding/ZFS-Manager/rust-backend/tests/malicious-module/target/release/build/serde-fa05bfbcbe880a42/out/private.rs
+
+/home/ice/Coding/ZFS-Manager/rust-backend/tests/malicious-module/target/release/deps/libserde-ad7fb4c445802aed.rlib: /home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /home/ice/Coding/ZFS-Manager/rust-backend/tests/malicious-module/target/release/build/serde-fa05bfbcbe880a42/out/private.rs
+
+/home/ice/Coding/ZFS-Manager/rust-backend/tests/malicious-module/target/release/deps/libserde-ad7fb4c445802aed.rmeta: /home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /home/ice/Coding/ZFS-Manager/rust-backend/tests/malicious-module/target/release/build/serde-fa05bfbcbe880a42/out/private.rs
+
+/home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs:
+/home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs:
+/home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs:
+/home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs:
+/home/ice/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs:
+/home/ice/Coding/ZFS-Manager/rust-backend/tests/malicious-module/target/release/build/serde-fa05bfbcbe880a42/out/private.rs:
+
+# env-dep:OUT_DIR=/home/ice/Coding/ZFS-Manager/rust-backend/tests/malicious-module/target/release/build/serde-fa05bfbcbe880a42/out

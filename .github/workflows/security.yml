@@ -1,0 +1,27 @@
+name: Security
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - '**'
+
+jobs:
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Install cargo-audit and cargo-deny
+        uses: taiki-e/install-action@v2.62.0
+        with:
+          tool: cargo-audit@0.21.2,cargo-deny@0.18.6
+
+      - name: cargo audit
+        run: cargo audit
+
+      - name: cargo deny
+        run: cargo deny --manifest-path rust-backend/Cargo.toml check
