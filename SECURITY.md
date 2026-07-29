@@ -104,8 +104,9 @@ No string concatenation into SQL.
 
 ### 10. Supply chain
 
-CI runs [`cargo audit`](.github/workflows/security.yml) (RustSec advisories)
-and `cargo deny check` (advisories, licenses, sources) on every push and PR.
+CI runs [`cargo deny check`](.github/workflows/security.yml) on every push and
+PR — covering RustSec advisories, yanked crates, license policy, and source
+policy (see [`deny.toml`](rust-backend/deny.toml)).
 
 ## Verification
 
