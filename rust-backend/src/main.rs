@@ -439,7 +439,7 @@ async fn main() {
         }
     };
 
-    let app = Router::new()
+    let api = Router::new()
         .merge(routes::health::router())
         .merge(routes::auth::router(app_state.clone()))
         .merge(routes::settings::router(app_state.clone()))
@@ -455,7 +455,31 @@ async fn main() {
         .merge(routes::notifications::router(app_state.clone()))
         .merge(routes::module_store::router(app_state.clone()))
         .merge(routes::modules::router(app_state.clone()))
-        .layer(middleware::from_fn_with_state(app_state.clone(), auth_middleware))
+        .layer(middleware::from_fn_with_state(app_state.clone(), auth_middleware));
+
+    // Serve the built frontend from the same process (single-container setup).
+    // Unknown paths fall back to index.html for client-side routing.
+    let static_dir = std::env::var("ZFS_STATIC_DIR")
+        .unwrap_or_else(|_| "/usr/share/zfs-dashboard/web".to_string());
+    let index_path = std::path::Path::new(&static_dir).join("index.html");
+    let app = match std::fs::read_to_string(&index_path) {
+        Ok(index_html) => {
+            info!("Serving frontend from {static_dir}");
+            // Unknown non-file paths (SPA client routes) get index.html.
+            let spa_fallback = axum::routing::get(move || {
+                let html = index_html.clone();
+                async move { axum::response::Html(html) }
+            });
+            api.fallback_service(
+                tower_http::services::ServeDir::new(&static_dir).fallback(spa_fallback),
+            )
+        }
+        Err(_) => {
+            info!("No frontend found at {static_dir} — serving API only");
+            api
+        }
+    };
+    let app = app
         .layer(middleware::from_fn(security_headers))
         .layer(cors)
         .layer(TraceLayer::new_for_http());
