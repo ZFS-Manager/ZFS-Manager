@@ -11,6 +11,8 @@ import SystemLogs from './components/SystemLogs';
 import Login from './components/Login';
 import Settings from './components/Settings';
 import Notifications from './pages/Notifications';
+import ModuleStore from './pages/ModuleStore';
+import ActiveModules from './pages/ActiveModules';
 import { ZFSPool, ZFSDataset, ZFSLog } from './types';
 import { api, formatBytes, setApiKey } from './api';
 import { Bell } from 'lucide-react';
@@ -22,6 +24,8 @@ const PAGE_TITLES: Record<string, string> = {
   '/pools':     'Storage Pools',
   '/datasets':  'Datasets',
   '/snapshots': 'Snapshots',
+  '/store':     'Module Store',
+  '/modules':   'Active Modules',
   '/logs':      'System Logs',
   '/notifications': 'Notifications',
   '/settings':  'Settings',
@@ -722,6 +726,8 @@ export default function App() {
               <Route path="/settings" element={
                 <Settings onPasswordChanged={() => setIsDefaultPassword(false)} pools={pools} selectedPool={selectedPool} onSelectPool={handleSelectPool} />
               } />
+              <Route path="/store" element={<ModuleStore />} />
+              <Route path="/modules" element={<ActiveModules />} />
               <Route path="/notifications" element={<Notifications />} />
               <Route path="/login" element={<Navigate to="/dashboard" replace />} />
             </Routes>

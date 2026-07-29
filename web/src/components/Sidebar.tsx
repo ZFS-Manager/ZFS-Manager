@@ -4,6 +4,7 @@ import {
   LayoutDashboard, Activity, Database, Layers,
   Camera, FileText, Settings, HardDrive, LogOut,
   Server, ChevronLeft, ChevronRight, Bell,
+  Store, Blocks,
 } from 'lucide-react';
 
 const NAV_GROUPS = [
@@ -20,6 +21,13 @@ const NAV_GROUPS = [
       { id: 'pools',     label: 'Storage Pools', icon: Database, path: '/pools'     },
       { id: 'datasets',  label: 'Datasets',      icon: Layers,   path: '/datasets'  },
       { id: 'snapshots', label: 'Snapshots',      icon: Camera,   path: '/snapshots' },
+    ],
+  },
+  {
+    label: 'Modules',
+    items: [
+      { id: 'store',   label: 'Store',          icon: Store,   path: '/store'   },
+      { id: 'modules', label: 'Active Modules', icon: Blocks,  path: '/modules' },
     ],
   },
   {
