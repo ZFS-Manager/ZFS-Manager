@@ -41,11 +41,45 @@ fn registry_http() -> Result<reqwest::Client, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Rejects URLs whose host resolves to a private, loopback, or link-local
+/// address. Guards against SSRF from a malicious/compromised registry index
+/// pointing manifest_url/wasm_url at internal endpoints (e.g. cloud metadata).
+async fn reject_internal_target(url: &reqwest::Url) -> Result<(), String> {
+    use std::net::IpAddr;
+    let host = url.host_str().ok_or("url has no host")?;
+    let port = url.port_or_known_default().unwrap_or(443);
+
+    let is_forbidden = |ip: &IpAddr| match ip {
+        IpAddr::V4(v4) => {
+            v4.is_private() || v4.is_loopback() || v4.is_link_local()
+                || v4.is_broadcast() || v4.is_unspecified() || v4.is_documentation()
+        }
+        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified() || v6.is_multicast(),
+    };
+
+    // Resolve at check time so DNS results are the ones we screen.
+    let addrs = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|e| format!("cannot resolve {host}: {e}"))?;
+    let mut any = false;
+    for addr in addrs {
+        any = true;
+        if is_forbidden(&addr.ip()) {
+            return Err(format!("host {host} resolves to a non-public address"));
+        }
+    }
+    if !any {
+        return Err(format!("host {host} did not resolve"));
+    }
+    Ok(())
+}
+
 async fn fetch_capped(client: &reqwest::Client, url: &str, cap: usize) -> Result<Vec<u8>, String> {
     let parsed = reqwest::Url::parse(url).map_err(|e| format!("invalid url {url:?}: {e}"))?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(format!("unsupported scheme in {url:?}"));
     }
+    reject_internal_target(&parsed).await?;
     let mut response = client
         .get(parsed)
         .send()
@@ -121,6 +155,14 @@ pub fn modules_dir() -> String {
     format!("{}/modules", crate::startup::data_dir())
 }
 
-pub fn wasm_path(module_id: &str) -> String {
-    format!("{}/{module_id}.wasm", modules_dir())
+/// Builds the on-disk path for a module's wasm. Defensively rejects any id
+/// that isn't the validated manifest charset, so a caller can never construct
+/// a path-traversal path even if an unvalidated id slips through.
+pub fn wasm_path(module_id: &str) -> Option<String> {
+    let valid = !module_id.is_empty()
+        && module_id.len() <= 64
+        && module_id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
+    valid.then(|| format!("{}/{module_id}.wasm", modules_dir()))
 }

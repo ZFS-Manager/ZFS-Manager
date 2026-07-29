@@ -117,6 +117,17 @@ and `cargo deny check` (advisories, licenses, sources) on every push and PR.
 - **Unit tests** cover allowlist matching, manifest validation, and
   secret encrypt/decrypt round-trips (including tamper detection).
 
+## Known limitations
+
+- **Rate-limit IP source**: per-IP rate limiting derives the client IP from the
+  `X-Forwarded-For` header (a codebase-wide convention, also used by the login
+  limiter). Behind an untrusted network this header is spoofable, so the limit
+  is a courtesy control, not a hard defense. Deploy behind a reverse proxy that
+  sets a trustworthy forwarded header.
+- **Registry SSRF**: the server refuses to fetch registry artifacts whose host
+  resolves to a private/loopback/link-local address, but registries are
+  admin-configured trust boundaries — only add registries you trust.
+
 ## Reporting
 
 Found a vulnerability? Please open a private security advisory on the GitHub

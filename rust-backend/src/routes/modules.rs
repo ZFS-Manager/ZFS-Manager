@@ -57,7 +57,9 @@ async fn register_module(
     tokio::fs::create_dir_all(registry::modules_dir())
         .await
         .map_err(|e| ApiError::InternalError(format!("cannot create modules dir: {e}")))?;
-    tokio::fs::write(registry::wasm_path(&package.manifest.id), &package.wasm)
+    let wasm_path = registry::wasm_path(&package.manifest.id)
+        .ok_or(ApiError::BadRequest("invalid module id".into()))?;
+    tokio::fs::write(&wasm_path, &package.wasm)
         .await
         .map_err(|e| ApiError::InternalError(format!("cannot store wasm: {e}")))?;
 
@@ -242,7 +244,9 @@ async fn uninstall(
     if deleted == 0 {
         return Err(ApiError::NotFound(format!("module {id:?} not installed")));
     }
-    let _ = tokio::fs::remove_file(registry::wasm_path(&id)).await;
+    if let Some(path) = registry::wasm_path(&id) {
+        let _ = tokio::fs::remove_file(path).await;
+    }
 
     let actor = actor_from_headers(&state, &headers).await;
     audit(&state, &actor, "module_uninstalled", Some(&id), json!({})).await;

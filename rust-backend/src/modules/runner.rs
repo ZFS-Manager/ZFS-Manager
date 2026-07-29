@@ -41,7 +41,8 @@ pub async fn execute_module(state: &AppState, module_id: &str, trigger: &str) ->
     let mut allowlist = manifest.permissions.network_allowlist.clone();
     allowlist.extend(hosts_from_config_urls(&config, &manifest.url_keys()));
 
-    let wasm = tokio::fs::read(registry::wasm_path(module_id))
+    let wasm_path = registry::wasm_path(module_id).ok_or("invalid module id")?;
+    let wasm = tokio::fs::read(&wasm_path)
         .await
         .map_err(|e| format!("wasm artifact missing: {e}"))?;
 
