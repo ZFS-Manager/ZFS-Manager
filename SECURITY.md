@@ -36,10 +36,15 @@ Defined in [`module.wit`](rust-backend/wit/module.wit):
 
 - **`http-fetch(url, headers)`** — the host checks every URL against the
   module's allowlist (manifest `network_allowlist` entries plus the hosts of
-  `url`-typed config fields). Matching is exact on host (or host:port); no
-  wildcards. Only `http`/`https` schemes. HTTP redirects are disabled so a
-  redirect cannot escape the allowlist. Responses are capped at 5 MiB and 32
-  requests per run.
+  `url`-typed config fields). Matching is **port-precise**: a bare `host` entry
+  matches only the default port (80/443), and a `host:port` entry only that
+  port — so an entry for a LAN host can never be abused to reach other services
+  (Postgres, SSH, …) on the same host. Only `http`/`https` schemes; redirects
+  disabled. After the allowlist check, the resolved target IP is screened and
+  **loopback / link-local (incl. the 169.254.169.254 metadata endpoint) /
+  unspecified / multicast** addresses are refused (private LAN ranges stay
+  allowed — reaching self-hosted LAN services is the intended use). Responses
+  are capped at 5 MiB and 32 requests per run.
 - **`db-write-metric(name, value)`** — the host binds the metric to the
   **calling module's id**; a module cannot write under another id. Names are
   validated (`[a-zA-Z0-9._-]`, ≤128 chars), values must be finite, max 1000

@@ -72,7 +72,15 @@ pub async fn execute_module(state: &AppState, module_id: &str, trigger: &str) ->
         }
         message.push_str(&outcome.logs.join("\n"));
     }
-    message.truncate(64 * 1024);
+    // Char-safe: message contains guest-controlled log text. A non-boundary
+    // String::truncate would panic (see runtime::truncate_on_char_boundary).
+    if message.len() > 64 * 1024 {
+        let mut end = 64 * 1024;
+        while end > 0 && !message.is_char_boundary(end) {
+            end -= 1;
+        }
+        message.truncate(end);
+    }
     let full_message = match &outcome.error {
         Some(err) if message.is_empty() => err.clone(),
         Some(err) => format!("{err}\n{message}"),

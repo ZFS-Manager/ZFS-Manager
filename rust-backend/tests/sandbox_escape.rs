@@ -76,8 +76,10 @@ async fn wall_clock_timeout_trips() {
     if wasm().is_none() { return; }
     let limits = RunLimits { fuel: u64::MAX, memory_bytes: 64 * 1024 * 1024, timeout: Duration::from_secs(1) };
     let (success, _, error) = run("cpu", limits).await;
-    assert!(!success);
-    assert!(error.unwrap_or_default().contains("timeout") || true);
+    assert!(!success, "run must fail on timeout");
+    let err = error.unwrap_or_default();
+    // With unlimited fuel, only the epoch/wall-clock deadline can stop it.
+    assert!(err.contains("timeout"), "expected timeout, got: {err}");
 }
 
 #[tokio::test]
