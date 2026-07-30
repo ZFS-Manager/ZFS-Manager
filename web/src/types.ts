@@ -108,6 +108,7 @@ export interface StoreModule {
   repository_url: string;
   registry_url: string;
   installed: boolean;
+  installed_version?: string;
 }
 
 export interface ModuleConfigField {

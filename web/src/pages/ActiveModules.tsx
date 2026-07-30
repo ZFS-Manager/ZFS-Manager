@@ -45,7 +45,6 @@ export default function ActiveModules() {
   const [modules, setModules] = useState<ActiveModule[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [runs, setRuns] = useState<Record<string, ModuleRun[]>>({});
-  const [releases, setReleases] = useState<Record<string, Array<{ tag_name: string; name: string; wasm_url: string }>>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -69,22 +68,10 @@ export default function ActiveModules() {
     } catch { /* run history is non-critical */ }
   };
 
-  const loadReleases = async (mod: ActiveModule) => {
-    if (!mod.repository_url) return;
-    try {
-      const res = await api.getModuleReleases(mod.repository_url);
-      setReleases(prev => ({ ...prev, [mod.id]: res.releases || [] }));
-    } catch { /* github releases fetch failure is non-critical */ }
-  };
-
   const toggleExpand = (id: string) => {
     const next = expanded === id ? null : id;
     setExpanded(next);
-    if (next) {
-      loadRuns(next);
-      const mod = modules.find(m => m.id === next);
-      if (mod) loadReleases(mod);
-    }
+    if (next) loadRuns(next);
   };
 
   const toggleEnabled = async (mod: ActiveModule) => {
@@ -212,60 +199,6 @@ export default function ActiveModules() {
                 <p style={{ fontFamily: 'var(--font-ui)', fontSize: 12.5, color: 'var(--text-secondary)', margin: 0 }}>
                   {mod.description}
                 </p>
-
-                {/* Version Switcher */}
-                <div style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  background: 'var(--bg-hover)', border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius)', padding: '8px 12px',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontFamily: 'var(--font-ui)', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
-                      Installed Version:
-                    </span>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
-                      background: 'var(--accent-dim)', color: 'var(--accent)',
-                      padding: '2px 8px', borderRadius: 4, border: '1px solid var(--accent-mid)',
-                    }}>
-                      {formatVersion(mod.version)}
-                    </span>
-                  </div>
-
-                  <select
-                    value={mod.version}
-                    onChange={async e => {
-                      const selectedTag = e.target.value;
-                      if (selectedTag === mod.version) return;
-                      const rel = (releases[mod.id] || []).find(r => r.tag_name === selectedTag);
-                      const wasmUrl = rel?.wasm_url || '';
-                      try {
-                        setBusy(mod.id);
-                        await api.switchModuleVersion(mod.id, selectedTag, wasmUrl);
-                        notify({ type: 'success', title: mod.name, message: `Switched to version ${selectedTag}` });
-                        await reload();
-                      } catch (err) {
-                        notify({ type: 'error', title: mod.name, message: `Version switch failed: ${(err as Error).message}` });
-                      } finally {
-                        setBusy(null);
-                      }
-                    }}
-                    style={{
-                      background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-                      borderRadius: 'var(--radius)', color: 'var(--text-primary)',
-                      fontSize: 11, fontFamily: 'var(--font-ui)', padding: '4px 8px', cursor: 'pointer',
-                    }}
-                  >
-                    <option value={mod.version}>{formatVersion(mod.version)} (Installed)</option>
-                    {(releases[mod.id] || [])
-                      .filter(r => r.tag_name !== mod.version && r.tag_name !== `v${mod.version}`)
-                      .map(r => (
-                        <option key={r.tag_name} value={r.tag_name}>
-                          {r.name || r.tag_name}
-                        </option>
-                      ))}
-                  </select>
-                </div>
 
                 {/* Dynamic Actions & Execution Buttons */}
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

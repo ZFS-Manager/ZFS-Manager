@@ -94,21 +94,30 @@ export default function ModuleStore() {
     const mod = selectedModuleForVersionModal;
     setBusyId(mod.id);
     try {
-      await api.installModule(
-        mod.registry_url,
-        mod.id,
-        selectedReleaseTag || undefined,
-        selectedWasmUrl || undefined
-      );
-      notify({
-        type: 'success',
-        title: 'Module Store',
-        message: `Module "${mod.name}" ${selectedReleaseTag ? `(${selectedReleaseTag}) ` : ''}installed`,
-      });
+      if (mod.installed && selectedReleaseTag) {
+        await api.switchModuleVersion(mod.id, selectedReleaseTag, selectedWasmUrl);
+        notify({
+          type: 'success',
+          title: 'Module Store',
+          message: `Switched "${mod.name}" to version ${selectedReleaseTag}`,
+        });
+      } else {
+        await api.installModule(
+          mod.registry_url,
+          mod.id,
+          selectedReleaseTag || undefined,
+          selectedWasmUrl || undefined
+        );
+        notify({
+          type: 'success',
+          title: 'Module Store',
+          message: `Module "${mod.name}" ${selectedReleaseTag ? `(${selectedReleaseTag}) ` : ''}installed`,
+        });
+      }
       setSelectedModuleForVersionModal(null);
       await reload();
     } catch (err) {
-      notify({ type: 'error', title: 'Module Store', message: `Install failed: ${(err as Error).message}` });
+      notify({ type: 'error', title: 'Module Store', message: `Operation failed: ${(err as Error).message}` });
     } finally {
       setBusyId(null);
     }
@@ -192,8 +201,18 @@ export default function ModuleStore() {
                 {mod.description}
               </p>
               {mod.installed ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success, #22c55e)', fontSize: 12, fontFamily: 'var(--font-ui)', fontWeight: 600 }}>
-                  <CheckCircle size={14} /> Installed
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success, #22c55e)', fontSize: 12, fontFamily: 'var(--font-ui)', fontWeight: 600 }}>
+                    <CheckCircle size={14} />
+                    <span>Installed {mod.installed_version ? `(${formatVersion(mod.installed_version)})` : ''}</span>
+                  </div>
+                  <button
+                    style={{ ...buttonStyle, opacity: busyId === mod.id ? 0.6 : 1, padding: '0 10px', height: 28, fontSize: 11 }}
+                    disabled={busyId === mod.id}
+                    onClick={() => openInstallModal(mod)}
+                  >
+                    <RefreshCw size={12} /> Switch Version
+                  </button>
                 </div>
               ) : (
                 <button
@@ -270,7 +289,7 @@ export default function ModuleStore() {
             }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <h3 style={{ margin: 0, fontFamily: 'var(--font-ui)', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
-                  Install {selectedModuleForVersionModal.name}
+                  {selectedModuleForVersionModal.installed ? `Switch Version: ${selectedModuleForVersionModal.name}` : `Install ${selectedModuleForVersionModal.name}`}
                 </h3>
                 <button
                   onClick={() => setSelectedModuleForVersionModal(null)}
@@ -338,7 +357,9 @@ export default function ModuleStore() {
                   disabled={busyId === selectedModuleForVersionModal.id}
                   onClick={confirmInstallWithVersion}
                 >
-                  {busyId === selectedModuleForVersionModal.id ? 'Installing...' : 'Install Version'}
+                  {busyId === selectedModuleForVersionModal.id
+                    ? (selectedModuleForVersionModal.installed ? 'Switching…' : 'Installing…')
+                    : (selectedModuleForVersionModal.installed ? 'Switch Version' : 'Install Version')}
                 </button>
               </div>
             </div>

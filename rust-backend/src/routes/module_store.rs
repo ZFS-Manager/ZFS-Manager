@@ -69,12 +69,13 @@ pub async fn configured_registries(state: &AppState) -> Result<Vec<(i32, String,
 
 async fn store_listing(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let pg = state.pg.as_ref().ok_or(ApiError::InternalError("database unavailable".into()))?;
-    let installed: Vec<String> = pg
-        .query("SELECT id FROM modules", &[])
+    let installed_rows = pg
+        .query("SELECT id, version FROM modules", &[])
         .await
-        .map_err(|e| ApiError::InternalError(e.to_string()))?
-        .iter()
-        .map(|r| r.get(0))
+        .map_err(|e| ApiError::InternalError(e.to_string()))?;
+    let installed_map: std::collections::HashMap<String, String> = installed_rows
+        .into_iter()
+        .map(|r| (r.get::<_, String>(0), r.get::<_, String>(1)))
         .collect();
 
     let mut entries = Vec::new();
@@ -83,6 +84,7 @@ async fn store_listing(State(state): State<AppState>) -> Result<Json<Value>, Api
         match registry::fetch_index(&url).await {
             Ok(index) => {
                 for module in index.modules {
+                    let inst_ver = installed_map.get(&module.id).cloned();
                     entries.push(json!({
                         "id": module.id,
                         "name": module.name,
@@ -92,7 +94,8 @@ async fn store_listing(State(state): State<AppState>) -> Result<Json<Value>, Api
                         "icon": module.icon,
                         "repository_url": module.repository_url,
                         "registry_url": url,
-                        "installed": installed.contains(&module.id),
+                        "installed": inst_ver.is_some(),
+                        "installed_version": inst_ver,
                     }));
                 }
             }
