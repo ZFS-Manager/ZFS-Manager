@@ -58,7 +58,7 @@ export default function ActiveModules() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const reload = async (forceRefresh = false) => {
+  const reload = async (forceRefresh = false, silent = false) => {
     setLoading(true);
     try {
       const [activeRes, storeRes] = await Promise.all([
@@ -71,7 +71,7 @@ export default function ActiveModules() {
       storeRes.modules.forEach(m => { map[m.id] = m; });
       setStoreModulesMap(map);
 
-      if (forceRefresh) {
+      if (forceRefresh && !silent) {
         notify({ type: 'success', title: 'Active Modules', message: 'Module Cache erfolgreich aktualisiert.', toastOnly: true });
       }
     } catch (err) {
@@ -99,7 +99,7 @@ export default function ActiveModules() {
   const toggleEnabled = async (mod: ActiveModule) => {
     try {
       await api.setModuleEnabled(mod.id, !mod.enabled);
-      await reload(true);
+      await reload(true, true);
     } catch (err) {
       notify({ type: 'error', title: 'Modules', message: `Toggle failed: ${(err as Error).message}` });
     }
@@ -116,7 +116,7 @@ export default function ActiveModules() {
           ? `Run finished: ${result.metrics_written} metrics written`
           : `Run failed: ${result.error ?? 'unknown error'}`,
       });
-      await reload(true);
+      await reload(true, true);
       await loadRuns(mod.id);
     } catch (err) {
       notify({ type: 'error', title: mod.name, message: `Run failed: ${(err as Error).message}` });
@@ -131,7 +131,7 @@ export default function ActiveModules() {
       await api.uninstallModule(mod.id);
       notify({ type: 'success', title: 'Modules', message: `"${mod.name}" uninstalled` });
       setExpanded(null);
-      await reload(true);
+      await reload(true, true);
     } catch (err) {
       notify({ type: 'error', title: 'Modules', message: `Uninstall failed: ${(err as Error).message}` });
     }
@@ -141,7 +141,7 @@ export default function ActiveModules() {
     try {
       await api.updateModuleConfig(mod.id, config, secrets);
       notify({ type: 'success', title: mod.name, message: 'Configuration saved' });
-      await reload(true);
+      await reload(true, true);
     } catch (err) {
       notify({ type: 'error', title: mod.name, message: `Saving failed: ${(err as Error).message}` });
       throw err;
