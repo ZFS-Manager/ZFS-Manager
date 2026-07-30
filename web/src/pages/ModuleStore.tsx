@@ -41,6 +41,25 @@ function formatRegistryError(error: string): string {
   return error;
 }
 
+const SELECTION_STORAGE_KEY = 'zfs_registry_selections';
+
+function getStoredRegistrySelections(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(SELECTION_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function setStoredRegistrySelections(selections: Record<string, string>) {
+  try {
+    localStorage.setItem(SELECTION_STORAGE_KEY, JSON.stringify(selections));
+  } catch (err) {
+    console.warn('Failed to save registry selections:', err);
+  }
+}
+
 export default function ModuleStore() {
   const { notify } = useNotifications();
   const [modules, setModules] = useState<StoreModule[]>([]);
@@ -87,7 +106,7 @@ export default function ModuleStore() {
     setModules(result);
   };
 
-  const reload = async () => {
+  const reload = async (isNewAdd = false) => {
     setLoading(true);
     try {
       const [store, regs] = await Promise.all([api.getModuleStore(), api.getRegistries()]);
@@ -103,7 +122,9 @@ export default function ModuleStore() {
       });
 
       const dups: DuplicateGroup[] = [];
-      const initialSelections: Record<string, string> = {};
+      const storedSelections = getStoredRegistrySelections();
+      const currentSelections: Record<string, string> = { ...storedSelections };
+      let hasUnresolvedDups = false;
 
       grouped.forEach((list, id) => {
         if (list.length > 1) {
@@ -112,18 +133,23 @@ export default function ModuleStore() {
             name: list[0].name,
             instances: list,
           });
-          initialSelections[id] = list[0].registry_url;
+
+          // Check if choice exists in localStorage and is still valid
+          if (!currentSelections[id] || !list.some(m => m.registry_url === currentSelections[id])) {
+            currentSelections[id] = list[0].registry_url;
+            hasUnresolvedDups = true;
+          }
         }
       });
 
-      filterAndSetModules(store.modules, initialSelections);
+      filterAndSetModules(store.modules, currentSelections);
+      setSelectedRegistryForMod(currentSelections);
+      setDuplicateGroups(dups);
 
-      if (dups.length > 0) {
-        setDuplicateGroups(dups);
-        setSelectedRegistryForMod(initialSelections);
+      // Open modal only if explicitly requested (e.g. newly added registry) OR there are unresolved duplicates
+      if (dups.length > 0 && (isNewAdd || hasUnresolvedDups)) {
         setShowDuplicateModal(true);
       } else {
-        setDuplicateGroups([]);
         setShowDuplicateModal(false);
       }
     } catch (err) {
@@ -192,14 +218,26 @@ export default function ModuleStore() {
     }
   };
 
+  const confirmDuplicateSelections = () => {
+    setStoredRegistrySelections(selectedRegistryForMod);
+    filterAndSetModules(rawStoreModules, selectedRegistryForMod);
+    setShowDuplicateModal(false);
+  };
+
   const addRegistry = async () => {
     const url = newRegistryUrl.trim();
     if (!url) return;
+
+    if (registries.some(r => r.url === url)) {
+      notify({ type: 'warning', title: 'Module Store', message: 'Diese Registry-URL ist bereits in der Liste vorhanden.' });
+      return;
+    }
+
     try {
       await api.addRegistry(url);
       setNewRegistryUrl('');
-      notify({ type: 'success', title: 'Module Store', message: 'Registry added' });
-      await reload();
+      notify({ type: 'success', title: 'Module Store', message: 'Registry hinzugefügt' });
+      await reload(true);
     } catch (err) {
       notify({ type: 'error', title: 'Module Store', message: `Adding registry failed: ${(err as Error).message}` });
     }
@@ -227,9 +265,20 @@ export default function ModuleStore() {
               Install community modules from configured registries. Artifacts are checksum-verified and run sandboxed.
             </p>
           </div>
-          <button style={buttonStyle} onClick={reload} title="Refresh">
-            <RefreshCw size={14} /> Refresh
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {duplicateGroups.length > 0 && (
+              <button
+                style={{ ...buttonStyle, borderColor: 'rgba(245, 158, 11, 0.4)', background: 'rgba(245, 158, 11, 0.1)', color: 'var(--warning)' }}
+                onClick={() => setShowDuplicateModal(true)}
+                title="Resolve duplicate module sources"
+              >
+                <AlertTriangle size={14} /> Duplicates ({duplicateGroups.length})
+              </button>
+            )}
+            <button style={buttonStyle} onClick={() => reload(false)} title="Refresh">
+              <RefreshCw size={14} /> Refresh
+            </button>
+          </div>
         </div>
 
         {errors.map(e => (
@@ -395,7 +444,7 @@ export default function ModuleStore() {
                   </h3>
                 </div>
                 <button
-                  onClick={() => setShowDuplicateModal(false)}
+                  onClick={confirmDuplicateSelections}
                   style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex' }}
                 >
                   <X size={18} />
@@ -489,7 +538,7 @@ export default function ModuleStore() {
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4 }}>
                 <button
                   style={{ ...buttonStyle, background: 'var(--accent)', color: '#fff' }}
-                  onClick={() => setShowDuplicateModal(false)}
+                  onClick={confirmDuplicateSelections}
                 >
                   Auswahl übernehmen
                 </button>
