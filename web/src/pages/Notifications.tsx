@@ -62,7 +62,7 @@ export default function Notifications() {
     webhook_headers: '{\n  "Content-Type": "application/json"\n}',
     // Discord specific
     discord_url: '',
-    discord_username: 'ZFS Dashboard',
+    discord_username: 'ZFS-Manager',
     discord_avatar: '',
     // Gotify specific
     gotify_url: '',
@@ -635,7 +635,7 @@ export default function Notifications() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                     <div>
                       <label style={labelStyle}>Bot Username Override</label>
-                      <input className="input" style={inputStyle} value={newChannel.discord_username} onChange={e => setNewChannel({...newChannel, discord_username: e.target.value})} placeholder="ZFS Dashboard" />
+                      <input className="input" style={inputStyle} value={newChannel.discord_username} onChange={e => setNewChannel({...newChannel, discord_username: e.target.value})} placeholder="ZFS Manager" />
                     </div>
                     <div>
                       <label style={labelStyle}>Avatar URL (Optional)</label>
