@@ -174,6 +174,15 @@ async fn sideload(
     Ok(Json(json!({ "id": module_id, "version": version })))
 }
 
+fn format_metric_label(name: &str) -> String {
+    let clean = name.replace('_', " ").replace('.', " ");
+    let mut c = clean.chars();
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+    }
+}
+
 async fn list_active(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let pg = db(&state)?;
     let rows = pg
@@ -195,10 +204,24 @@ async fn list_active(State(state): State<AppState>) -> Result<Json<Value>, ApiEr
         .await
         .map_err(|e| ApiError::InternalError(e.to_string()))?;
 
+    // Generic metric auto-discovery for all modules from module_metrics table
+    let metric_rows = pg
+        .query("SELECT DISTINCT module_id, metric_name FROM module_metrics", &[])
+        .await
+        .unwrap_or_default();
+
+    let mut collected_metrics_by_mod: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for r in metric_rows {
+        let mod_id: String = r.get(0);
+        let metric_name: String = r.get(1);
+        collected_metrics_by_mod.entry(mod_id).or_default().push(metric_name);
+    }
+
     let master_key = state.master_key;
     let modules: Vec<Value> = rows
         .iter()
         .map(|row| {
+            let mod_id: String = row.get(0);
             let manifest: Value = row.get(11);
             let secrets_blob: Option<Vec<u8>> = row.get(13);
             // Never return secret values — only which keys are set.
@@ -208,8 +231,56 @@ async fn list_active(State(state): State<AppState>) -> Result<Json<Value>, ApiEr
                     .unwrap_or_default(),
                 _ => Vec::new(),
             };
+
+            let mut widget_schema: Vec<Value> = manifest
+                .get("widget_schema")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            // Auto-discover widgets for any metrics pushed to module_metrics not explicitly in widget_schema
+            if let Some(metrics) = collected_metrics_by_mod.get(&mod_id) {
+                for m_name in metrics {
+                    let exists = widget_schema.iter().any(|w| {
+                        w.get("key").and_then(|k| k.as_str()) == Some(m_name.as_str())
+                            || w.get("metrics")
+                                .and_then(|arr| arr.as_array())
+                                .map(|arr| arr.iter().any(|item| item.as_str() == Some(m_name.as_str())))
+                                .unwrap_or(false)
+                    });
+
+                    if !exists {
+                        let label = format_metric_label(m_name);
+                        let unit = if m_name.contains("bytes") || m_name.contains("usage") || m_name.contains("disk") || m_name.contains("size") {
+                            "bytes"
+                        } else if m_name.contains("pct") || m_name.contains("percent") {
+                            "%"
+                        } else if m_name.contains("ms") {
+                            "ms"
+                        } else {
+                            ""
+                        };
+                        let widget_type = if m_name.contains("users") || m_name.contains("count") || m_name.contains("total") || m_name.contains("num") || m_name.contains("photos") || m_name.contains("videos") {
+                            "stat"
+                        } else {
+                            "line"
+                        };
+
+                        widget_schema.push(json!({
+                            "key": m_name,
+                            "label": label,
+                            "type": widget_type,
+                            "metrics": [m_name],
+                            "unit": unit,
+                            "color": "var(--accent)",
+                            "description": format!("Metric: {m_name}"),
+                        }));
+                    }
+                }
+            }
+
             json!({
-                "id": row.get::<_, String>(0),
+                "id": mod_id,
                 "name": row.get::<_, String>(1),
                 "version": row.get::<_, String>(2),
                 "author": row.get::<_, String>(3),
@@ -221,7 +292,7 @@ async fn list_active(State(state): State<AppState>) -> Result<Json<Value>, ApiEr
                 "enabled": row.get::<_, bool>(9),
                 "installed_at": row.get::<_, chrono::DateTime<chrono::Utc>>(10),
                 "config_schema": manifest.get("config_schema").cloned().unwrap_or(json!([])),
-                "widget_schema": manifest.get("widget_schema").cloned().unwrap_or(json!([])),
+                "widget_schema": widget_schema,
                 "status_fields": manifest.get("status_fields").cloned().unwrap_or(json!([])),
                 "actions": manifest.get("actions").cloned().unwrap_or(json!([])),
                 "config": row.get::<_, Option<Value>>(12).unwrap_or(json!({})),
