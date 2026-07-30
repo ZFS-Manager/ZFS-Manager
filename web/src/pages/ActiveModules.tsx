@@ -45,6 +45,7 @@ export default function ActiveModules() {
   const [modules, setModules] = useState<ActiveModule[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [runs, setRuns] = useState<Record<string, ModuleRun[]>>({});
+  const [releases, setReleases] = useState<Record<string, Array<{ tag_name: string; name: string; wasm_url: string }>>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -68,10 +69,22 @@ export default function ActiveModules() {
     } catch { /* run history is non-critical */ }
   };
 
+  const loadReleases = async (mod: ActiveModule) => {
+    if (!mod.repository_url) return;
+    try {
+      const res = await api.getModuleReleases(mod.repository_url);
+      setReleases(prev => ({ ...prev, [mod.id]: res.releases || [] }));
+    } catch { /* github releases fetch failure is non-critical */ }
+  };
+
   const toggleExpand = (id: string) => {
     const next = expanded === id ? null : id;
     setExpanded(next);
-    if (next) loadRuns(next);
+    if (next) {
+      loadRuns(next);
+      const mod = modules.find(m => m.id === next);
+      if (mod) loadReleases(mod);
+    }
   };
 
   const toggleEnabled = async (mod: ActiveModule) => {
@@ -222,12 +235,14 @@ export default function ActiveModules() {
                   <select
                     value={mod.version}
                     onChange={async e => {
-                      const newVer = e.target.value;
-                      if (newVer === mod.version) return;
+                      const selectedTag = e.target.value;
+                      if (selectedTag === mod.version) return;
+                      const rel = (releases[mod.id] || []).find(r => r.tag_name === selectedTag);
+                      const wasmUrl = rel?.wasm_url || '';
                       try {
                         setBusy(mod.id);
-                        await api.switchModuleVersion(mod.id, newVer, '');
-                        notify({ type: 'success', title: mod.name, message: `Switched to version ${newVer}` });
+                        await api.switchModuleVersion(mod.id, selectedTag, wasmUrl);
+                        notify({ type: 'success', title: mod.name, message: `Switched to version ${selectedTag}` });
                         await reload();
                       } catch (err) {
                         notify({ type: 'error', title: mod.name, message: `Version switch failed: ${(err as Error).message}` });
@@ -241,10 +256,14 @@ export default function ActiveModules() {
                       fontSize: 11, fontFamily: 'var(--font-ui)', padding: '4px 8px', cursor: 'pointer',
                     }}
                   >
-                    <option value={mod.version}>{formatVersion(mod.version)} (Current)</option>
-                    <option value="1.0.0">v1.0.0</option>
-                    <option value="1.1.0">v1.1.0</option>
-                    <option value="2.0.0">v2.0.0</option>
+                    <option value={mod.version}>{formatVersion(mod.version)} (Installed)</option>
+                    {(releases[mod.id] || [])
+                      .filter(r => r.tag_name !== mod.version && r.tag_name !== `v${mod.version}`)
+                      .map(r => (
+                        <option key={r.tag_name} value={r.tag_name}>
+                          {r.name || r.tag_name}
+                        </option>
+                      ))}
                   </select>
                 </div>
 
