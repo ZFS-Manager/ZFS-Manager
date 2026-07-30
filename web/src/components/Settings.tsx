@@ -196,12 +196,14 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
     const { catIdx: srcCatIdx, itemIdx: srcItemIdx } = draggedItem;
     setDraggedItem(null);
 
+    if (srcCatIdx === targetCatIdx && srcItemIdx === targetItemIdx) return;
+
     const nextLayout = layout.map(c => ({ ...c, items: [...c.items] }));
-    const itemToMove = nextLayout[srcCatIdx].items.splice(srcItemIdx, 1)[0];
+    const [itemToMove] = nextLayout[srcCatIdx].items.splice(srcItemIdx, 1);
     if (!itemToMove) return;
 
-    if (typeof targetItemIndex === 'number' && targetItemIndex >= 0) {
-      nextLayout[targetCatIdx].items.splice(targetItemIndex, 0, itemToMove);
+    if (typeof targetItemIdx === 'number' && targetItemIdx >= 0) {
+      nextLayout[targetCatIdx].items.splice(targetItemIdx, 0, itemToMove);
     } else {
       nextLayout[targetCatIdx].items.push(itemToMove);
     }
