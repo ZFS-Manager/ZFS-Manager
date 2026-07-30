@@ -39,17 +39,17 @@ export default function ModuleWidgetRenderer({
   color = 'var(--accent)',
 }: ModuleWidgetRendererProps) {
   const [data, setData] = useState<ModuleMetricPoint[]>([]);
-  const [interval, setInterval] = useState('1h');
+  const [timeRange, setTimeRange] = useState('1h');
   const [loading, setLoading] = useState(true);
 
   const primaryMetric = metrics[0] || '';
 
   const loadData = async () => {
     try {
-      const res = await api.getModuleMetrics(moduleId, primaryMetric, interval);
+      const res = await api.getModuleMetrics(moduleId, primaryMetric, timeRange);
       setData(res.metrics);
     } catch (err) {
-      console.error(`Failed to load metrics for ${moduleId}/${widgetKey}:`, err);
+      console.error(`Failed to load metrics for ${moduleId}/${primaryMetric}:`, err);
     } finally {
       setLoading(false);
     }
@@ -57,9 +57,9 @@ export default function ModuleWidgetRenderer({
 
   useEffect(() => {
     loadData();
-    const timer = setInterval(loadData, 5000);
-    return () => clearInterval(timer);
-  }, [moduleId, primaryMetric, interval]);
+    const timer = window.setInterval(loadData, 5000);
+    return () => window.clearInterval(timer);
+  }, [moduleId, primaryMetric, timeRange]);
 
   const latestVal = data.length > 0 ? data[data.length - 1].value : 0;
 
@@ -138,8 +138,8 @@ export default function ModuleWidgetRenderer({
           </span>
         </div>
         <select
-          value={interval}
-          onChange={e => setInterval(e.target.value)}
+          value={timeRange}
+          onChange={e => setTimeRange(e.target.value)}
           style={{
             background: 'var(--bg-hover)', border: '1px solid var(--border)',
             borderRadius: 'var(--radius)', color: 'var(--text-secondary)',
