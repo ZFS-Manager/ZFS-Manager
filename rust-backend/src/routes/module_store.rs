@@ -48,12 +48,22 @@ pub fn mgmt_rate_limit(state: &AppState, headers: &HeaderMap) -> Result<(), ApiE
 }
 
 pub async fn configured_registries(state: &AppState) -> Result<Vec<(i32, String, bool)>, ApiError> {
-    let pg = state.pg.as_ref().ok_or(ApiError::InternalError("database unavailable".into()))?;
-    let rows = pg
-        .query("SELECT id, url, is_default FROM module_registries ORDER BY id", &[])
-        .await
-        .map_err(|e| ApiError::InternalError(e.to_string()))?;
-    Ok(rows.iter().map(|r| (r.get(0), r.get(1), r.get(2))).collect())
+    let mut registries = Vec::new();
+    let default_url = registry::default_registry_url();
+    registries.push((0, default_url.clone(), true));
+
+    if let Some(ref pg) = state.pg {
+        let rows = pg
+            .query("SELECT id, url FROM module_registries WHERE url <> $1 ORDER BY id", &[&default_url])
+            .await
+            .map_err(|e| ApiError::InternalError(e.to_string()))?;
+        for r in rows {
+            let id: i32 = r.get(0);
+            let url: String = r.get(1);
+            registries.push((id, url, false));
+        }
+    }
+    Ok(registries)
 }
 
 async fn store_listing(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
@@ -111,7 +121,11 @@ async fn add_registry(
     Json(body): Json<AddRegistryBody>,
 ) -> Result<Json<Value>, ApiError> {
     mgmt_rate_limit(&state, &headers)?;
-    let url = body.url.trim().to_string();
+    let url = body.url.trim().trim_matches('"').trim_matches('\'').trim().to_string();
+    let default_url = registry::default_registry_url();
+    if url == default_url {
+        return Err(ApiError::BadRequest("This URL is already active as the default registry".into()));
+    }
     let parsed = reqwest::Url::parse(&url)
         .map_err(|e| ApiError::BadRequest(format!("invalid registry url: {e}")))?;
     if !matches!(parsed.scheme(), "http" | "https") {
@@ -125,7 +139,7 @@ async fn add_registry(
     let pg = state.pg.as_ref().ok_or(ApiError::InternalError("database unavailable".into()))?;
     let row = pg
         .query_one(
-            "INSERT INTO module_registries(url) VALUES($1)
+            "INSERT INTO module_registries(url, is_default) VALUES($1, FALSE)
              ON CONFLICT (url) DO UPDATE SET url = EXCLUDED.url RETURNING id",
             &[&url],
         )
@@ -144,13 +158,16 @@ async fn remove_registry(
     Path(id): Path<i32>,
 ) -> Result<Json<Value>, ApiError> {
     mgmt_rate_limit(&state, &headers)?;
+    if id == 0 {
+        return Err(ApiError::BadRequest("Cannot remove the default registry".into()));
+    }
     let pg = state.pg.as_ref().ok_or(ApiError::InternalError("database unavailable".into()))?;
     let row = pg
-        .query_opt("DELETE FROM module_registries WHERE id = $1 AND NOT is_default RETURNING url", &[&id])
+        .query_opt("DELETE FROM module_registries WHERE id = $1 RETURNING url", &[&id])
         .await
         .map_err(|e| ApiError::InternalError(e.to_string()))?;
     let Some(row) = row else {
-        return Err(ApiError::BadRequest("registry not found or is the default registry".into()));
+        return Err(ApiError::BadRequest("registry not found".into()));
     };
     let url: String = row.get(0);
 

@@ -395,18 +395,10 @@ async fn main() {
         }
     };
     if let Some(ref pg) = pg_client {
-        let registry_url = modules::registry::default_registry_url();
+        // Default registry is non-persisted and dynamically served from code/ENV.
+        // Clean up any legacy default registry entries from PostgreSQL.
         let _ = pg
-            .execute(
-                "DELETE FROM module_registries WHERE is_default = TRUE AND url <> $1",
-                &[&registry_url],
-            )
-            .await;
-        let _ = pg
-            .execute(
-                "INSERT INTO module_registries(url, is_default) VALUES($1, TRUE) ON CONFLICT (url) DO UPDATE SET is_default = TRUE",
-                &[&registry_url],
-            )
+            .execute("DELETE FROM module_registries WHERE is_default = TRUE", &[])
             .await;
     }
 
