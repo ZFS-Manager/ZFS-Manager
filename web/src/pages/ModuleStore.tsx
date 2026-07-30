@@ -87,6 +87,7 @@ export default function ModuleStore() {
   const [selectedRegistryForMod, setSelectedRegistryForMod] = useState<Record<string, string>>({});
   const [rawStoreModules, setRawStoreModules] = useState<StoreModule[]>([]);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [pendingAddRegistryUrl, setPendingAddRegistryUrl] = useState<string | null>(null);
 
   const filterAndSetModules = (rawMods: StoreModule[], selections: Record<string, string>) => {
     const seen = new Set<string>();
@@ -194,8 +195,12 @@ export default function ModuleStore() {
     const mod = selectedModuleForVersionModal;
     setBusyId(mod.id);
     try {
-      if (mod.installed && selectedReleaseTag) {
-        await api.switchModuleVersion(mod.id, selectedReleaseTag, selectedWasmUrl);
+      if (mod.installed) {
+        await api.switchModuleVersion(
+          mod.id,
+          selectedReleaseTag || mod.version,
+          selectedWasmUrl || undefined
+        );
         notify({
           type: 'success',
           title: 'Module Store',
@@ -223,9 +228,32 @@ export default function ModuleStore() {
     }
   };
 
-  const confirmDuplicateSelections = () => {
+  const confirmDuplicateSelections = async () => {
     setStoredRegistrySelections(selectedRegistryForMod);
-    filterAndSetModules(rawStoreModules, selectedRegistryForMod);
+
+    if (pendingAddRegistryUrl) {
+      const urlToAdd = pendingAddRegistryUrl;
+      setPendingAddRegistryUrl(null);
+      setShowDuplicateModal(false);
+      try {
+        await api.addRegistry(urlToAdd);
+        setNewRegistryUrl('');
+        notify({ type: 'success', title: 'Module Store', message: 'Registry hinzugefügt' });
+        await reload(false, true);
+      } catch (err) {
+        notify({ type: 'error', title: 'Module Store', message: `Adding registry failed: ${(err as Error).message}` });
+      }
+    } else {
+      filterAndSetModules(rawStoreModules, selectedRegistryForMod);
+      setShowDuplicateModal(false);
+    }
+  };
+
+  const cancelDuplicateSelections = () => {
+    if (pendingAddRegistryUrl) {
+      notify({ type: 'info', title: 'Module Store', message: 'Hinzufügen der Registry abgebrochen.' });
+      setPendingAddRegistryUrl(null);
+    }
     setShowDuplicateModal(false);
   };
 
@@ -238,13 +266,67 @@ export default function ModuleStore() {
       return;
     }
 
+    setLoading(true);
     try {
-      await api.addRegistry(url);
-      setNewRegistryUrl('');
-      notify({ type: 'success', title: 'Module Store', message: 'Registry hinzugefügt' });
-      await reload(true);
+      // Preview candidate registry index to check for duplicates BEFORE adding to DB
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}: Invalid registry index URL`);
+      }
+      const candidateData = await resp.json();
+      if (!candidateData || !Array.isArray(candidateData.modules)) {
+        throw new Error('Ungültige Registry Index-Datei');
+      }
+
+      const candidateModules: StoreModule[] = candidateData.modules.map((m: any) => ({
+        ...m,
+        registry_url: url,
+        installed: false,
+      }));
+
+      // Combine existing raw modules with candidate modules to check for duplicate IDs
+      const combined = [...rawStoreModules, ...candidateModules];
+      const grouped = new Map<string, StoreModule[]>();
+      combined.forEach(mod => {
+        const list = grouped.get(mod.id) || [];
+        grouped.set(mod.id, [...list, mod]);
+      });
+
+      const dups: DuplicateGroup[] = [];
+      const storedSelections = getStoredRegistrySelections();
+      const currentSelections: Record<string, string> = { ...storedSelections };
+
+      grouped.forEach((list, id) => {
+        if (list.length > 1) {
+          dups.push({
+            id,
+            name: list[0].name,
+            instances: list,
+          });
+
+          if (!currentSelections[id] || !list.some(m => m.registry_url === currentSelections[id])) {
+            currentSelections[id] = list[0].registry_url;
+          }
+        }
+      });
+
+      if (dups.length > 0) {
+        // Duplicates found! Prompt user in modal BEFORE saving URL to DB
+        setPendingAddRegistryUrl(url);
+        setDuplicateGroups(dups);
+        setSelectedRegistryForMod(currentSelections);
+        setShowDuplicateModal(true);
+      } else {
+        // No duplicates! Directly add registry URL to backend DB
+        await api.addRegistry(url);
+        setNewRegistryUrl('');
+        notify({ type: 'success', title: 'Module Store', message: 'Registry hinzugefügt' });
+        await reload(false, true);
+      }
     } catch (err) {
       notify({ type: 'error', title: 'Module Store', message: `Adding registry failed: ${(err as Error).message}` });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -461,9 +543,8 @@ export default function ModuleStore() {
                   <h3 style={{ margin: 0, fontFamily: 'var(--font-ui)', fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>
                     Doppelte Module in Registries
                   </h3>
-                </div>
-                <button
-                  onClick={confirmDuplicateSelections}
+                                <button
+                  onClick={cancelDuplicateSelections}
                   style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex' }}
                 >
                   <X size={18} />
@@ -556,12 +637,18 @@ export default function ModuleStore() {
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4 }}>
                 <button
+                  style={{ ...buttonStyle, background: 'transparent', color: 'var(--text-secondary)' }}
+                  onClick={cancelDuplicateSelections}
+                >
+                  Abbrechen
+                </button>
+                <button
                   style={{ ...buttonStyle, background: 'var(--accent)', color: '#fff' }}
                   onClick={confirmDuplicateSelections}
                 >
-                  Auswahl übernehmen
+                  {pendingAddRegistryUrl ? 'Auswahl übernehmen & Registry hinzufügen' : 'Auswahl übernehmen'}
                 </button>
-              </div>
+              </div>        </div>
             </div>
           </div>
         )}
