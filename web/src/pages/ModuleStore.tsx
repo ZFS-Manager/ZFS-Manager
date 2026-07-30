@@ -57,13 +57,46 @@ export default function ModuleStore() {
   const [selectedReleaseTag, setSelectedReleaseTag] = useState('');
   const [selectedWasmUrl, setSelectedWasmUrl] = useState('');
 
+  // Duplicate Modules Modal State
+  const [duplicateModules, setDuplicateModules] = useState<Array<{ id: string; name: string; urls: string[] }>>([]);
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+
   const reload = async () => {
     setLoading(true);
     try {
       const [store, regs] = await Promise.all([api.getModuleStore(), api.getRegistries()]);
-      setModules(store.modules);
-      setErrors(store.errors);
       setRegistries(regs.registries);
+      setErrors(store.errors);
+
+      // Detect duplicate modules across registries
+      const grouped = new Map<string, StoreModule[]>();
+      store.modules.forEach(mod => {
+        const list = grouped.get(mod.id) || [];
+        grouped.set(mod.id, [...list, mod]);
+      });
+
+      const uniqueMods: StoreModule[] = [];
+      const dups: Array<{ id: string; name: string; urls: string[] }> = [];
+
+      grouped.forEach((list, id) => {
+        uniqueMods.push(list[0]);
+        if (list.length > 1) {
+          dups.push({
+            id,
+            name: list[0].name,
+            urls: list.map(m => m.registry_url),
+          });
+        }
+      });
+
+      setModules(uniqueMods);
+      if (dups.length > 0) {
+        setDuplicateModules(dups);
+        setShowDuplicateModal(true);
+      } else {
+        setDuplicateModules([]);
+        setShowDuplicateModal(false);
+      }
     } catch (err) {
       notify({ type: 'error', title: 'Module Store', message: `Failed to load: ${(err as Error).message}` });
     } finally {
@@ -185,53 +218,76 @@ export default function ModuleStore() {
           display: 'grid', gap: 16,
           gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
         }}>
-          {modules.map(mod => (
-            <div key={`${mod.registry_url}:${mod.id}`} style={cardStyle}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{
-                  width: 36, height: 36, background: 'var(--accent-dim)',
-                  border: '1px solid var(--accent-mid)', borderRadius: 'var(--radius)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                }}>
-                  <Package size={18} color="var(--accent)" />
+          {modules.map(mod => {
+            const regIdx = registries.findIndex(r => r.url === mod.registry_url);
+            const regNumber = regIdx !== -1 ? regIdx + 1 : null;
+
+            return (
+              <div key={`${mod.registry_url}:${mod.id}`} style={cardStyle}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, overflow: 'hidden' }}>
+                    <div style={{
+                      width: 36, height: 36, background: 'var(--accent-dim)',
+                      border: '1px solid var(--accent-mid)', borderRadius: 'var(--radius)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                    }}>
+                      <Package size={18} color="var(--accent)" />
+                    </div>
+                    <div style={{ overflow: 'hidden' }}>
+                      <div style={{ fontFamily: 'var(--font-ui)', fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                        {mod.name}
+                      </div>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+                        {mod.author ? mod.author : 'Community Module'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {regNumber !== null && (
+                    <div
+                      title={`Registry #${regNumber}: ${mod.registry_url}`}
+                      style={{
+                        width: 24, height: 24, borderRadius: '50%',
+                        background: 'var(--accent-dim)', border: '1px solid var(--accent-mid)',
+                        color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        flexShrink: 0, cursor: 'help'
+                      }}
+                    >
+                      {regNumber}
+                    </div>
+                  )}
                 </div>
-                <div style={{ overflow: 'hidden' }}>
-                  <div style={{ fontFamily: 'var(--font-ui)', fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
-                    {mod.name}
+
+                <p style={{ fontFamily: 'var(--font-ui)', fontSize: 12.5, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5, flex: 1 }}>
+                  {mod.description}
+                </p>
+                {mod.installed ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success, #22c55e)', fontSize: 12, fontFamily: 'var(--font-ui)', fontWeight: 600 }}>
+                      <CheckCircle size={14} />
+                      <span>Installed {mod.installed_version ? `(${formatVersion(mod.installed_version)})` : ''}</span>
+                    </div>
+                    <button
+                      style={{ ...buttonStyle, opacity: busyId === mod.id ? 0.6 : 1, padding: '0 10px', height: 28, fontSize: 11 }}
+                      disabled={busyId === mod.id}
+                      onClick={() => openInstallModal(mod)}
+                    >
+                      <RefreshCw size={12} /> Switch Version
+                    </button>
                   </div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
-                    {mod.author ? mod.author : 'Community Module'}
-                  </div>
-                </div>
-              </div>
-              <p style={{ fontFamily: 'var(--font-ui)', fontSize: 12.5, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5, flex: 1 }}>
-                {mod.description}
-              </p>
-              {mod.installed ? (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success, #22c55e)', fontSize: 12, fontFamily: 'var(--font-ui)', fontWeight: 600 }}>
-                    <CheckCircle size={14} />
-                    <span>Installed {mod.installed_version ? `(${formatVersion(mod.installed_version)})` : ''}</span>
-                  </div>
+                ) : (
                   <button
-                    style={{ ...buttonStyle, opacity: busyId === mod.id ? 0.6 : 1, padding: '0 10px', height: 28, fontSize: 11 }}
+                    style={{ ...buttonStyle, opacity: busyId === mod.id ? 0.6 : 1 }}
                     disabled={busyId === mod.id}
                     onClick={() => openInstallModal(mod)}
                   >
-                    <RefreshCw size={12} /> Switch Version
+                    <Download size={14} /> {busyId === mod.id ? 'Installing…' : 'Install'}
                   </button>
-                </div>
-              ) : (
-                <button
-                  style={{ ...buttonStyle, opacity: busyId === mod.id ? 0.6 : 1 }}
-                  disabled={busyId === mod.id}
-                  onClick={() => openInstallModal(mod)}
-                >
-                  <Download size={14} /> {busyId === mod.id ? 'Installing…' : 'Install'}
-                </button>
-              )}
-            </div>
-          ))}
+                )}
+              </div>
+            );
+          })}
           {!loading && modules.length === 0 && (
             <div style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-ui)', fontSize: 13 }}>
               No modules available. Check your registries below.
@@ -244,11 +300,19 @@ export default function ModuleStore() {
             Registries
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {registries.map(reg => (
+            {registries.map((reg, idx) => (
               <div key={reg.id} style={{
                 display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
                 background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
               }}>
+                <span style={{
+                  width: 22, height: 22, borderRadius: '50%', background: 'var(--accent-dim)',
+                  border: '1px solid var(--accent-mid)', color: 'var(--accent)',
+                  fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                }}>
+                  {idx + 1}
+                </span>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {reg.url}
                 </span>
@@ -281,6 +345,80 @@ export default function ModuleStore() {
             </div>
           </div>
         </div>
+
+        {/* Duplicate Module Warning Modal */}
+        {showDuplicateModal && duplicateModules.length > 0 && (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+          }}>
+            <div style={{
+              background: 'var(--bg-elevated)', border: '1px solid var(--warning)',
+              borderRadius: 'var(--radius)', width: '90%', maxWidth: 480, padding: 20,
+              display: 'flex', flexDirection: 'column', gap: 16, boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--warning)' }}>
+                  <AlertTriangle size={20} />
+                  <h3 style={{ margin: 0, fontFamily: 'var(--font-ui)', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+                    Doppelte Module erkannt
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setShowDuplicateModal(false)}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex' }}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <p style={{ margin: 0, fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                Folgende Module sind in mehreren Registries vorhanden und wurden nur einmal hinzugefügt:
+              </p>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 220, overflowY: 'auto' }}>
+                {duplicateModules.map(dup => (
+                  <div key={dup.id} style={{
+                    background: 'var(--bg-hover)', border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius)', padding: 12, display: 'flex', flexDirection: 'column', gap: 6
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontWeight: 600, fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-primary)' }}>
+                        {dup.name}
+                      </span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+                        ID: {dup.id}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                      Vorhanden in {dup.urls.length} Registries:
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
+                      {dup.urls.map((url, i) => {
+                        const idx = registries.findIndex(r => r.url === url);
+                        return (
+                          <li key={url}>
+                            Registry #{idx !== -1 ? idx + 1 : i + 1}: {url}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+                <button
+                  style={{ ...buttonStyle, background: 'var(--accent)', color: '#fff' }}
+                  onClick={() => setShowDuplicateModal(false)}
+                >
+                  Verstanden
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Version Picker Modal */}
         {selectedModuleForVersionModal && (
