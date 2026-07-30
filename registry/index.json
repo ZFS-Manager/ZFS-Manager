@@ -8,7 +8,7 @@
       "description": "Collects statistics from an Immich server (photos, videos, storage usage, user count) and stores them as dashboard metrics.",
       "icon": "camera",
       "repository_url": "https://github.com/ZFS-Manager/ZFS-Manager",
-      "manifest_url": "https://raw.githubusercontent.com/ZFS-Manager/ZFS-Manager/main/modules/immich/module.toml",
+      "manifest_url": "https://raw.githubusercontent.com/ZFS-Manager/ZFS-Manager/feature/module-system/modules/immich/module.toml",
       "wasm_url": "https://github.com/ZFS-Manager/ZFS-Manager/releases/latest/download/immich.wasm",
       "wasm_sha256": "1d1a2fbf0b774bb011dc891bd309012bbc787130327eb22436a42136eebf756d"
     }
