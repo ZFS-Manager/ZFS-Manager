@@ -16,6 +16,7 @@ env:
 jobs:
   build-and-push:
     runs-on: self-hosted
+
     permissions:
       contents: read
       packages: write
@@ -24,28 +25,34 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4.2.2
 
-      # Dieser Schritt ermittelt den exakten Quell-Branch und macht ihn Docker-konform
       - name: Extract branch name
         id: extract_branch
+        shell: pwsh
         env:
           HEAD_REF: ${{ github.head_ref }}
           REF_NAME: ${{ github.ref_name }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            BRANCH_NAME="$HEAD_REF"
-          else
-            BRANCH_NAME="$REF_NAME"
-          fi
-          # Ersetzt / und andere Sonderzeichen durch - (wichtig für feature/xyz Branches)
-          CLEAN_BRANCH=$(echo "$BRANCH_NAME" | tr '/' '-' | sed 's/[^a-zA-Z0-9._-]/-/g')
-          echo "branch=$CLEAN_BRANCH" >> $GITHUB_OUTPUT
+          if ($env:EVENT_NAME -eq "pull_request") {
+              $branch = $env:HEAD_REF
+          } else {
+              $branch = $env:REF_NAME
+          }
+
+          $branch = $branch -replace '/', '-'
+          $branch = $branch -replace '[^a-zA-Z0-9._-]', '-'
+
+          "branch=$branch" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Extract version from Cargo.toml
         id: cargo_version
+        shell: pwsh
         run: |
-          VERSION=$(grep '^version =' rust-backend/Cargo.toml | head -n 1 | cut -d '"' -f 2)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          $version = Select-String -Path "rust-backend/Cargo.toml" -Pattern '^version\s*=\s*"(.*)"' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value } |
+            Select-Object -First 1
+
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -64,20 +71,15 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ github.repository }}
           tags: |
             type=semver,pattern={{version}}
-            # Liest die Version direkt aus der Cargo.toml, wenn auf main gepusht wird
             type=raw,value=${{ steps.cargo_version.outputs.version }},enable=${{ github.ref == 'refs/heads/main' }}
-            # Nutzt immer den oben extrahierten Branch-Namen als Tag
             type=raw,value=${{ steps.extract_branch.outputs.branch }}
-            # Optional: Immer noch den kurzen SHA-Tag mitgeben (gute Praxis)
             type=sha,format=short
-            # Vergibt den Tag 'latest' exklusiv bei Pushes in den main-Branch oder bei Releases
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'release' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
-          # Pusht bei jedem Push. Bei PRs wird standardmäßig nur gebaut.
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
