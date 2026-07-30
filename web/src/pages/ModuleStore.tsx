@@ -117,7 +117,7 @@ export default function ModuleStore() {
       setRawStoreModules(store.modules);
 
       if (forceRefresh) {
-        notify({ type: 'success', title: 'Module Store', message: 'Module store cache updated from registries.' });
+        notify({ type: 'success', title: 'Module Store', message: 'Module Store Cache erfolgreich aktualisiert.', toastOnly: true });
       }
 
       // Detect duplicate modules across registries
@@ -362,8 +362,8 @@ export default function ModuleStore() {
                 <AlertTriangle size={14} /> Duplicates ({duplicateGroups.length})
               </button>
             )}
-            <button style={buttonStyle} onClick={() => reload(false, true)} title="Cache leeren & Registries neu abfragen">
-              <RefreshCw size={14} /> Refresh
+            <button style={buttonStyle} onClick={() => reload(false, true)} disabled={loading} title="Cache leeren & Registries neu abfragen">
+              <RefreshCw size={14} className={loading ? 'spin' : ''} /> Refresh
             </button>
           </div>
         </div>

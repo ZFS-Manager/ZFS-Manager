@@ -15,7 +15,7 @@ export interface Notification {
 
 interface NotificationContextValue {
   notifications: Notification[];
-  notify: (opts: { type: NotifType; title: string; message: string; autoDismiss?: number }) => void;
+  notify: (opts: { type: NotifType; title: string; message: string; autoDismiss?: number; toastOnly?: boolean }) => void;
   markRead: (id: string) => void;
   markAllRead: () => void;
   remove: (id: string) => void;
@@ -74,7 +74,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 350);
   }, []);
 
-  const notify = useCallback((opts: { type: NotifType; title: string; message: string; autoDismiss?: number }) => {
+  const notify = useCallback((opts: { type: NotifType; title: string; message: string; autoDismiss?: number; toastOnly?: boolean }) => {
     const id = genId();
     const dismissMs = opts.autoDismiss ?? (opts.type === 'error' ? 8000 : opts.type === 'warning' ? 6000 : 4000);
     const notif: Notification = {
@@ -82,7 +82,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       timestamp: Date.now(), isRead: false, autoDismiss: dismissMs,
     };
 
-    setNotifications(prev => [notif, ...prev].slice(0, 200));
+    if (!opts.toastOnly) {
+      setNotifications(prev => [notif, ...prev].slice(0, 200));
+    }
 
     const toast: ToastItem = { ...notif, visible: false };
     setToasts(prev => [...prev, toast]);

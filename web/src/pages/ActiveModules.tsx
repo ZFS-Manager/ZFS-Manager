@@ -64,7 +64,7 @@ export default function ActiveModules() {
       setStoreModulesMap(map);
 
       if (forceRefresh) {
-        notify({ type: 'success', title: 'Active Modules', message: 'Modules & update info refreshed.' });
+        notify({ type: 'success', title: 'Active Modules', message: 'Module Cache erfolgreich aktualisiert.', toastOnly: true });
       }
     } catch (err) {
       notify({ type: 'error', title: 'Modules', message: `Failed to load modules: ${(err as Error).message}` });
@@ -152,8 +152,8 @@ export default function ActiveModules() {
               Installed modules, their schedules, configuration and run history.
             </p>
           </div>
-          <button style={buttonStyle} onClick={() => reload(true)} title="Cache leeren & Registries neu abfragen">
-            <RefreshCw size={14} /> Refresh
+          <button style={buttonStyle} onClick={() => reload(true)} disabled={loading} title="Cache leeren & Registries neu abfragen">
+            <RefreshCw size={14} className={loading ? 'spin' : ''} /> Refresh
           </button>
         </div>
 
