@@ -156,7 +156,7 @@ async fn security_headers(req: Request, next: Next) -> Response {
     h.insert("X-Content-Type-Options", HeaderValue::from_static("nosniff"));
     h.insert("X-Frame-Options",        HeaderValue::from_static("DENY"));
     h.insert("X-XSS-Protection",       HeaderValue::from_static("1; mode=block"));
-    h.insert("Content-Security-Policy", HeaderValue::from_static("default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; img-src * data:;"));
+    h.insert("Content-Security-Policy", HeaderValue::from_static("default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; img-src * data: blob:; font-src * data:; style-src * 'unsafe-inline'; connect-src *;"));
     h.insert("Referrer-Policy",        HeaderValue::from_static("same-origin"));
     res
 }
