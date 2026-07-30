@@ -2,14 +2,6 @@ use std::fs;
 use std::process::Command;
 use tracing::{info, warn, error};
 
-/// Application data directory. `ZFS_MANAGER_DATA` is honored as a fallback so
-/// existing deployments keep working after the rename to ZFS Dashboard.
-pub fn data_dir() -> String {
-    std::env::var("ZFS_DASHBOARD_DATA")
-        .or_else(|_| std::env::var("ZFS_MANAGER_DATA"))
-        .unwrap_or_else(|_| "/home/docker/zfs-manager".to_string())
-}
-
 /// Mount all ZFS datasets from already-imported pools so that the rshared /mnt
 /// bind-mount propagates them back to the host filesystem.
 pub async fn run_startup_zfs_mount() {
@@ -57,7 +49,7 @@ pub async fn run_startup_pool_imports() {
 }
 
 pub async fn run_startup_checks() {
-    info!("🚀 Starting ZFS Dashboard Diagnostic Checks...");
+    info!("🚀 Starting ZFS-Manager Diagnostic Checks...");
 
     // ─── System Access ──────────────────────────────────────────────────────────
     info!("--- System Resources ---");
@@ -105,7 +97,7 @@ pub async fn run_startup_checks() {
     }
 
     // 4. Check Storage
-    let data_dir = data_dir();
+    let data_dir = std::env::var("ZFS_MANAGER_DATA").unwrap_or_else(|_| "/home/docker/zfs-manager".to_string());
     let test_file = format!("{}/.startup_test", data_dir);
     if fs::create_dir_all(&data_dir).is_ok() && fs::write(&test_file, "test").is_ok() {
         info!("  ✅ Storage: {} is writable", data_dir);

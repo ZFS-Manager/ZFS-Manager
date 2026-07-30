@@ -4,7 +4,6 @@ import {
   LayoutDashboard, Activity, Database, Layers,
   Camera, FileText, Settings, HardDrive, LogOut,
   Server, ChevronLeft, ChevronRight, Bell,
-  Store, Blocks,
 } from 'lucide-react';
 
 const NAV_GROUPS = [
@@ -21,13 +20,6 @@ const NAV_GROUPS = [
       { id: 'pools',     label: 'Storage Pools', icon: Database, path: '/pools'     },
       { id: 'datasets',  label: 'Datasets',      icon: Layers,   path: '/datasets'  },
       { id: 'snapshots', label: 'Snapshots',      icon: Camera,   path: '/snapshots' },
-    ],
-  },
-  {
-    label: 'Modules',
-    items: [
-      { id: 'store',   label: 'Store',          icon: Store,   path: '/store'   },
-      { id: 'modules', label: 'Active Modules', icon: Blocks,  path: '/modules' },
     ],
   },
   {
@@ -165,7 +157,7 @@ export default function Sidebar({
             <div style={{
               fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 600,
               color: 'var(--text-primary)', letterSpacing: '-0.01em', whiteSpace: 'nowrap',
-            }}>ZFS Dashboard</div>
+            }}>ZFS Manager</div>
             <div style={{
               fontFamily: 'var(--font-mono)', fontSize: 9,
               color: 'var(--text-muted)', letterSpacing: '0.03em',
@@ -256,7 +248,7 @@ export default function Sidebar({
             {(githubVersion || healthData?.version) && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 4 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', fontWeight: 600 }}>ZFS Dashboard</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', fontWeight: 600 }}>ZFS-Manager</span>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                     <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
                       {healthData?.version || githubVersion}

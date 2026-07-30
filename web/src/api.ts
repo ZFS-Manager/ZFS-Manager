@@ -1,5 +1,3 @@
-import type { ActiveModule, ModuleRun, StoreModule } from './types';
-
 const API_BASE_URL = '/api/v1';
 let API_KEY = localStorage.getItem('zfs_access_token') || import.meta.env.VITE_API_KEY || '';
 
@@ -311,54 +309,6 @@ export const api = {
     request<{ message: string }>(`/pools/import-configs/${encodeURIComponent(name)}/run`, {
       method: 'POST',
     }),
-
-  // ── Module system ──────────────────────────────────────────────────────────
-  getModuleStore: () =>
-    request<{ modules: StoreModule[]; errors: Array<{ registry_url: string; error: string }> }>('/modules/store'),
-
-  getRegistries: () =>
-    request<{ registries: Array<{ id: number; url: string; is_default: boolean }> }>('/modules/registries'),
-
-  addRegistry: (url: string) =>
-    request<{ id: number; url: string }>('/modules/registries', {
-      method: 'POST',
-      body: JSON.stringify({ url }),
-    }),
-
-  removeRegistry: (id: number) =>
-    request<{ ok: boolean }>(`/modules/registries/${id}`, { method: 'DELETE' }),
-
-  installModule: (registryUrl: string, id: string) =>
-    request<{ id: string; version: string }>('/modules/install', {
-      method: 'POST',
-      body: JSON.stringify({ registry_url: registryUrl, id }),
-    }),
-
-  getActiveModules: () => request<{ modules: ActiveModule[] }>('/modules/active'),
-
-  uninstallModule: (id: string) =>
-    request<{ ok: boolean }>(`/modules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-
-  updateModuleConfig: (id: string, config: Record<string, unknown>, secrets: Record<string, string | null>) =>
-    request<{ ok: boolean }>(`/modules/${encodeURIComponent(id)}/config`, {
-      method: 'PUT',
-      body: JSON.stringify({ config, secrets }),
-    }),
-
-  setModuleEnabled: (id: string, enabled: boolean) =>
-    request<{ ok: boolean; enabled: boolean }>(
-      `/modules/${encodeURIComponent(id)}/${enabled ? 'enable' : 'disable'}`,
-      { method: 'POST' },
-    ),
-
-  runModule: (id: string) =>
-    request<{ run_id: number; success: boolean; message: string; metrics_written: number; error: string | null }>(
-      `/modules/${encodeURIComponent(id)}/run`,
-      { method: 'POST' },
-    ),
-
-  getModuleRuns: (id: string, limit = 50) =>
-    request<{ runs: ModuleRun[] }>(`/modules/${encodeURIComponent(id)}/runs?limit=${limit}`),
 
   // ── Per-disk metrics ───────────────────────────────────────────────────────
   getPoolDiskMetrics: (poolName: string) =>

@@ -244,7 +244,7 @@ function ApiKeysTab({ addToast }: { addToast: (msg: string, type: 'success' | 'e
       <div style={{ display: 'flex', gap: 12, padding: '14px 16px', background: 'rgba(99,179,237,0.06)', border: '1px solid rgba(99,179,237,0.18)', borderRadius: 'var(--radius)' }}>
         <Key size={16} style={{ color: 'var(--accent)', flexShrink: 0, marginTop: 1 }} />
         <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.6 }}>
-          API keys grant programmatic access to the ZFS Dashboard API. Store them securely — they are <strong style={{ color: 'var(--text-primary)' }}>only shown once</strong>.
+          API keys grant programmatic access to the ZFS Manager API. Store them securely — they are <strong style={{ color: 'var(--text-primary)' }}>only shown once</strong>.
         </p>
       </div>
 

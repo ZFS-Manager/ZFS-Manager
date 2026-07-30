@@ -107,7 +107,7 @@ export default function Login({ onLogin }: LoginProps) {
             fontFamily: 'var(--font-ui)', fontSize: 14, fontWeight: 600,
             color: 'var(--text-secondary)', letterSpacing: '-0.01em',
           }}>
-            ZFS Dashboard
+            ZFS Manager
           </span>
         </div>
 
@@ -220,7 +220,7 @@ export default function Login({ onLogin }: LoginProps) {
               <HardDrive size={15} style={{ color: 'var(--accent)' }} />
             </div>
             <span style={{ fontFamily: 'var(--font-ui)', fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)' }}>
-              ZFS Dashboard
+              ZFS Manager
             </span>
           </div>
 

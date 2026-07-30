@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>ZFS Dashboard</h1>
+  <h1>ZFS Manager</h1>
   <p>A modern, high-performance web dashboard for managing ZFS storage pools.</p>
   
   ![Rust](https://img.shields.io/badge/Rust-Axum-orange?style=flat-square) 
@@ -13,7 +13,7 @@
 
 ## 🌟 Overview
 
-ZFS Dashboard (formerly ZFS Manager) is a completely reimagined, dark-themed control panel designed to bring enterprise-grade ZFS administration into a sleek, user-friendly interface. 
+ZFS Manager is a completely reimagined, dark-themed control panel designed to bring enterprise-grade ZFS administration into a sleek, user-friendly interface. 
 
 Built with a lightning-fast **Rust/Axum** backend and a dynamic **React + Tailwind** frontend, it provides real-time metrics, historical performance data, global notification rules, and complete control over your storage arrays.
 
@@ -25,11 +25,6 @@ Built with a lightning-fast **Rust/Axum** backend and a dynamic **React + Tailwi
 - **Time-Series Metrics**: Integrated **PostgreSQL** database securely persists historical performance data (IOPS, Throughput, ARC hit ratio, Capacity).
 - **Sub-second Real-time Monitoring**: High-frequency **Redis** caching pipeline fuels the live dashboard with real-time CPU, RAM, and disk utilization data without blocking ZFS commands.
 - **Dynamic Forecasting**: Smart predictive algorithms estimate when your storage pools will run out of space based on historical consumption trends.
-
-### 🧩 Extensible Module System (New)
-- **HACS-style modules**: install community extensions that pull data from external services into your dashboard as metrics.
-- **Sandboxed by design**: modules run as WebAssembly components with a minimal, host-enforced capability API — no native code, no free filesystem or network access.
-- **Store + custom registries + sideload**, auto-generated config forms, schedules (interval or cron), and per-module run history.
 
 ### 🔔 Global Notification System
 - Completely customizable **Notification Rules Engine**.
@@ -57,54 +52,10 @@ Built with a lightning-fast **Rust/Axum** backend and a dynamic **React + Tailwi
 
 | Layer | Technologies |
 |---|---|
-| **Backend** | Rust, Axum 0.7, Tokio, Serde, tokio-postgres, refinery (migrations) |
-| **Modules** | wasmtime (WebAssembly Component Model), WIT, AES-256-GCM secrets |
+| **Backend** | Rust, Axum 0.7, Tokio, Serde, SQLx |
 | **Frontend** | React 19, TypeScript, Vite 6, Tailwind CSS 4, Recharts, Framer Motion |
 | **Datastore** | PostgreSQL 16 (Metrics History), Redis 7 (Live Cache & PubSub) |
-| **Deployment**| Docker Compose, single app container, Alpine 3.20 (ZFS 2.2.5 ABI) |
-
-### Single-container architecture
-
-The backend and frontend ship as **one container**: a multi-stage build
-compiles the React app to static assets, which Axum serves directly via
-`tower-http::ServeDir` (with an `index.html` fallback for client-side routes).
-Nginx is gone — one process, one port, no CORS split.
-
-PostgreSQL and Redis stay as **separate services** on purpose: they have their
-own lifecycle (upgrades, backups), persistent state, and battle-tested official
-images. Merging them into the app container would gain nothing and complicate
-signal handling and partial restarts.
-
----
-
-## 🧩 Module System (HACS-style)
-
-ZFS Dashboard can be extended with **modules** — community-buildable
-extensions that fetch external data (e.g. from other self-hosted services) and
-write it into the dashboard as metrics, à la Home Assistant + HACS.
-
-Modules are written in Rust, compiled to a **WebAssembly component**, and run
-**sandboxed** inside the backend. They are never native code and the server
-**never compiles module source** — it only ever runs finished, checksum-verified
-`.wasm` artifacts. See [SECURITY.md](SECURITY.md) for the full threat model.
-
-- **Store** — browse and install modules from configured registries. A default
-  registry ships built-in; you can add custom registry URLs in the UI.
-- **Active Modules** — configure (via an auto-generated form), schedule
-  (interval or cron), run on demand, and inspect run history per module.
-- **Sideload** — build your own module locally and upload the `.wasm` directly,
-  bypassing any registry.
-
-The bundled [`modules/immich`](modules/immich) module is a complete example and
-doubles as the **authoring guide** for writing your own.
-
-**Module resource limits** (per run, overridable via env):
-
-| Variable | Default | Description |
-|---|---|---|
-| `ZFS_MODULE_FUEL` | `2000000000` | Instruction budget (wasmtime fuel) |
-| `ZFS_MODULE_MEMORY_BYTES` | `67108864` | Linear memory cap (64 MiB) |
-| `ZFS_MODULE_TIMEOUT_SECS` | `30` | Wall-clock timeout |
+| **Deployment**| Docker Compose, Alpine 3.20 (ZFS 2.2.5 ABI) |
 
 ---
 
@@ -123,46 +74,32 @@ Getting started is incredibly easy. The entire stack (Backend, Frontend, Postgre
 git clone https://github.com/ZFS-Manager/ZFS-Manager.git
 cd ZFS-Manager
 
-# 2. Configure secrets
-cp .env.example .env   # then edit the passwords
-
-# 3. Start the entire stack in the background
+# 2. Start the entire stack in the background
 docker compose up -d --build
 ```
 
-Open **http://localhost:8080** in your browser.
-*(The default admin password is `admin123` — change it immediately.)*
+Open **http://localhost:8080** in your browser. 
+*(The default API Key is `admin123`)*
 
 ---
 
 ## ⚙️ Configuration
 
-Environment variables are set via a `.env` file (see `.env.example`).
+Environment variables can be adjusted directly in the `compose.yaml` or via a `.env` file.
 
 | Variable | Default | Description |
 |---|---|---|
-| `ADMIN_PASSWORD` | `admin123` | Admin login password. **Change this.** |
-| `POSTGRES_PASSWORD` | `zfs_secret` | Password for the PostgreSQL metrics database. |
-| `ZFS_WEB_PORT` | `8080` | Port the web UI + API is exposed on. |
-| `ZFS_SECRETS_MASTER_KEY` | *(auto)* | Base64 32-byte key for module secret encryption. Auto-generated into the data dir when unset. |
-| `ZFS_DASHBOARD_DATA` | `/home/docker/zfs-manager` | Data directory (falls back to the old `ZFS_MANAGER_DATA`). |
+| `ZFS_API_KEY` | `admin123` | Security key for all backend REST API requests. |
+| `POSTGRES_PASSWORD` | `zfs_secret` | Password for the integrated PostgreSQL metrics database. |
+| `ZFS_BACKEND_PORT` | `3000` | Port for the Rust API. |
+| `ZFS_WEB_PORT` | `8080` | Port for the Nginx frontend. |
 
 ---
 
 ## ⚠️ Important Notes & Limitations
 
-- **Product rename**: The project was renamed from **ZFS Manager** to **ZFS Dashboard**. `ZFS_*` environment variable prefixes are unchanged; `ZFS_MANAGER_DATA` is now `ZFS_DASHBOARD_DATA` (the old name still works as a fallback). The ZFS user property `zfsmanager:scrub_schedule` keeps its name so existing pools don't lose their scrub schedules.
-- **Kernel Compatibility**: The container uses Alpine 3.20 (which ships ZFS 2.2.5). This provides the best compatibility for 2.2.x host kernels. If your host kernel module is 2.4.x, change `FROM alpine:3.20` to `FROM alpine:latest` in the root `Dockerfile`.
-- **Privileged Mode**: The app container runs as `privileged: true` and mounts host paths (`/dev`, `/proc`, `/sys/module/zfs`) so the ZFS utilities inside the container can interact with your host's kernel and block devices. Because of this, **module code is treated as fully untrusted** and runs in a WebAssembly sandbox — see [SECURITY.md](SECURITY.md).
-
----
-
-## 🛠️ Writing your own module
-
-See [`modules/immich/README.md`](modules/immich/README.md) — it's a working
-example and a step-by-step authoring guide (repo layout, the capability API,
-manifest fields, building to `wasm32-wasip2`, and installing via sideload or a
-registry).
+- **Kernel Compatibility**: The container uses Alpine 3.20 (which ships ZFS 2.2.5). This provides the best compatibility for 2.2.x host kernels. If your host kernel module is 2.4.x, you should change `FROM alpine:3.20` to `FROM alpine:latest` in `rust-backend/Dockerfile`.
+- **Privileged Mode**: The backend container runs as `privileged: true` and mounts host paths (`/dev`, `/proc`, `/sys/module/zfs`) to allow the ZFS utilities inside the container to interact with your host's kernel and block devices.
 
 ---
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-DATA_DIR="${ZFS_DASHBOARD_DATA:-${ZFS_MANAGER_DATA:-/home/docker/zfs-manager}}"
+DATA_DIR="${ZFS_MANAGER_DATA:-/home/docker/zfs-manager}"
 
 # Ensure the data directory exists with correct permissions on first start
 if [ ! -d "$DATA_DIR" ]; then
@@ -13,4 +13,4 @@ if [ ! -f "$DATA_DIR/.initialized" ]; then
     touch "$DATA_DIR/.initialized"
 fi
 
-exec /usr/local/bin/zfs-dashboard "$@"
+exec /usr/local/bin/zfs-manager "$@"
