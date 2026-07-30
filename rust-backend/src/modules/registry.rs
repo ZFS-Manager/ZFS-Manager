@@ -8,9 +8,15 @@ pub const DEFAULT_REGISTRY_URL: &str =
     "https://raw.githubusercontent.com/ZFS-Manager/ZFS-Manager/main/registry/index.json";
 
 pub fn default_registry_url() -> String {
-    match std::env::var("MODULE_REGISTRY_URL") {
-        Ok(url) if !url.trim().is_empty() => url.trim().to_string(),
-        _ => DEFAULT_REGISTRY_URL.to_string(),
+    let raw = match std::env::var("MODULE_REGISTRY_URL") {
+        Ok(url) => url,
+        Err(_) => DEFAULT_REGISTRY_URL.to_string(),
+    };
+    let trimmed = raw.trim().trim_matches('"').trim_matches('\'').trim();
+    if trimmed.is_empty() {
+        DEFAULT_REGISTRY_URL.to_string()
+    } else {
+        trimmed.to_string()
     }
 }
 

@@ -398,7 +398,13 @@ async fn main() {
         let registry_url = modules::registry::default_registry_url();
         let _ = pg
             .execute(
-                "INSERT INTO module_registries(url, is_default) VALUES($1, TRUE) ON CONFLICT (url) DO NOTHING",
+                "DELETE FROM module_registries WHERE is_default = TRUE AND url <> $1",
+                &[&registry_url],
+            )
+            .await;
+        let _ = pg
+            .execute(
+                "INSERT INTO module_registries(url, is_default) VALUES($1, TRUE) ON CONFLICT (url) DO UPDATE SET is_default = TRUE",
                 &[&registry_url],
             )
             .await;
