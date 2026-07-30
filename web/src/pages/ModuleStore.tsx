@@ -57,9 +57,35 @@ export default function ModuleStore() {
   const [selectedReleaseTag, setSelectedReleaseTag] = useState('');
   const [selectedWasmUrl, setSelectedWasmUrl] = useState('');
 
-  // Duplicate Modules Modal State
-  const [duplicateModules, setDuplicateModules] = useState<Array<{ id: string; name: string; urls: string[] }>>([]);
+  // Duplicate Modules Modal State & Selections
+  interface DuplicateGroup {
+    id: string;
+    name: string;
+    instances: StoreModule[];
+  }
+  const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
+  const [selectedRegistryForMod, setSelectedRegistryForMod] = useState<Record<string, string>>({});
+  const [rawStoreModules, setRawStoreModules] = useState<StoreModule[]>([]);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+
+  const filterAndSetModules = (rawMods: StoreModule[], selections: Record<string, string>) => {
+    const seen = new Set<string>();
+    const result: StoreModule[] = [];
+
+    rawMods.forEach(mod => {
+      if (selections[mod.id]) {
+        if (mod.registry_url === selections[mod.id] && !seen.has(mod.id)) {
+          seen.add(mod.id);
+          result.push(mod);
+        }
+      } else if (!seen.has(mod.id)) {
+        seen.add(mod.id);
+        result.push(mod);
+      }
+    });
+
+    setModules(result);
+  };
 
   const reload = async () => {
     setLoading(true);
@@ -67,6 +93,7 @@ export default function ModuleStore() {
       const [store, regs] = await Promise.all([api.getModuleStore(), api.getRegistries()]);
       setRegistries(regs.registries);
       setErrors(store.errors);
+      setRawStoreModules(store.modules);
 
       // Detect duplicate modules across registries
       const grouped = new Map<string, StoreModule[]>();
@@ -75,26 +102,28 @@ export default function ModuleStore() {
         grouped.set(mod.id, [...list, mod]);
       });
 
-      const uniqueMods: StoreModule[] = [];
-      const dups: Array<{ id: string; name: string; urls: string[] }> = [];
+      const dups: DuplicateGroup[] = [];
+      const initialSelections: Record<string, string> = {};
 
       grouped.forEach((list, id) => {
-        uniqueMods.push(list[0]);
         if (list.length > 1) {
           dups.push({
             id,
             name: list[0].name,
-            urls: list.map(m => m.registry_url),
+            instances: list,
           });
+          initialSelections[id] = list[0].registry_url;
         }
       });
 
-      setModules(uniqueMods);
+      filterAndSetModules(store.modules, initialSelections);
+
       if (dups.length > 0) {
-        setDuplicateModules(dups);
+        setDuplicateGroups(dups);
+        setSelectedRegistryForMod(initialSelections);
         setShowDuplicateModal(true);
       } else {
-        setDuplicateModules([]);
+        setDuplicateGroups([]);
         setShowDuplicateModal(false);
       }
     } catch (err) {
@@ -346,23 +375,23 @@ export default function ModuleStore() {
           </div>
         </div>
 
-        {/* Duplicate Module Warning Modal */}
-        {showDuplicateModal && duplicateModules.length > 0 && (
+        {/* Duplicate Module Selection Modal */}
+        {showDuplicateModal && duplicateGroups.length > 0 && (
           <div style={{
             position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
             background: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(4px)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
           }}>
             <div style={{
-              background: 'var(--bg-elevated)', border: '1px solid var(--warning)',
-              borderRadius: 'var(--radius)', width: '90%', maxWidth: 480, padding: 20,
-              display: 'flex', flexDirection: 'column', gap: 16, boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
+              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)', width: '90%', maxWidth: 560, padding: 22,
+              display: 'flex', flexDirection: 'column', gap: 18, boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
             }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--warning)' }}>
-                  <AlertTriangle size={20} />
-                  <h3 style={{ margin: 0, fontFamily: 'var(--font-ui)', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
-                    Doppelte Module erkannt
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--warning)' }}>
+                  <AlertTriangle size={22} />
+                  <h3 style={{ margin: 0, fontFamily: 'var(--font-ui)', fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>
+                    Doppelte Module in Registries
                   </h3>
                 </div>
                 <button
@@ -374,46 +403,95 @@ export default function ModuleStore() {
               </div>
 
               <p style={{ margin: 0, fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                Folgende Module sind in mehreren Registries vorhanden und wurden nur einmal hinzugefügt:
+                Folgende Module sind in mehreren Registries enthalten. Wähle pro Modul aus, aus welcher Registry es bezogen werden soll:
               </p>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 220, overflowY: 'auto' }}>
-                {duplicateModules.map(dup => (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxHeight: 340, overflowY: 'auto', paddingRight: 4 }}>
+                {duplicateGroups.map(dup => (
                   <div key={dup.id} style={{
                     background: 'var(--bg-hover)', border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius)', padding: 12, display: 'flex', flexDirection: 'column', gap: 6
+                    borderRadius: 'var(--radius)', padding: 14, display: 'flex', flexDirection: 'column', gap: 10
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ fontWeight: 600, fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-primary)' }}>
+                      <span style={{ fontWeight: 700, fontFamily: 'var(--font-ui)', fontSize: 14, color: 'var(--text-primary)' }}>
                         {dup.name}
                       </span>
-                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', background: 'var(--bg-elevated)', padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border)' }}>
                         ID: {dup.id}
                       </span>
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                      Vorhanden in {dup.urls.length} Registries:
-                    </div>
-                    <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
-                      {dup.urls.map((url, i) => {
-                        const idx = registries.findIndex(r => r.url === url);
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {dup.instances.map(inst => {
+                        const regIdx = registries.findIndex(r => r.url === inst.registry_url);
+                        const isSelected = selectedRegistryForMod[dup.id] === inst.registry_url;
+
                         return (
-                          <li key={url}>
-                            Registry #{idx !== -1 ? idx + 1 : i + 1}: {url}
-                          </li>
+                          <div
+                            key={inst.registry_url}
+                            onClick={() => {
+                              const next = { ...selectedRegistryForMod, [dup.id]: inst.registry_url };
+                              setSelectedRegistryForMod(next);
+                              filterAndSetModules(rawStoreModules, next);
+                            }}
+                            style={{
+                              display: 'flex', flexDirection: 'column', gap: 6,
+                              padding: '10px 12px',
+                              background: isSelected ? 'var(--accent-dim)' : 'var(--bg-elevated)',
+                              border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`,
+                              borderRadius: 'var(--radius)',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease',
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span style={{
+                                  width: 20, height: 20, borderRadius: '50%',
+                                  background: isSelected ? 'var(--accent)' : 'var(--bg-hover)',
+                                  color: isSelected ? '#fff' : 'var(--text-muted)',
+                                  fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
+                                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                                }}>
+                                  {regIdx !== -1 ? regIdx + 1 : '?'}
+                                </span>
+                                <span style={{ fontFamily: 'var(--font-ui)', fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>
+                                  Registry #{regIdx !== -1 ? regIdx + 1 : '?'}
+                                </span>
+                                {inst.version && (
+                                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+                                    ({formatVersion(inst.version)})
+                                  </span>
+                                )}
+                              </div>
+                              <span style={{
+                                fontFamily: 'var(--font-ui)', fontSize: 12, fontWeight: 600,
+                                color: isSelected ? 'var(--accent)' : 'var(--text-muted)',
+                                display: 'flex', alignItems: 'center', gap: 4
+                              }}>
+                                {isSelected ? '✓ Ausgewählt' : 'Wählen'}
+                              </span>
+                            </div>
+                            <div style={{
+                              fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)',
+                              wordBreak: 'break-all', lineHeight: 1.4, paddingLeft: 28
+                            }}>
+                              {inst.registry_url}
+                            </div>
+                          </div>
                         );
                       })}
-                    </ul>
+                    </div>
                   </div>
                 ))}
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4 }}>
                 <button
                   style={{ ...buttonStyle, background: 'var(--accent)', color: '#fff' }}
                   onClick={() => setShowDuplicateModal(false)}
                 >
-                  Verstanden
+                  Auswahl übernehmen
                 </button>
               </div>
             </div>
