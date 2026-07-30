@@ -123,7 +123,7 @@ export function syncCustomTabsToLayout(customTabs: CustomTab[]): NavCategory[] {
       || cleanedLayout[0];
 
     if (!targetCategory) {
-      targetCategory = { id: 'cat_custom', label: 'Custom Tabs', items: [] };
+      targetCategory = { id: 'cat_custom', label: 'Tabs', items: [] };
       cleanedLayout.push(targetCategory);
     }
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Key, Lock, Plus, Trash2, Eye, EyeOff, CheckCircle, XCircle, Copy, AlertTriangle, Monitor, Database, Shield, Zap, ChevronUp, ChevronDown, FolderPlus, RotateCcw, Edit2, Check, X } from 'lucide-react';
+import { Key, Lock, Plus, Trash2, Eye, EyeOff, CheckCircle, XCircle, Copy, AlertTriangle, Monitor, Database, Shield, Zap, FolderPlus, RotateCcw, Edit2, Check, X, GripVertical } from 'lucide-react';
 import { api } from '../api';
 import PageTransition from './PageTransition';
 import { useIsMobile } from '../hooks/useBreakpoint';
@@ -38,6 +38,13 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
   const [editingCatId, setEditingCatId] = useState<string | null>(null);
   const [editingCatLabel, setEditingCatLabel] = useState('');
 
+  // Drag and Drop state
+  const [draggedCatIdx, setDraggedCatIdx] = useState<number | null>(null);
+  const [dragOverCatIdx, setDragOverCatIdx] = useState<number | null>(null);
+
+  const [draggedItem, setDraggedItem] = useState<{ catIdx: number; itemIdx: number } | null>(null);
+  const [dragOverItem, setDragOverItem] = useState<{ catIdx: number; itemIdx: number } | null>(null);
+
   const load = async () => {
     try {
       const res = await api.getCustomTabs();
@@ -45,7 +52,7 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
       setLayout(synced);
     } catch (err: any) {
       setLayout(getNavLayout());
-      addToast(err.message || 'Failed to load custom tabs', 'error');
+      addToast(err.message || 'Failed to load tabs', 'error');
     } finally {
       setLoading(false);
     }
@@ -63,21 +70,21 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
     try {
       await api.createCustomTab(newTabName.trim(), 'layout');
       setNewTabName('');
-      addToast(`Custom tab "${newTabName}" created`, 'success');
+      addToast(`Tab "${newTabName}" erstellt`, 'success');
       await load();
     } catch (err: any) {
-      addToast(err.message || 'Failed to create custom tab', 'error');
+      addToast(err.message || 'Fehler beim Erstellen des Tabs', 'error');
     }
   };
 
   const handleDeleteTab = async (slug: string, tabName: string) => {
-    if (!window.confirm(`Delete custom tab "${tabName}"?`)) return;
+    if (!window.confirm(`Tab "${tabName}" löschen?`)) return;
     try {
       await api.deleteCustomTab(slug);
-      addToast(`Custom tab "${tabName}" deleted`, 'success');
+      addToast(`Tab "${tabName}" gelöscht`, 'success');
       await load();
     } catch (err: any) {
-      addToast(err.message || 'Failed to delete custom tab', 'error');
+      addToast(err.message || 'Fehler beim Löschen des Tabs', 'error');
     }
   };
 
@@ -92,7 +99,7 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
     const nextLayout = [...layout, newCat];
     setNewCatName('');
     updateAndSaveLayout(nextLayout);
-    addToast(`Category "${newCat.label}" added`, 'success');
+    addToast(`Kategorie "${newCat.label}" hinzugefügt`, 'success');
   };
 
   const handleDeleteCategory = (catId: string, label: string) => {
@@ -118,45 +125,6 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
     addToast(`Kategorie "${label}" gelöscht`, 'success');
   };
 
-  const handleMoveCategory = (index: number, direction: 'up' | 'down') => {
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= layout.length) return;
-    const nextLayout = [...layout];
-    const [moved] = nextLayout.splice(index, 1);
-    nextLayout.splice(targetIndex, 0, moved);
-    updateAndSaveLayout(nextLayout);
-  };
-
-  const handleMoveItem = (catIndex: number, itemIndex: number, direction: 'up' | 'down') => {
-    const targetItemIndex = direction === 'up' ? itemIndex - 1 : itemIndex + 1;
-    const cat = layout[catIndex];
-    if (targetItemIndex < 0 || targetItemIndex >= cat.items.length) return;
-
-    const nextLayout = layout.map((c, idx) => {
-      if (idx !== catIndex) return c;
-      const items = [...c.items];
-      const [moved] = items.splice(itemIndex, 1);
-      items.splice(targetItemIndex, 0, moved);
-      return { ...c, items };
-    });
-
-    updateAndSaveLayout(nextLayout);
-  };
-
-  const handleTransferItem = (fromCatIndex: number, itemIndex: number, targetCatId: string) => {
-    const itemToMove = layout[fromCatIndex].items[itemIndex];
-    const nextLayout = layout.map((c, idx) => {
-      if (idx === fromCatIndex) {
-        return { ...c, items: c.items.filter((_, i) => i !== itemIndex) };
-      }
-      if (c.id === targetCatId) {
-        return { ...c, items: [...c.items, itemToMove] };
-      }
-      return c;
-    });
-    updateAndSaveLayout(nextLayout);
-  };
-
   const handleSaveCatRename = (catId: string) => {
     if (!editingCatLabel.trim()) return;
     const nextLayout = layout.map(c => c.id === catId ? { ...c, label: editingCatLabel.trim() } : c);
@@ -172,14 +140,83 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
     }
   };
 
+  // --- Category Drag & Drop ---
+  const handleCatDragStart = (e: React.DragEvent, catIdx: number) => {
+    e.stopPropagation();
+    setDraggedCatIdx(catIdx);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('type', 'category');
+  };
+
+  const handleCatDragOver = (e: React.DragEvent, catIdx: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (draggedCatIdx !== null && draggedCatIdx !== catIdx) {
+      setDragOverCatIdx(catIdx);
+    }
+  };
+
+  const handleCatDrop = (e: React.DragEvent, targetCatIdx: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverCatIdx(null);
+
+    if (draggedCatIdx !== null && draggedCatIdx !== targetCatIdx) {
+      const nextLayout = [...layout];
+      const [moved] = nextLayout.splice(draggedCatIdx, 1);
+      nextLayout.splice(targetCatIdx, 0, moved);
+      setDraggedCatIdx(null);
+      updateAndSaveLayout(nextLayout);
+    }
+  };
+
+  // --- Item Drag & Drop ---
+  const handleItemDragStart = (e: React.DragEvent, catIdx: number, itemIdx: number) => {
+    e.stopPropagation();
+    setDraggedItem({ catIdx, itemIdx });
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('type', 'item');
+  };
+
+  const handleItemDragOver = (e: React.DragEvent, catIdx: number, itemIdx?: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (draggedItem) {
+      setDragOverItem({ catIdx, itemIdx: itemIdx ?? -1 });
+    }
+  };
+
+  const handleItemDrop = (e: React.DragEvent, targetCatIdx: number, targetItemIdx?: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverItem(null);
+
+    if (!draggedItem) return;
+
+    const { catIdx: srcCatIdx, itemIdx: srcItemIdx } = draggedItem;
+    setDraggedItem(null);
+
+    const nextLayout = layout.map(c => ({ ...c, items: [...c.items] }));
+    const itemToMove = nextLayout[srcCatIdx].items.splice(srcItemIdx, 1)[0];
+    if (!itemToMove) return;
+
+    if (typeof targetItemIndex === 'number' && targetItemIndex >= 0) {
+      nextLayout[targetCatIdx].items.splice(targetItemIndex, 0, itemToMove);
+    } else {
+      nextLayout[targetCatIdx].items.push(itemToMove);
+    }
+
+    updateAndSaveLayout(nextLayout);
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       {/* Top Action Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
-        {/* Create Custom Tab */}
+        {/* Create Tab */}
         <div style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
           <label style={{ ...labelStyle, margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Zap size={14} color="var(--accent)" /> Neuen Custom Tab erstellen
+            <Zap size={14} color="var(--accent)" /> Neuen Tab erstellen
           </label>
           <div style={{ display: 'flex', gap: 8 }}>
             <input
@@ -212,7 +249,7 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
               value={newCatName}
               onChange={e => setNewCatName(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleAddCategory()}
-              placeholder="z. B. Custom Dashboards"
+              placeholder="z. B. Media Metrics"
               style={{ ...inputStyle, flex: 1 }}
             />
             <button
@@ -234,7 +271,7 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
             Sidebar-Navigation & Kategorien anpassen
           </h4>
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            Verschiebe Kategorien und Ordne Tabs per Klick oder Dropdown zu. Änderungen werden sofort in der Sidebar übernommen!
+            Verschiebe Kategorien und Tabs ganz einfach per Drag & Drop (Ziehen mit der Maus). Änderungen werden sofort in der Sidebar übernommen!
           </span>
         </div>
         <button
@@ -254,160 +291,157 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
         <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Keine Navigations-Kategorien vorhanden.</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {layout.map((cat, catIdx) => (
-            <div key={cat.id} style={{
-              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-              borderRadius: 'var(--radius)', overflow: 'hidden'
-            }}>
-              {/* Category Header */}
-              <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '10px 14px', background: 'var(--bg-hover)', borderBottom: '1px solid var(--border)'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
-                  {editingCatId === cat.id ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
-                      <input
-                        type="text"
-                        value={editingCatLabel}
-                        onChange={e => setEditingCatLabel(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && handleSaveCatRename(cat.id)}
-                        style={{ ...inputStyle, height: 30, fontSize: 13 }}
-                        autoFocus
-                      />
-                      <button className="btn btn-primary" style={{ height: 30, padding: '0 8px' }} onClick={() => handleSaveCatRename(cat.id)}>
-                        <Check size={14} />
-                      </button>
-                      <button className="btn btn-secondary" style={{ height: 30, padding: '0 8px' }} onClick={() => setEditingCatId(null)}>
-                        <X size={14} />
-                      </button>
+          {layout.map((cat, catIdx) => {
+            const isCatDragged = draggedCatIdx === catIdx;
+            const isCatDragOver = dragOverCatIdx === catIdx;
+
+            return (
+              <div
+                key={cat.id}
+                onDragOver={(e) => handleCatDragOver(e, catIdx)}
+                onDrop={(e) => {
+                  if (draggedCatIdx !== null) {
+                    handleCatDrop(e, catIdx);
+                  } else if (draggedItem !== null) {
+                    handleItemDrop(e, catIdx);
+                  }
+                }}
+                style={{
+                  background: 'var(--bg-elevated)',
+                  border: isCatDragOver ? '2px dashed var(--accent)' : '1px solid var(--border)',
+                  borderRadius: 'var(--radius)',
+                  overflow: 'hidden',
+                  opacity: isCatDragged ? 0.4 : 1,
+                  transition: 'border 0.15s ease, opacity 0.15s ease',
+                }}
+              >
+                {/* Category Header (Draggable for category reordering) */}
+                <div
+                  draggable={editingCatId !== cat.id}
+                  onDragStart={(e) => handleCatDragStart(e, catIdx)}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '10px 14px', background: 'var(--bg-hover)', borderBottom: '1px solid var(--border)',
+                    cursor: editingCatId === cat.id ? 'default' : 'grab',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+                    <GripVertical size={16} style={{ color: 'var(--text-muted)', flexShrink: 0, cursor: 'grab' }} />
+
+                    {editingCatId === cat.id ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+                        <input
+                          type="text"
+                          value={editingCatLabel}
+                          onChange={e => setEditingCatLabel(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && handleSaveCatRename(cat.id)}
+                          style={{ ...inputStyle, height: 30, fontSize: 13 }}
+                          autoFocus
+                        />
+                        <button className="btn btn-primary" style={{ height: 30, padding: '0 8px' }} onClick={() => handleSaveCatRename(cat.id)}>
+                          <Check size={14} />
+                        </button>
+                        <button className="btn btn-secondary" style={{ height: 30, padding: '0 8px' }} onClick={() => setEditingCatId(null)}>
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <span style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                          {cat.label}
+                        </span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                          ({cat.items.length} {cat.items.length === 1 ? 'Tab' : 'Tabs'})
+                        </span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setEditingCatId(cat.id); setEditingCatLabel(cat.label); }}
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex' }}
+                          title="Kategorie umbenennen"
+                        >
+                          <Edit2 size={12} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteCategory(cat.id, cat.label); }}
+                      style={{ background: 'transparent', border: 'none', color: 'var(--danger)', cursor: 'pointer', marginLeft: 6, opacity: 0.8 }}
+                      title="Kategorie löschen"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Items inside Category (Draggable between categories and within category) */}
+                <div
+                  onDragOver={(e) => handleItemDragOver(e, catIdx)}
+                  onDrop={(e) => handleItemDrop(e, catIdx)}
+                  style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 6, minHeight: 44 }}
+                >
+                  {cat.items.length === 0 ? (
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', padding: 8 }}>
+                      Keine Tabs in dieser Kategorie. Ziehe Tabs per Drag & Drop hierher.
                     </div>
                   ) : (
-                    <>
-                      <span style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                        {cat.label}
-                      </span>
-                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                        ({cat.items.length} {cat.items.length === 1 ? 'Tab' : 'Tabs'})
-                      </span>
-                      <button
-                        onClick={() => { setEditingCatId(cat.id); setEditingCatLabel(cat.label); }}
-                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex' }}
-                        title="Kategorie umbenennen"
-                      >
-                        <Edit2 size={12} />
-                      </button>
-                    </>
-                  )}
-                </div>
+                    cat.items.map((item, itemIdx) => {
+                      const isItemDragged = draggedItem?.catIdx === catIdx && draggedItem?.itemIdx === itemIdx;
+                      const isItemDragOver = dragOverItem?.catIdx === catIdx && dragOverItem?.itemIdx === itemIdx;
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <button
-                    disabled={catIdx === 0}
-                    onClick={() => handleMoveCategory(catIdx, 'up')}
-                    style={{ background: 'transparent', border: 'none', color: catIdx === 0 ? 'var(--border)' : 'var(--text-muted)', cursor: catIdx === 0 ? 'default' : 'pointer' }}
-                    title="Kategorie nach oben verschieben"
-                  >
-                    <ChevronUp size={16} />
-                  </button>
-                  <button
-                    disabled={catIdx === layout.length - 1}
-                    onClick={() => handleMoveCategory(catIdx, 'down')}
-                    style={{ background: 'transparent', border: 'none', color: catIdx === layout.length - 1 ? 'var(--border)' : 'var(--text-muted)', cursor: catIdx === layout.length - 1 ? 'default' : 'pointer' }}
-                    title="Kategorie nach unten verschieben"
-                  >
-                    <ChevronDown size={16} />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteCategory(cat.id, cat.label)}
-                    style={{ background: 'transparent', border: 'none', color: 'var(--danger)', cursor: 'pointer', marginLeft: 6, opacity: 0.8 }}
-                    title="Kategorie löschen"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-
-              {/* Items inside Category */}
-              <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {cat.items.length === 0 ? (
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', padding: 8 }}>
-                    Keine Tabs in dieser Kategorie. Verschiebe Tabs hierher.
-                  </div>
-                ) : (
-                  cat.items.map((item, itemIdx) => (
-                    <div key={item.id} style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '8px 12px', background: 'var(--bg-base)', border: '1px solid var(--border)',
-                      borderRadius: 'var(--radius)'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
-                          {item.label}
-                        </span>
-                        {item.isCustom && (
-                          <span style={{ fontSize: 10, background: 'var(--accent-dim)', color: 'var(--accent)', padding: '2px 6px', borderRadius: 4, fontFamily: 'var(--font-mono)' }}>
-                            Custom
-                          </span>
-                        )}
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
-                          {item.path}
-                        </span>
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {/* Transfer to another Category */}
-                        <select
-                          value={cat.id}
-                          onChange={e => handleTransferItem(catIdx, itemIdx, e.target.value)}
+                      return (
+                        <div
+                          key={item.id}
+                          draggable={true}
+                          onDragStart={(e) => handleItemDragStart(e, catIdx, itemIdx)}
+                          onDragOver={(e) => handleItemDragOver(e, catIdx, itemIdx)}
+                          onDrop={(e) => handleItemDrop(e, catIdx, itemIdx)}
                           style={{
-                            height: 26, padding: '0 6px', background: 'var(--bg-elevated)',
-                            border: '1px solid var(--border)', borderRadius: 4,
-                            color: 'var(--text-secondary)', fontSize: 11, fontFamily: 'var(--font-ui)'
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            padding: '8px 12px', background: 'var(--bg-base)',
+                            border: isItemDragOver ? '2px dashed var(--accent)' : '1px solid var(--border)',
+                            borderRadius: 'var(--radius)',
+                            opacity: isItemDragged ? 0.4 : 1,
+                            cursor: 'grab',
+                            transition: 'all 0.15s ease',
                           }}
                         >
-                          {layout.map(c => (
-                            <option key={c.id} value={c.id}>
-                              {c.label}
-                            </option>
-                          ))}
-                        </select>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <GripVertical size={14} style={{ color: 'var(--text-muted)', cursor: 'grab', flexShrink: 0 }} />
+                            <span style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
+                              {item.label}
+                            </span>
+                            {item.isCustom && (
+                              <span style={{ fontSize: 10, background: 'var(--accent-dim)', color: 'var(--accent)', padding: '2px 6px', borderRadius: 4, fontFamily: 'var(--font-mono)' }}>
+                                Custom
+                              </span>
+                            )}
+                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+                              {item.path}
+                            </span>
+                          </div>
 
-                        {/* Reorder within category */}
-                        <button
-                          disabled={itemIdx === 0}
-                          onClick={() => handleMoveItem(catIdx, itemIdx, 'up')}
-                          style={{ background: 'transparent', border: 'none', color: itemIdx === 0 ? 'var(--border)' : 'var(--text-muted)', cursor: itemIdx === 0 ? 'default' : 'pointer' }}
-                          title="Tab nach oben verschieben"
-                        >
-                          <ChevronUp size={14} />
-                        </button>
-                        <button
-                          disabled={itemIdx === cat.items.length - 1}
-                          onClick={() => handleMoveItem(catIdx, itemIdx, 'down')}
-                          style={{ background: 'transparent', border: 'none', color: itemIdx === cat.items.length - 1 ? 'var(--border)' : 'var(--text-muted)', cursor: itemIdx === cat.items.length - 1 ? 'default' : 'pointer' }}
-                          title="Tab nach unten verschieben"
-                        >
-                          <ChevronDown size={14} />
-                        </button>
-
-                        {/* Delete if custom */}
-                        {item.isCustom && item.customSlug && (
-                          <button
-                            onClick={() => handleDeleteTab(item.customSlug!, item.label)}
-                            style={{ background: 'transparent', border: 'none', color: 'var(--danger)', cursor: 'pointer', display: 'flex', marginLeft: 4 }}
-                            title="Custom Tab löschen"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))
-                )}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            {/* Delete if custom tab */}
+                            {item.isCustom && item.customSlug && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleDeleteTab(item.customSlug!, item.label); }}
+                                style={{ background: 'transparent', border: 'none', color: 'var(--danger)', cursor: 'pointer', display: 'flex', marginLeft: 4 }}
+                                title="Tab löschen"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -418,7 +452,7 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
 const TABS: { id: Tab; label: string; icon: React.ReactNode; desc: string }[] = [
   { id: 'security',   label: 'Security',   icon: <Lock size={15} />,    desc: 'Password & authentication' },
   { id: 'api',        label: 'API Keys',   icon: <Key size={15} />,     desc: 'Programmatic access tokens' },
-  { id: 'custom_tabs', label: 'Custom Tabs', icon: <Zap size={15} />,   desc: 'Custom modular dashboard tabs' },
+  { id: 'custom_tabs', label: 'Tabs',       icon: <Zap size={15} />,     desc: 'Modular dashboard tabs & navigation' },
   { id: 'appearance', label: 'Appearance', icon: <Monitor size={15} />, desc: 'Interface preferences' },
   { id: 'general',    label: 'General',    icon: <Database size={15} />, desc: 'Application defaults' },
 ];
