@@ -34,6 +34,13 @@ function formatVersion(version?: string): string {
   return `v${clean}`;
 }
 
+function formatRegistryError(error: string): string {
+  if (error.includes('invalid registry index') || error.includes('expected value') || error.includes('syntax error')) {
+    return 'Ungültige Registry-URL: Keine gültige index.json Datei erkannt';
+  }
+  return error;
+}
+
 export default function ModuleStore() {
   const { notify } = useNotifications();
   const [modules, setModules] = useState<StoreModule[]>([]);
@@ -170,7 +177,7 @@ export default function ModuleStore() {
             borderRadius: 'var(--radius)', color: 'var(--warning)', fontSize: 12, fontFamily: 'var(--font-ui)',
           }}>
             <AlertTriangle size={14} style={{ flexShrink: 0 }} />
-            <span>{e.registry_url}: {e.error}</span>
+            <span>{e.registry_url}: {formatRegistryError(e.error)}</span>
           </div>
         ))}
 

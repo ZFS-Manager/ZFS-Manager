@@ -97,9 +97,9 @@ async fn fetch_capped(client: &reqwest::Client, url: &str, cap: usize) -> Result
         .get(parsed)
         .send()
         .await
-        .map_err(|e| format!("fetch {url} failed: {e}"))?
+        .map_err(|_| format!("fetch {url} failed: Ungültige Registry-URL oder keine Verbindung möglich"))?
         .error_for_status()
-        .map_err(|e| format!("fetch {url} failed: {e}"))?;
+        .map_err(|_| format!("fetch {url} failed: Ungültige Registry-URL oder keine gültige index.json Datei erkannt (HTTP-Fehler)"))?;
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
         body.extend_from_slice(&chunk);
@@ -114,8 +114,8 @@ async fn fetch_capped(client: &reqwest::Client, url: &str, cap: usize) -> Result
 pub async fn fetch_index(url: &str) -> Result<RegistryIndex, String> {
     let client = registry_http()?;
     let body = fetch_capped(&client, url, MAX_INDEX_BYTES).await?;
-    let index: RegistryIndex =
-        serde_json::from_slice(&body).map_err(|e| format!("invalid registry index: {e}"))?;
+    let index: RegistryIndex = serde_json::from_slice(&body)
+        .map_err(|_| "Ungültige Registry-URL: Keine gültige index.json Datei erkannt".to_string())?;
     for entry in &index.modules {
         if entry.id.is_empty() || entry.wasm_sha256.len() != 64 {
             return Err(format!("registry entry {:?} is malformed", entry.id));
