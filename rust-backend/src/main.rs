@@ -395,10 +395,11 @@ async fn main() {
         }
     };
     if let Some(ref pg) = pg_client {
+        let registry_url = modules::registry::default_registry_url();
         let _ = pg
             .execute(
                 "INSERT INTO module_registries(url, is_default) VALUES($1, TRUE) ON CONFLICT (url) DO NOTHING",
-                &[&modules::registry::DEFAULT_REGISTRY_URL],
+                &[&registry_url],
             )
             .await;
     }

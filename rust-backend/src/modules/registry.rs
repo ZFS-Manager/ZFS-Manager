@@ -7,6 +7,13 @@ use super::manifest::{Manifest, MAX_MANIFEST_BYTES, MAX_WASM_BYTES};
 pub const DEFAULT_REGISTRY_URL: &str =
     "https://raw.githubusercontent.com/ZFS-Manager/ZFS-Manager/main/registry/index.json";
 
+pub fn default_registry_url() -> String {
+    match std::env::var("MODULE_REGISTRY_URL") {
+        Ok(url) if !url.trim().is_empty() => url.trim().to_string(),
+        _ => DEFAULT_REGISTRY_URL.to_string(),
+    }
+}
+
 const MAX_INDEX_BYTES: usize = 1024 * 1024;
 
 /// One module as listed in a registry index.
