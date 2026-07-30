@@ -26,6 +26,14 @@ const buttonStyle: React.CSSProperties = {
   fontWeight: 600, cursor: 'pointer',
 };
 
+function formatVersion(version?: string): string {
+  if (!version) return '';
+  const trimmed = version.trim();
+  if (!trimmed) return '';
+  const clean = trimmed.replace(/^v+/i, '');
+  return `v${clean}`;
+}
+
 export default function ModuleStore() {
   const { notify } = useNotifications();
   const [modules, setModules] = useState<StoreModule[]>([]);
@@ -306,7 +314,7 @@ export default function ModuleStore() {
                             setSelectedWasmUrl(rel.wasm_url);
                           }}
                         />
-                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{rel.tag_name}</span>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{formatVersion(rel.tag_name)}</span>
                       </div>
                       {rel.published_at && (
                         <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>

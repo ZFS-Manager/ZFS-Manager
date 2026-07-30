@@ -25,6 +25,14 @@ function formatTime(iso: string | null): string {
   });
 }
 
+function formatVersion(version?: string): string {
+  if (!version) return '';
+  const trimmed = version.trim();
+  if (!trimmed) return '';
+  const clean = trimmed.replace(/^v+/i, '');
+  return `v${clean}`;
+}
+
 function RunStatus({ success }: { success: boolean | null }) {
   if (success === null) return <Clock size={14} style={{ color: 'var(--warning)' }} />;
   return success
@@ -158,7 +166,7 @@ export default function ActiveModules() {
                     {mod.name}
                   </span>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
-                    v{mod.version}{mod.source === 'sideload' ? ' · sideloaded' : ''}
+                    {formatVersion(mod.version)}{mod.source === 'sideload' ? ' · sideloaded' : ''}
                   </span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-muted)' }}>
