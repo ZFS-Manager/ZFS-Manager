@@ -1,0 +1,91 @@
+import { api } from '../api';
+import { StoreModule, ActiveModule } from '../types';
+
+const STORE_CACHE_KEY = 'zfs_module_store_cache';
+const ACTIVE_CACHE_KEY = 'zfs_active_modules_cache';
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+interface CacheEntry<T> {
+  timestamp: number;
+  data: T;
+}
+
+export function isUpdateAvailable(currentVersion?: string, latestVersion?: string): boolean {
+  if (!currentVersion || !latestVersion) return false;
+  const currentClean = currentVersion.trim().replace(/^v+/i, '');
+  const latestClean = latestVersion.trim().replace(/^v+/i, '');
+
+  if (!currentClean || !latestClean || currentClean === latestClean) return false;
+
+  const cParts = currentClean.split('.').map(part => parseInt(part, 10) || 0);
+  const lParts = latestClean.split('.').map(part => parseInt(part, 10) || 0);
+
+  for (let i = 0; i < Math.max(cParts.length, lParts.length); i++) {
+    const c = cParts[i] || 0;
+    const l = lParts[i] || 0;
+    if (l > c) return true;
+    if (l < c) return false;
+  }
+  return false;
+}
+
+export async function getModuleStoreCached(forceRefresh = false): Promise<{ modules: StoreModule[]; errors: Array<{ registry_url: string; error: string }> }> {
+  if (!forceRefresh) {
+    try {
+      const raw = localStorage.getItem(STORE_CACHE_KEY);
+      if (raw) {
+        const entry: CacheEntry<{ modules: StoreModule[]; errors: Array<{ registry_url: string; error: string }> }> = JSON.parse(raw);
+        if (Date.now() - entry.timestamp < CACHE_TTL_MS) {
+          return entry.data;
+        }
+      }
+    } catch {
+      // Ignore cache parse error
+    }
+  }
+
+  const freshData = await api.getModuleStore();
+  try {
+    localStorage.setItem(STORE_CACHE_KEY, JSON.stringify({
+      timestamp: Date.now(),
+      data: freshData,
+    }));
+  } catch (err) {
+    console.warn('Failed to cache module store data:', err);
+  }
+
+  return freshData;
+}
+
+export async function getActiveModulesCached(forceRefresh = false): Promise<{ modules: ActiveModule[] }> {
+  if (!forceRefresh) {
+    try {
+      const raw = localStorage.getItem(ACTIVE_CACHE_KEY);
+      if (raw) {
+        const entry: CacheEntry<{ modules: ActiveModule[] }> = JSON.parse(raw);
+        if (Date.now() - entry.timestamp < CACHE_TTL_MS) {
+          return entry.data;
+        }
+      }
+    } catch {
+      // Ignore cache parse error
+    }
+  }
+
+  const freshData = await api.getActiveModules();
+  try {
+    localStorage.setItem(ACTIVE_CACHE_KEY, JSON.stringify({
+      timestamp: Date.now(),
+      data: freshData,
+    }));
+  } catch (err) {
+    console.warn('Failed to cache active modules data:', err);
+  }
+
+  return freshData;
+}
+
+export function clearModuleCache(): void {
+  localStorage.removeItem(STORE_CACHE_KEY);
+  localStorage.removeItem(ACTIVE_CACHE_KEY);
+}

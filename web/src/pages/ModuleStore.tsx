@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Package, Plus, Trash2, Download, CheckCircle, AlertTriangle, RefreshCw, X } from 'lucide-react';
+import { Package, Plus, Trash2, Download, CheckCircle, AlertTriangle, RefreshCw, X, ArrowUpCircle } from 'lucide-react';
 import { api } from '../api';
 import { StoreModule } from '../types';
 import PageTransition from '../components/PageTransition';
 import { useNotifications } from '../context/NotificationContext';
+import { getModuleStoreCached, isUpdateAvailable } from '../utils/moduleCache';
 
 const cardStyle: React.CSSProperties = {
   background: 'var(--bg-elevated)', border: '1px solid var(--border)',
@@ -106,13 +107,17 @@ export default function ModuleStore() {
     setModules(result);
   };
 
-  const reload = async (isNewAdd = false) => {
+  const reload = async (isNewAdd = false, forceRefresh = false) => {
     setLoading(true);
     try {
-      const [store, regs] = await Promise.all([api.getModuleStore(), api.getRegistries()]);
+      const [store, regs] = await Promise.all([getModuleStoreCached(forceRefresh), api.getRegistries()]);
       setRegistries(regs.registries);
       setErrors(store.errors);
       setRawStoreModules(store.modules);
+
+      if (forceRefresh) {
+        notify({ type: 'success', title: 'Module Store', message: 'Module store cache updated from registries.' });
+      }
 
       // Detect duplicate modules across registries
       const grouped = new Map<string, StoreModule[]>();
@@ -275,7 +280,7 @@ export default function ModuleStore() {
                 <AlertTriangle size={14} /> Duplicates ({duplicateGroups.length})
               </button>
             )}
-            <button style={buttonStyle} onClick={() => reload(false)} title="Refresh">
+            <button style={buttonStyle} onClick={() => reload(false, true)} title="Cache leeren & Registries neu abfragen">
               <RefreshCw size={14} /> Refresh
             </button>
           </div>
@@ -299,6 +304,7 @@ export default function ModuleStore() {
           {modules.map(mod => {
             const regIdx = registries.findIndex(r => r.url === mod.registry_url);
             const regNumber = regIdx !== -1 ? regIdx + 1 : null;
+            const hasUpdate = mod.installed && isUpdateAvailable(mod.installed_version, mod.version);
 
             return (
               <div key={`${mod.registry_url}:${mod.id}`} style={cardStyle}>
@@ -321,20 +327,33 @@ export default function ModuleStore() {
                     </div>
                   </div>
 
-                  {regNumber !== null && (
-                    <div
-                      title={`Registry #${regNumber}: ${mod.registry_url}`}
-                      style={{
-                        width: 24, height: 24, borderRadius: '50%',
-                        background: 'var(--accent-dim)', border: '1px solid var(--accent-mid)',
-                        color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        flexShrink: 0, cursor: 'help'
-                      }}
-                    >
-                      {regNumber}
-                    </div>
-                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {hasUpdate && (
+                      <span style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                        background: 'rgba(245, 158, 11, 0.15)', color: 'var(--warning, #f59e0b)',
+                        border: '1px solid rgba(245, 158, 11, 0.35)', borderRadius: 4,
+                        padding: '2px 7px', fontSize: 10, fontWeight: 700,
+                        fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.04em'
+                      }}>
+                        <ArrowUpCircle size={11} /> Update Available
+                      </span>
+                    )}
+                    {regNumber !== null && (
+                      <div
+                        title={`Registry #${regNumber}: ${mod.registry_url}`}
+                        style={{
+                          width: 24, height: 24, borderRadius: '50%',
+                          background: 'var(--accent-dim)', border: '1px solid var(--accent-mid)',
+                          color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          flexShrink: 0, cursor: 'help'
+                        }}
+                      >
+                        {regNumber}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <p style={{ fontFamily: 'var(--font-ui)', fontSize: 12.5, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5, flex: 1 }}>
@@ -347,11 +366,11 @@ export default function ModuleStore() {
                       <span>Installed {mod.installed_version ? `(${formatVersion(mod.installed_version)})` : ''}</span>
                     </div>
                     <button
-                      style={{ ...buttonStyle, opacity: busyId === mod.id ? 0.6 : 1, padding: '0 10px', height: 28, fontSize: 11 }}
+                      style={{ ...buttonStyle, opacity: busyId === mod.id ? 0.6 : 1, padding: '0 10px', height: 28, fontSize: 11, color: hasUpdate ? 'var(--warning)' : 'var(--text-secondary)', borderColor: hasUpdate ? 'rgba(245, 158, 11, 0.4)' : 'var(--border)' }}
                       disabled={busyId === mod.id}
                       onClick={() => openInstallModal(mod)}
                     >
-                      <RefreshCw size={12} /> Switch Version
+                      <RefreshCw size={12} /> {hasUpdate ? 'Update / Switch' : 'Switch Version'}
                     </button>
                   </div>
                 ) : (

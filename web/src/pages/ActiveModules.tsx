@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import {
   Package, Play, Trash2, ChevronDown, ChevronUp,
-  CheckCircle, XCircle, Clock, History,
+  CheckCircle, XCircle, Clock, History, RefreshCw, ArrowUpCircle,
 } from 'lucide-react';
 import { api } from '../api';
-import { ActiveModule, ModuleRun } from '../types';
+import { ActiveModule, ModuleRun, StoreModule } from '../types';
 import ModuleConfigForm from '../components/ModuleConfigForm';
 import PageTransition from '../components/PageTransition';
 import { useNotifications } from '../context/NotificationContext';
+import { getActiveModulesCached, getModuleStoreCached, isUpdateAvailable } from '../utils/moduleCache';
 
 const buttonStyle: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -43,15 +44,28 @@ function RunStatus({ success }: { success: boolean | null }) {
 export default function ActiveModules() {
   const { notify } = useNotifications();
   const [modules, setModules] = useState<ActiveModule[]>([]);
+  const [storeModulesMap, setStoreModulesMap] = useState<Record<string, StoreModule>>({});
   const [expanded, setExpanded] = useState<string | null>(null);
   const [runs, setRuns] = useState<Record<string, ModuleRun[]>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const reload = async () => {
+  const reload = async (forceRefresh = false) => {
+    setLoading(true);
     try {
-      const res = await api.getActiveModules();
-      setModules(res.modules);
+      const [activeRes, storeRes] = await Promise.all([
+        getActiveModulesCached(forceRefresh),
+        getModuleStoreCached(forceRefresh),
+      ]);
+      setModules(activeRes.modules);
+
+      const map: Record<string, StoreModule> = {};
+      storeRes.modules.forEach(m => { map[m.id] = m; });
+      setStoreModulesMap(map);
+
+      if (forceRefresh) {
+        notify({ type: 'success', title: 'Active Modules', message: 'Modules & update info refreshed.' });
+      }
     } catch (err) {
       notify({ type: 'error', title: 'Modules', message: `Failed to load modules: ${(err as Error).message}` });
     } finally {
@@ -129,13 +143,18 @@ export default function ActiveModules() {
   return (
     <PageTransition>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div>
-          <h2 style={{ fontFamily: 'var(--font-ui)', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-            Active Modules
-          </h2>
-          <p style={{ fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 0' }}>
-            Installed modules, their schedules, configuration and run history.
-          </p>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <h2 style={{ fontFamily: 'var(--font-ui)', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+              Active Modules
+            </h2>
+            <p style={{ fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+              Installed modules, their schedules, configuration and run history.
+            </p>
+          </div>
+          <button style={buttonStyle} onClick={() => reload(true)} title="Cache leeren & Registries neu abfragen">
+            <RefreshCw size={14} /> Refresh
+          </button>
         </div>
 
         {!loading && modules.length === 0 && (
@@ -144,37 +163,52 @@ export default function ActiveModules() {
           </div>
         )}
 
-        {modules.map(mod => (
-          <div key={mod.id} style={{
-            background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-            borderRadius: 'var(--radius)', overflow: 'hidden',
-          }}>
-            <div
-              style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', cursor: 'pointer' }}
-              onClick={() => toggleExpand(mod.id)}
-            >
-              <div style={{
-                width: 34, height: 34, background: 'var(--accent-dim)',
-                border: '1px solid var(--accent-mid)', borderRadius: 'var(--radius)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-              }}>
-                <Package size={16} color="var(--accent)" />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontFamily: 'var(--font-ui)', fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
-                    {mod.name}
-                  </span>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
-                    {formatVersion(mod.version)}{mod.source === 'sideload' ? ' · sideloaded' : ''}
-                  </span>
+        {modules.map(mod => {
+          const storeMod = storeModulesMap[mod.id];
+          const hasUpdate = storeMod ? isUpdateAvailable(mod.version, storeMod.version) : false;
+
+          return (
+            <div key={mod.id} style={{
+              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)', overflow: 'hidden',
+            }}>
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', cursor: 'pointer' }}
+                onClick={() => toggleExpand(mod.id)}
+              >
+                <div style={{
+                  width: 34, height: 34, background: 'var(--accent-dim)',
+                  border: '1px solid var(--accent-mid)', borderRadius: 'var(--radius)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                }}>
+                  <Package size={16} color="var(--accent)" />
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-muted)' }}>
-                  {mod.last_run
-                    ? <><RunStatus success={mod.last_run.success} /> Last run {formatTime(mod.last_run.started_at)}</>
-                    : 'Never ran'}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontFamily: 'var(--font-ui)', fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {mod.name}
+                    </span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+                      {formatVersion(mod.version)}{mod.source === 'sideload' ? ' · sideloaded' : ''}
+                    </span>
+                    {hasUpdate && (
+                      <span style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                        background: 'rgba(245, 158, 11, 0.15)', color: 'var(--warning, #f59e0b)',
+                        border: '1px solid rgba(245, 158, 11, 0.35)', borderRadius: 4,
+                        padding: '2px 7px', fontSize: 10, fontWeight: 700,
+                        fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.04em'
+                      }}>
+                        <ArrowUpCircle size={11} /> Update Available
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-muted)' }}>
+                    {mod.last_run
+                      ? <><RunStatus success={mod.last_run.success} /> Last run {formatTime(mod.last_run.started_at)}</>
+                      : 'Never ran'}
+                  </div>
                 </div>
-              </div>
 
               <button
                 onClick={e => { e.stopPropagation(); toggleEnabled(mod); }}
@@ -301,8 +335,9 @@ export default function ActiveModules() {
               </div>
             )}
           </div>
-        ))}
-      </div>
-    </PageTransition>
+        );
+      })}
+    </div>
+  </PageTransition>
   );
 }
