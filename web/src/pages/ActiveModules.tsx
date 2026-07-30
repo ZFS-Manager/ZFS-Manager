@@ -99,7 +99,7 @@ export default function ActiveModules() {
   const toggleEnabled = async (mod: ActiveModule) => {
     try {
       await api.setModuleEnabled(mod.id, !mod.enabled);
-      await reload();
+      await reload(true);
     } catch (err) {
       notify({ type: 'error', title: 'Modules', message: `Toggle failed: ${(err as Error).message}` });
     }
@@ -116,7 +116,7 @@ export default function ActiveModules() {
           ? `Run finished: ${result.metrics_written} metrics written`
           : `Run failed: ${result.error ?? 'unknown error'}`,
       });
-      await reload();
+      await reload(true);
       await loadRuns(mod.id);
     } catch (err) {
       notify({ type: 'error', title: mod.name, message: `Run failed: ${(err as Error).message}` });
@@ -131,7 +131,7 @@ export default function ActiveModules() {
       await api.uninstallModule(mod.id);
       notify({ type: 'success', title: 'Modules', message: `"${mod.name}" uninstalled` });
       setExpanded(null);
-      await reload();
+      await reload(true);
     } catch (err) {
       notify({ type: 'error', title: 'Modules', message: `Uninstall failed: ${(err as Error).message}` });
     }
@@ -141,7 +141,7 @@ export default function ActiveModules() {
     try {
       await api.updateModuleConfig(mod.id, config, secrets);
       notify({ type: 'success', title: mod.name, message: 'Configuration saved' });
-      await reload();
+      await reload(true);
     } catch (err) {
       notify({ type: 'error', title: mod.name, message: `Saving failed: ${(err as Error).message}` });
       throw err;
