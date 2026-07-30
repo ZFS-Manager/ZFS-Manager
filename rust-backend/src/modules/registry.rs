@@ -157,7 +157,7 @@ pub async fn download_package_custom(
         ));
     }
 
-    let target_wasm_url = custom_wasm_url.unwrap_or_else(|| entry.wasm_url.clone());
+    let target_wasm_url = custom_wasm_url.as_ref().unwrap_or(&entry.wasm_url).clone();
     if let Some(v) = custom_version {
         manifest.version = v;
     } else if manifest.version.is_empty() {
