@@ -57,9 +57,7 @@ pub struct PoolImportConfig {
 fn default_true() -> bool { true }
 
 pub fn get_imports_file() -> String {
-    let data_dir = std::env::var("ZFS_MANAGER_DATA")
-        .unwrap_or_else(|_| "/home/docker/zfs-manager".to_string());
-    format!("{}/pool_imports.json", data_dir)
+    format!("{}/pool_imports.json", crate::startup::data_dir())
 }
 
 pub fn load_import_configs() -> Vec<PoolImportConfig> {
@@ -660,12 +658,13 @@ async fn pool_vdevs(Path(name): Path<String>) -> Result<Json<Value>, ApiError> {
 
     // Pass 1: resolve SCSI IDs / full paths to short kernel device names.
     // Disk tuple: (short_name, state, replacing_with_short, via_spare, being_replaced_by_short)
-    let mut vdev_data: Vec<(String, String, Vec<(String, String, Option<String>, bool, Option<String>)>)> = Vec::with_capacity(raw_vdevs.len());
+    type DiskEntry = (String, String, Option<String>, bool, Option<String>);
+    let mut vdev_data: Vec<(String, String, Vec<DiskEntry>)> = Vec::with_capacity(raw_vdevs.len());
     for vdev in raw_vdevs {
         let vtype     = vdev["type"].as_str().unwrap_or("stripe").to_string();
         let vname     = vdev["name"].as_str().unwrap_or("").to_string();
         let raw_disks = vdev["disks"].as_array().cloned().unwrap_or_default();
-        let mut disks: Vec<(String, String, Option<String>, bool, Option<String>)> = Vec::with_capacity(raw_disks.len());
+        let mut disks: Vec<DiskEntry> = Vec::with_capacity(raw_disks.len());
         for disk in raw_disks {
             let raw_path   = disk["path"].as_str().unwrap_or("").to_string();
             let short      = crate::worker::resolve_disk_short_name(&raw_path).await;

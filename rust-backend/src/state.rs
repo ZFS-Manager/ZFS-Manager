@@ -43,6 +43,10 @@ pub struct AppState {
     pub redis: Option<ConnectionManager>,
     pub pg: Option<Arc<Client>>,
     pub rate_limit: RateLimitMap,
+    /// Shared Wasm engine for the module system.
+    pub module_runtime: Option<Arc<crate::modules::runtime::ModuleRuntime>>,
+    /// AES-256 master key for module secrets.
+    pub master_key: Option<[u8; 32]>,
     pub total_read_bytes: Arc<AtomicU64>,
     pub total_write_bytes: Arc<AtomicU64>,
     /// Shared iostat cache between the fast loop and the 1s slow loop.
