@@ -7,6 +7,9 @@ import {
   Store, Blocks,
 } from 'lucide-react';
 
+import { api } from '../api';
+import { CustomTab } from '../types';
+
 const NAV_GROUPS = [
   {
     label: 'Overview',
@@ -64,13 +67,18 @@ export default function Sidebar({
   const location = useLocation();
   const [hoverExpanded, setHoverExpanded] = useState(false);
   const [githubVersion, setGithubVersion] = useState<string | null>(null);
+  const [customTabs, setCustomTabs] = useState<CustomTab[]>([]);
 
   useEffect(() => {
     fetch('https://api.github.com/repos/ZFS-Manager/ZFS-Manager/releases/latest')
       .then(r => r.json())
       .then(d => { if (d?.tag_name) setGithubVersion(d.tag_name); })
       .catch(() => {});
-  }, []);
+
+    api.getCustomTabs()
+      .then(res => setCustomTabs(res.tabs))
+      .catch(() => {});
+  }, [location.pathname]);
 
   const isMobile = breakpoint === 'mobile';
   const isTablet = breakpoint === 'tablet';
@@ -178,6 +186,61 @@ export default function Sidebar({
         flex: 1, overflowY: 'auto', overflowX: 'hidden',
         padding: isCollapsed ? '12px 6px' : '12px 8px',
       }} className="no-scrollbar">
+        {customTabs.length > 0 && (
+          <div style={{ marginBottom: 24 }}>
+            {!isCollapsed && (
+              <div style={{
+                fontFamily: 'var(--font-ui)', fontSize: 10, fontWeight: 600,
+                letterSpacing: '0.12em', textTransform: 'uppercase',
+                color: 'var(--text-muted)', padding: '0 10px 6px',
+              }}>Custom Tabs</div>
+            )}
+            {customTabs.map(tab => {
+              const path = `/custom/${tab.slug}`;
+              const isActive = location.pathname === path;
+              return (
+                <NavLink
+                  key={tab.slug}
+                  to={path}
+                  onClick={handleNavClick}
+                  title={isCollapsed ? tab.name : undefined}
+                  style={{
+                    display: 'flex', alignItems: 'center',
+                    gap: isCollapsed ? 0 : 10, height: 40,
+                    padding: isCollapsed ? '0' : '0 10px',
+                    justifyContent: isCollapsed ? 'center' : 'flex-start',
+                    borderRadius: 'var(--radius)', marginBottom: 2,
+                    color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
+                    background: isActive ? 'var(--accent-dim)' : 'transparent',
+                    borderLeft: isCollapsed ? 'none' : (isActive ? '3px solid var(--accent)' : '3px solid transparent'),
+                    outline: isCollapsed && isActive ? '2px solid var(--accent)' : 'none',
+                    outlineOffset: 2,
+                    fontFamily: 'var(--font-ui)', fontSize: 13,
+                    fontWeight: isActive ? 500 : 400,
+                    textDecoration: 'none', transition: 'all 0.1s ease', cursor: 'pointer',
+                    whiteSpace: 'nowrap', overflow: 'hidden',
+                  }}
+                  onMouseEnter={e => {
+                    if (!isActive) {
+                      (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)';
+                      (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)';
+                    }
+                  }}
+                  onMouseLeave={e => {
+                    if (!isActive) {
+                      (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)';
+                      (e.currentTarget as HTMLElement).style.background = 'transparent';
+                    }
+                  }}
+                >
+                  <Blocks size={18} strokeWidth={isActive ? 2 : 1.75} style={{ flexShrink: 0 }} />
+                  {!isCollapsed && tab.name}
+                </NavLink>
+              );
+            })}
+          </div>
+        )}
+
         {NAV_GROUPS.map((group, gi) => (
           <div key={gi} style={{ marginBottom: gi < NAV_GROUPS.length - 1 ? 24 : 0 }}>
             {!isCollapsed && (

@@ -127,6 +127,57 @@ export interface ModuleLastRun {
   message: string | null;
 }
 
+export interface WidgetDefinition {
+  key: string;
+  label: string;
+  type: 'stat' | 'line' | 'bar' | 'gauge' | 'table';
+  metrics: string[];
+  unit?: string;
+  color?: string;
+  description?: string;
+}
+
+export interface StatusField {
+  key: string;
+  label: string;
+  metric?: string;
+  unit?: string;
+  format?: string;
+}
+
+export interface ModuleAction {
+  key: string;
+  label: string;
+  icon?: string;
+  description?: string;
+}
+
+export interface CustomTabWidgetPlacement {
+  id: string;
+  module_id: string;
+  widget_key: string;
+  title?: string;
+  visible?: boolean;
+  order?: number;
+  width?: 'full' | 'half' | 'third';
+}
+
+export interface CustomTab {
+  id: number;
+  name: string;
+  slug: string;
+  icon: string;
+  sort_order: number;
+  layout: CustomTabWidgetPlacement[];
+  created_at: string;
+}
+
+export interface ModuleMetricPoint {
+  metric_name: string;
+  value: number;
+  collected_at: string;
+}
+
 export interface ActiveModule {
   id: string;
   name: string;
@@ -140,6 +191,9 @@ export interface ActiveModule {
   enabled: boolean;
   installed_at: string;
   config_schema: ModuleConfigField[];
+  widget_schema?: WidgetDefinition[];
+  status_fields?: StatusField[];
+  actions?: ModuleAction[];
   config: Record<string, unknown>;
   secret_keys_set: string[];
   last_run: ModuleLastRun | null;

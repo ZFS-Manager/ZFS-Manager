@@ -200,10 +200,87 @@ export default function ActiveModules() {
                   {mod.description}
                 </p>
 
-                <div style={{ display: 'flex', gap: 8 }}>
+                {/* Version Switcher */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  background: 'var(--bg-hover)', border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius)', padding: '8px 12px',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontFamily: 'var(--font-ui)', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                      Installed Version:
+                    </span>
+                    <span style={{
+                      fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
+                      background: 'var(--accent-dim)', color: 'var(--accent)',
+                      padding: '2px 8px', borderRadius: 4, border: '1px solid var(--accent-mid)',
+                    }}>
+                      {formatVersion(mod.version)}
+                    </span>
+                  </div>
+
+                  <select
+                    value={mod.version}
+                    onChange={async e => {
+                      const newVer = e.target.value;
+                      if (newVer === mod.version) return;
+                      try {
+                        setBusy(mod.id);
+                        await api.switchModuleVersion(mod.id, newVer, '');
+                        notify({ type: 'success', title: mod.name, message: `Switched to version ${newVer}` });
+                        await reload();
+                      } catch (err) {
+                        notify({ type: 'error', title: mod.name, message: `Version switch failed: ${(err as Error).message}` });
+                      } finally {
+                        setBusy(null);
+                      }
+                    }}
+                    style={{
+                      background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius)', color: 'var(--text-primary)',
+                      fontSize: 11, fontFamily: 'var(--font-ui)', padding: '4px 8px', cursor: 'pointer',
+                    }}
+                  >
+                    <option value={mod.version}>{formatVersion(mod.version)} (Current)</option>
+                    <option value="1.0.0">v1.0.0</option>
+                    <option value="1.1.0">v1.1.0</option>
+                    <option value="2.0.0">v2.0.0</option>
+                  </select>
+                </div>
+
+                {/* Dynamic Actions & Execution Buttons */}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <button style={buttonStyle} disabled={busy === mod.id} onClick={() => runNow(mod)}>
                     <Play size={13} /> {busy === mod.id ? 'Running…' : 'Run now'}
                   </button>
+
+                  {mod.actions?.map(act => (
+                    <button
+                      key={act.key}
+                      style={{ ...buttonStyle, borderColor: 'var(--accent-mid)', color: 'var(--accent)' }}
+                      disabled={busy === mod.id}
+                      onClick={async () => {
+                        try {
+                          setBusy(mod.id);
+                          const res = await api.executeModuleAction(mod.id, act.key);
+                          notify({
+                            type: res.success ? 'success' : 'error',
+                            title: `${mod.name}: ${act.label}`,
+                            message: res.message || (res.success ? 'Action executed' : 'Action failed'),
+                          });
+                          await reload();
+                          await loadRuns(mod.id);
+                        } catch (err) {
+                          notify({ type: 'error', title: mod.name, message: `Action failed: ${(err as Error).message}` });
+                        } finally {
+                          setBusy(null);
+                        }
+                      }}
+                    >
+                      <Play size={13} /> {act.label}
+                    </button>
+                  ))}
+
                   <button
                     style={{ ...buttonStyle, color: 'var(--danger)' }}
                     onClick={() => uninstall(mod)}
@@ -211,6 +288,28 @@ export default function ActiveModules() {
                     <Trash2 size={13} /> Uninstall
                   </button>
                 </div>
+
+                {/* Dynamic Status Fields */}
+                {mod.status_fields && mod.status_fields.length > 0 && (
+                  <div style={{
+                    background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius)', padding: 12, display: 'flex', flexDirection: 'column', gap: 8,
+                  }}>
+                    <div style={{ fontFamily: 'var(--font-ui)', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
+                      Module Status & Fields
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 }}>
+                      {mod.status_fields.map(sf => (
+                        <div key={sf.key} style={{ background: 'var(--bg-elevated)', padding: '8px 10px', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
+                          <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--text-muted)' }}>{sf.label}</div>
+                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginTop: 2 }}>
+                            {sf.unit ? `— ${sf.unit}` : 'Active'}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <ModuleConfigForm
                   module={mod}

@@ -13,6 +13,7 @@ import Settings from './components/Settings';
 import Notifications from './pages/Notifications';
 import ModuleStore from './pages/ModuleStore';
 import ActiveModules from './pages/ActiveModules';
+import CustomTabPage from './pages/CustomTabPage';
 import { ZFSPool, ZFSDataset, ZFSLog } from './types';
 import { api, formatBytes, setApiKey } from './api';
 import { Bell } from 'lucide-react';
@@ -728,6 +729,7 @@ export default function App() {
               } />
               <Route path="/store" element={<ModuleStore />} />
               <Route path="/modules" element={<ActiveModules />} />
+              <Route path="/custom/:slug" element={<CustomTabPage />} />
               <Route path="/notifications" element={<Notifications />} />
               <Route path="/login" element={<Navigate to="/dashboard" replace />} />
             </Routes>

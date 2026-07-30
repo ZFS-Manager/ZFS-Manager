@@ -27,6 +27,15 @@ pub struct Manifest {
     /// Field definitions the frontend renders as a config form.
     #[serde(default)]
     pub config_schema: Vec<ConfigField>,
+    /// Widget definitions the frontend renders as module dashboard widgets.
+    #[serde(default)]
+    pub widget_schema: Vec<WidgetDefinition>,
+    /// Status fields for dynamic display in Active Modules UI.
+    #[serde(default)]
+    pub status_fields: Vec<StatusField>,
+    /// Action buttons for execution in Active Modules UI.
+    #[serde(default)]
+    pub actions: Vec<ModuleAction>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -55,8 +64,51 @@ pub struct ConfigField {
     pub description: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WidgetDefinition {
+    pub key: String,
+    pub label: String,
+    /// stat | line | bar | gauge | table
+    #[serde(rename = "type")]
+    pub widget_type: String,
+    /// Which metric names this widget displays
+    pub metrics: Vec<String>,
+    #[serde(default)]
+    pub unit: String,
+    #[serde(default)]
+    pub color: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusField {
+    pub key: String,
+    pub label: String,
+    #[serde(default)]
+    pub metric: String,
+    #[serde(default)]
+    pub unit: String,
+    #[serde(default)]
+    pub format: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModuleAction {
+    pub key: String,
+    pub label: String,
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub description: String,
+}
+
 const ALLOWED_FIELD_TYPES: &[&str] = &[
     "text", "url", "secret", "number", "select", "multiselect", "schedule",
+];
+
+const ALLOWED_WIDGET_TYPES: &[&str] = &[
+    "stat", "line", "bar", "gauge", "table",
 ];
 
 impl Manifest {
@@ -110,6 +162,23 @@ impl Manifest {
             }
             if matches!(field.field_type.as_str(), "select" | "multiselect") && field.options.is_empty() {
                 return Err(format!("config field {:?} needs options", field.key));
+            }
+        }
+        for widget in &self.widget_schema {
+            if widget.key.is_empty()
+                || widget.key.len() > 64
+                || !widget.key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                return Err(format!("invalid widget key: {:?}", widget.key));
+            }
+            if !ALLOWED_WIDGET_TYPES.contains(&widget.widget_type.as_str()) {
+                return Err(format!(
+                    "widget {:?} has unknown type {:?}",
+                    widget.key, widget.widget_type
+                ));
+            }
+            if widget.metrics.is_empty() {
+                return Err(format!("widget {:?} must reference at least one metric", widget.key));
             }
         }
         Ok(())

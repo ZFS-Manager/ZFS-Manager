@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod clones;
+pub mod custom_tabs;
 pub mod datasets;
 pub mod health;
 pub mod layout;

@@ -30,6 +30,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/modules/:id/disable", post(disable))
         .route("/api/v1/modules/:id/run", post(trigger_run))
         .route("/api/v1/modules/:id/runs", get(run_history))
+        .route("/api/v1/modules/:id/switch-version", post(switch_version))
+        .route("/api/v1/modules/:id/metrics", post(push_metrics).get(get_module_metrics))
+        .route("/api/v1/modules/:id/action/:action_key", post(trigger_action))
         // Sideload payloads carry a base64 wasm artifact (up to 32 MiB raw).
         .layer(DefaultBodyLimit::max(48 * 1024 * 1024))
         .with_state(state)
@@ -218,6 +221,9 @@ async fn list_active(State(state): State<AppState>) -> Result<Json<Value>, ApiEr
                 "enabled": row.get::<_, bool>(9),
                 "installed_at": row.get::<_, chrono::DateTime<chrono::Utc>>(10),
                 "config_schema": manifest.get("config_schema").cloned().unwrap_or(json!([])),
+                "widget_schema": manifest.get("widget_schema").cloned().unwrap_or(json!([])),
+                "status_fields": manifest.get("status_fields").cloned().unwrap_or(json!([])),
+                "actions": manifest.get("actions").cloned().unwrap_or(json!([])),
                 "config": row.get::<_, Option<Value>>(12).unwrap_or(json!({})),
                 "secret_keys_set": secret_keys_set,
                 "last_run": row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(14).map(|started| json!({
@@ -418,4 +424,233 @@ async fn run_history(
         })
         .collect();
     Ok(Json(json!({ "runs": runs })))
+}
+
+// ── Version switching ────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct SwitchVersionBody {
+    version: String,
+    wasm_url: String,
+}
+
+async fn switch_version(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<SwitchVersionBody>,
+) -> Result<Json<Value>, ApiError> {
+    mgmt_rate_limit(&state, &headers)?;
+    let pg = db(&state)?;
+
+    // Verify module is installed
+    let row = pg
+        .query_opt("SELECT manifest, registry_url FROM modules WHERE id = $1", &[&id])
+        .await
+        .map_err(|e| ApiError::InternalError(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("module {id:?} not installed")))?;
+
+    let existing_manifest: Value = row.get(0);
+    let registry_url: Option<String> = row.get(1);
+
+    // Re-fetch the module.toml from the repo to get potential new widget_schema/config_schema
+    let manifest_url = existing_manifest
+        .get("manifest_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let mut manifest: Manifest = serde_json::from_value(existing_manifest.clone())
+        .map_err(|e| ApiError::InternalError(format!("stored manifest invalid: {e}")))?;
+
+    // If we have a registry entry, re-fetch the manifest to pick up schema changes
+    if let Some(ref reg_url) = registry_url {
+        if let Ok(index) = registry::fetch_index(reg_url).await {
+            if let Some(entry) = index.modules.iter().find(|m| m.id == id) {
+                if let Ok(fresh) = registry::fetch_manifest_only(entry).await {
+                    manifest.config_schema = fresh.config_schema;
+                    manifest.widget_schema = fresh.widget_schema;
+                    manifest.permissions = fresh.permissions;
+                }
+            }
+        }
+    }
+
+    // Update version
+    manifest.version = body.version.clone();
+
+    // Download the new WASM
+    let client = reqwest::Client::builder()
+        .user_agent("ZFS-Dashboard")
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| ApiError::InternalError(e.to_string()))?;
+
+    let wasm_resp = client.get(&body.wasm_url).send().await
+        .map_err(|e| ApiError::BadRequest(format!("failed to download wasm: {e}")))?;
+    if !wasm_resp.status().is_success() {
+        return Err(ApiError::BadRequest(format!("wasm download returned {}", wasm_resp.status())));
+    }
+    let wasm = wasm_resp.bytes().await
+        .map_err(|e| ApiError::BadRequest(format!("failed to read wasm: {e}")))?;
+    if wasm.len() > MAX_WASM_BYTES {
+        return Err(ApiError::BadRequest(format!("wasm exceeds {} bytes", MAX_WASM_BYTES)));
+    }
+
+    // Validate the new component
+    let runtime = state
+        .module_runtime
+        .as_ref()
+        .ok_or(ApiError::InternalError("module runtime unavailable".into()))?;
+    runtime
+        .validate_component(&wasm)
+        .map_err(ApiError::BadRequest)?;
+
+    // Write WASM to disk
+    let wasm_path = registry::wasm_path(&id)
+        .ok_or(ApiError::BadRequest("invalid module id".into()))?;
+    tokio::fs::write(&wasm_path, &wasm)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("cannot store wasm: {e}")))?;
+
+    let wasm_sha256 = registry::sha256_hex(&wasm);
+    let manifest_json = serde_json::to_value(&manifest)
+        .map_err(|e| ApiError::InternalError(e.to_string()))?;
+
+    // Update DB — preserves config, secrets, run history
+    pg.execute(
+        "UPDATE modules SET version = $1, wasm_sha256 = $2, manifest = $3 WHERE id = $4",
+        &[&manifest.version, &wasm_sha256, &manifest_json, &id],
+    )
+    .await
+    .map_err(|e| ApiError::InternalError(e.to_string()))?;
+
+    let actor = actor_from_headers(&state, &headers).await;
+    audit(&state, &actor, "module_version_switched", Some(&id),
+          json!({ "version": body.version, "wasm_url": body.wasm_url })).await;
+    Ok(Json(json!({ "ok": true, "version": body.version })))
+}
+
+// ── Metrics ingestion & query ───────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct MetricItem {
+    metric_name: String,
+    value: f64,
+}
+
+#[derive(Deserialize)]
+struct PushMetricsBody {
+    metrics: Vec<MetricItem>,
+}
+
+async fn push_metrics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<PushMetricsBody>,
+) -> Result<Json<Value>, ApiError> {
+    mgmt_rate_limit(&state, &headers)?;
+    let pg = db(&state)?;
+
+    let mut written = 0;
+    for m in body.metrics {
+        if !m.metric_name.is_empty() {
+            pg.execute(
+                "INSERT INTO module_metrics(module_id, metric_name, value, collected_at) VALUES($1, $2, $3, NOW())",
+                &[&id, &m.metric_name, &m.value],
+            )
+            .await
+            .map_err(|e| ApiError::InternalError(e.to_string()))?;
+            written += 1;
+        }
+    }
+
+    Ok(Json(json!({ "ok": true, "written": written })))
+}
+
+#[derive(Deserialize)]
+struct ModuleMetricsQuery {
+    metric: Option<String>,
+    interval: Option<String>,
+}
+
+async fn get_module_metrics(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<ModuleMetricsQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let pg = db(&state)?;
+    let interval = q.interval.as_deref().unwrap_or("1h");
+
+    let time_clause = match interval {
+        "6h" => "collected_at > NOW() - INTERVAL '6 hours'",
+        "1d" => "collected_at > NOW() - INTERVAL '24 hours'",
+        "1w" => "collected_at > NOW() - INTERVAL '7 days'",
+        "1m" => "collected_at > NOW() - INTERVAL '30 days'",
+        _ => "collected_at > NOW() - INTERVAL '1 hour'",
+    };
+
+    let rows = if let Some(ref metric_name) = q.metric {
+        let query_str = format!(
+            "SELECT metric_name, value, collected_at FROM module_metrics \
+             WHERE module_id = $1 AND metric_name = $2 AND {} \
+             ORDER BY collected_at ASC LIMIT 1000",
+            time_clause
+        );
+        pg.query(&query_str, &[&id, metric_name])
+            .await
+            .map_err(|e| ApiError::InternalError(e.to_string()))?
+    } else {
+        let query_str = format!(
+            "SELECT metric_name, value, collected_at FROM module_metrics \
+             WHERE module_id = $1 AND {} \
+             ORDER BY collected_at ASC LIMIT 1000",
+            time_clause
+        );
+        pg.query(&query_str, &[&id])
+            .await
+            .map_err(|e| ApiError::InternalError(e.to_string()))?
+    };
+
+    let points: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let metric_name: String = r.get(0);
+            let value: f64 = r.get(1);
+            let collected_at: chrono::DateTime<chrono::Utc> = r.get(2);
+            json!({
+                "metric_name": metric_name,
+                "value": value,
+                "collected_at": collected_at.to_rfc3339(),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "module_id": id, "metrics": points })))
+}
+
+// ── Dynamic module actions ──────────────────────────────────────────────────
+
+async fn trigger_action(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((id, action_key)): Path<(String, String)>,
+) -> Result<Json<Value>, ApiError> {
+    mgmt_rate_limit(&state, &headers)?;
+    let actor = actor_from_headers(&state, &headers).await;
+    audit(&state, &actor, "module_action_triggered", Some(&id), json!({ "action": action_key })).await;
+
+    let trigger_name = format!("action:{action_key}");
+    let (run_id, outcome) = execute_module(&state, &id, &trigger_name)
+        .await
+        .map_err(ApiError::BadRequest)?;
+
+    Ok(Json(json!({
+        "run_id": run_id,
+        "action": action_key,
+        "success": outcome.success,
+        "message": outcome.message,
+        "metrics_written": outcome.metrics_written,
+        "error": outcome.error,
+    })))
 }

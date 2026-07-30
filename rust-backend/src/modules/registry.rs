@@ -140,6 +140,15 @@ pub async fn download_package(entry: &RegistryEntry) -> Result<ModulePackage, St
     download_package_custom(entry, None, None).await
 }
 
+/// Downloads only the manifest (module.toml) for a registry entry, without the wasm.
+/// Used during version switches to pick up new config_schema/widget_schema.
+pub async fn fetch_manifest_only(entry: &RegistryEntry) -> Result<Manifest, String> {
+    let client = registry_http()?;
+    let manifest_bytes = fetch_capped(&client, &entry.manifest_url, MAX_MANIFEST_BYTES).await?;
+    let manifest_toml = String::from_utf8(manifest_bytes).map_err(|_| "manifest is not UTF-8")?;
+    Manifest::parse(&manifest_toml)
+}
+
 pub async fn download_package_custom(
     entry: &RegistryEntry,
     custom_version: Option<String>,

@@ -1,4 +1,4 @@
-import type { ActiveModule, ModuleRun, StoreModule } from './types';
+import type { ActiveModule, CustomTab, ModuleMetricPoint, ModuleRun, StoreModule } from './types';
 
 const API_BASE_URL = '/api/v1';
 let API_KEY = localStorage.getItem('zfs_access_token') || import.meta.env.VITE_API_KEY || '';
@@ -379,4 +379,46 @@ export const api = {
         total_write_gb: number;
       }>;
     }>(`/pools/${encodeURIComponent(poolName)}/disks`),
+
+  // ── Custom Tabs ─────────────────────────────────────────────────────────────
+  getCustomTabs: () => request<{ tabs: CustomTab[] }>('/custom-tabs'),
+  getCustomTab: (slug: string) => request<CustomTab>(`/custom-tabs/${encodeURIComponent(slug)}`),
+  createCustomTab: (name: string, icon = 'layout') =>
+    request<{ id: number; slug: string; name: string; icon: string }>('/custom-tabs', {
+      method: 'POST',
+      body: JSON.stringify({ name, icon }),
+    }),
+  updateCustomTab: (slug: string, data: { name?: string; icon?: string; sort_order?: number }) =>
+    request<{ ok: boolean }>(`/custom-tabs/${encodeURIComponent(slug)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  deleteCustomTab: (slug: string) =>
+    request<{ ok: boolean }>(`/custom-tabs/${encodeURIComponent(slug)}`, { method: 'DELETE' }),
+  saveCustomTabLayout: (slug: string, layout: any[]) =>
+    request<{ ok: boolean }>(`/custom-tabs/${encodeURIComponent(slug)}/layout`, {
+      method: 'PUT',
+      body: JSON.stringify(layout),
+    }),
+
+  // ── Module Metrics & Actions ──────────────────────────────────────────────
+  getModuleMetrics: (id: string, metric?: string, interval = '1h') =>
+    request<{ module_id: string; metrics: ModuleMetricPoint[] }>(
+      `/modules/${encodeURIComponent(id)}/metrics?interval=${interval}${metric ? `&metric=${encodeURIComponent(metric)}` : ''}`
+    ),
+  pushModuleMetrics: (id: string, metrics: Array<{ metric_name: string; value: number }>) =>
+    request<{ ok: boolean; written: number }>(`/modules/${encodeURIComponent(id)}/metrics`, {
+      method: 'POST',
+      body: JSON.stringify({ metrics }),
+    }),
+  switchModuleVersion: (id: string, version: string, wasmUrl: string) =>
+    request<{ ok: boolean; version: string }>(`/modules/${encodeURIComponent(id)}/switch-version`, {
+      method: 'POST',
+      body: JSON.stringify({ version, wasm_url: wasmUrl }),
+    }),
+  executeModuleAction: (id: string, actionKey: string) =>
+    request<{ run_id: number; action: string; success: boolean; message: string; metrics_written: number; error: string | null }>(
+      `/modules/${encodeURIComponent(id)}/action/${encodeURIComponent(actionKey)}`,
+      { method: 'POST' },
+    ),
 };

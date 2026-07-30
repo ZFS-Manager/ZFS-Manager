@@ -27,7 +27,117 @@ interface ToastEntry {
 
 let toastIdCounter = 0;
 
-type Tab = 'security' | 'api' | 'appearance' | 'general';
+type Tab = 'security' | 'api' | 'appearance' | 'general' | 'custom_tabs';
+
+function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' | 'error') => void }) {
+  const [tabs, setTabs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [name, setName] = useState('');
+
+  const load = async () => {
+    try {
+      const res = await api.getCustomTabs();
+      setTabs(res.tabs);
+    } catch (err: any) {
+      addToast(err.message || 'Failed to load custom tabs', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const handleCreate = async () => {
+    if (!name.trim()) return;
+    try {
+      await api.createCustomTab(name.trim(), 'layout');
+      setName('');
+      addToast(`Custom tab "${name}" created`, 'success');
+      await load();
+    } catch (err: any) {
+      addToast(err.message || 'Failed to create custom tab', 'error');
+    }
+  };
+
+  const handleDelete = async (slug: string, tabName: string) => {
+    if (!window.confirm(`Delete custom tab "${tabName}"?`)) return;
+    try {
+      await api.deleteCustomTab(slug);
+      addToast(`Custom tab "${tabName}" deleted`, 'success');
+      await load();
+    } catch (err: any) {
+      addToast(err.message || 'Failed to delete custom tab', 'error');
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div>
+        <label style={labelStyle}>Create New Custom Tab</label>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="Tab Name (e.g. Immich Metrics)"
+            style={{ ...inputStyle, flex: 1 }}
+          />
+          <button
+            onClick={handleCreate}
+            disabled={!name.trim()}
+            className="btn btn-primary"
+            style={{ flexShrink: 0 }}
+          >
+            <Plus size={14} /> Create Tab
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <label style={labelStyle}>Existing Custom Tabs</label>
+        {loading ? (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading tabs...</div>
+        ) : tabs.length === 0 ? (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No custom tabs created yet.</div>
+        ) : (
+          tabs.map(t => (
+            <div key={t.slug} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '12px 16px', background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)',
+            }}>
+              <div>
+                <div style={{ fontFamily: 'var(--font-ui)', fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {t.name}
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+                  /custom/{t.slug}
+                </div>
+              </div>
+
+              <button
+                className="btn btn-secondary"
+                style={{ height: 28, padding: '0 10px', fontSize: 11, color: 'var(--danger)' }}
+                onClick={() => handleDelete(t.slug, t.name)}
+              >
+                <Trash2 size={11} /> Delete
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Tab definition ── */
+const TABS: { id: Tab; label: string; icon: React.ReactNode; desc: string }[] = [
+  { id: 'security',   label: 'Security',   icon: <Lock size={15} />,    desc: 'Password & authentication' },
+  { id: 'api',        label: 'API Keys',   icon: <Key size={15} />,     desc: 'Programmatic access tokens' },
+  { id: 'custom_tabs', label: 'Custom Tabs', icon: <Zap size={15} />,   desc: 'Custom modular dashboard tabs' },
+  { id: 'appearance', label: 'Appearance', icon: <Monitor size={15} />, desc: 'Interface preferences' },
+  { id: 'general',    label: 'General',    icon: <Database size={15} />, desc: 'Application defaults' },
+];
 
 function ToastItem({ entry, onClose }: { entry: ToastEntry; onClose: () => void }) {
   useEffect(() => {
@@ -384,14 +494,6 @@ function GeneralTab({ pools, selectedPool, onSelectPool }: { pools: any[]; selec
   );
 }
 
-/* ── Tab definition ── */
-const TABS: { id: Tab; label: string; icon: React.ReactNode; desc: string }[] = [
-  { id: 'security',   label: 'Security',   icon: <Lock size={15} />,    desc: 'Password & authentication' },
-  { id: 'api',        label: 'API Keys',   icon: <Key size={15} />,     desc: 'Programmatic access tokens' },
-  { id: 'appearance', label: 'Appearance', icon: <Monitor size={15} />, desc: 'Interface preferences' },
-  { id: 'general',    label: 'General',    icon: <Database size={15} />, desc: 'Application defaults' },
-];
-
 /* ── Main Settings page ── */
 export default function Settings({ onPasswordChanged, pools = [], selectedPool, onSelectPool }: SettingsProps) {
   const isMobile = useIsMobile();
@@ -492,10 +594,11 @@ export default function Settings({ onPasswordChanged, pools = [], selectedPool, 
             </div>
           </div>
 
-          {activeTab === 'security'   && <SecurityTab onSuccess={handlePasswordChanged} />}
-          {activeTab === 'api'        && <ApiKeysTab addToast={addToast} />}
-          {activeTab === 'appearance' && <AppearanceTab />}
-          {activeTab === 'general'    && pools.length > 1 && <GeneralTab pools={pools} selectedPool={selectedPool} onSelectPool={onSelectPool} />}
+          {activeTab === 'security'    && <SecurityTab onSuccess={handlePasswordChanged} />}
+          {activeTab === 'api'         && <ApiKeysTab addToast={addToast} />}
+          {activeTab === 'custom_tabs' && <CustomTabsTab addToast={addToast} />}
+          {activeTab === 'appearance'  && <AppearanceTab />}
+          {activeTab === 'general'     && pools.length > 1 && <GeneralTab pools={pools} selectedPool={selectedPool} onSelectPool={onSelectPool} />}
         </div>
       </div>
     </div>

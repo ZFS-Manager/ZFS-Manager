@@ -24,6 +24,8 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/modules/registries/:id",
             axum::routing::delete(remove_registry),
         )
+        .route("/api/v1/modules/:id/metrics", get(get_module_metrics))
+        .route("/api/v1/modules/:id/metric-names", get(get_module_metric_names))
         .with_state(state)
 }
 
@@ -238,4 +240,82 @@ async fn list_releases(Query(q): Query<ReleasesQuery>) -> Result<Json<Value>, Ap
     }
 
     Ok(Json(json!({ "releases": releases })))
+}
+
+// ── Module Metrics Query ─────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct MetricsQuery {
+    #[serde(default)]
+    metric_name: Option<String>,
+    #[serde(default = "default_interval")]
+    interval: String,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+fn default_interval() -> String { "1d".to_string() }
+
+async fn get_module_metrics(
+    State(state): State<AppState>,
+    Path(module_id): Path<String>,
+    Query(q): Query<MetricsQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let pg = state.pg.as_ref().ok_or(ApiError::InternalError("database unavailable".into()))?;
+    let interval_sql = match q.interval.as_str() {
+        "1h"  => "1 hour",
+        "6h"  => "6 hours",
+        "1d"  => "24 hours",
+        "7d"  => "7 days",
+        "30d" => "30 days",
+        "1y"  => "365 days",
+        _     => "24 hours",
+    };
+    let limit = q.limit.unwrap_or(1000).clamp(1, 10000);
+
+    let rows = if let Some(ref name) = q.metric_name {
+        pg.query(
+            &format!(
+                "SELECT metric_name, value, collected_at FROM module_metrics \
+                 WHERE module_id = $1 AND metric_name = $2 \
+                 AND collected_at > NOW() - INTERVAL '{interval_sql}' \
+                 ORDER BY collected_at ASC LIMIT $3"
+            ),
+            &[&module_id, name, &limit],
+        ).await
+    } else {
+        pg.query(
+            &format!(
+                "SELECT metric_name, value, collected_at FROM module_metrics \
+                 WHERE module_id = $1 \
+                 AND collected_at > NOW() - INTERVAL '{interval_sql}' \
+                 ORDER BY collected_at ASC LIMIT $2"
+            ),
+            &[&module_id, &limit],
+        ).await
+    }.map_err(|e| ApiError::InternalError(e.to_string()))?;
+
+    let metrics: Vec<Value> = rows.iter().map(|row| {
+        json!({
+            "metric_name": row.get::<_, String>(0),
+            "value": row.get::<_, f64>(1),
+            "collected_at": row.get::<_, chrono::DateTime<chrono::Utc>>(2).to_rfc3339(),
+        })
+    }).collect();
+
+    Ok(Json(json!({ "module_id": module_id, "metrics": metrics, "count": metrics.len() })))
+}
+
+async fn get_module_metric_names(
+    State(state): State<AppState>,
+    Path(module_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let pg = state.pg.as_ref().ok_or(ApiError::InternalError("database unavailable".into()))?;
+    let rows = pg.query(
+        "SELECT DISTINCT metric_name FROM module_metrics WHERE module_id = $1 ORDER BY metric_name",
+        &[&module_id],
+    ).await.map_err(|e| ApiError::InternalError(e.to_string()))?;
+
+    let names: Vec<String> = rows.iter().map(|r| r.get(0)).collect();
+    Ok(Json(json!({ "module_id": module_id, "metric_names": names })))
 }
