@@ -11,3 +11,5 @@ pub mod snapshots;
 pub mod stats;
 pub mod volumes;
 pub mod notifications;
+pub mod module_store;
+pub mod modules;

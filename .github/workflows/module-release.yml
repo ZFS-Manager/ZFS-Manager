@@ -1,0 +1,62 @@
+name: Module Release
+
+# Builds the bundled Wasm modules on every release, attaches the artifacts,
+# and updates registry/index.json on main with the actual SHA-256 checksums.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-attach:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+        with:
+          ref: main
+
+      - name: Install wasm32-wasip2 target
+        run: rustup target add wasm32-wasip2
+
+      - name: Build immich module
+        run: cargo build --release --target wasm32-wasip2
+        working-directory: modules/immich
+
+      - name: Attach wasm artifact to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          cp modules/immich/target/wasm32-wasip2/release/zfs_dashboard_module_immich.wasm immich.wasm
+          gh release upload "$TAG" immich.wasm --clobber
+
+      - name: Update registry index checksum
+        run: |
+          SHA=$(sha256sum immich.wasm | cut -d' ' -f1)
+          python3 - "$SHA" <<'EOF'
+          import json, sys
+          sha = sys.argv[1]
+          with open("registry/index.json") as f:
+              index = json.load(f)
+          for module in index["modules"]:
+              if module["id"] == "immich":
+                  module["wasm_sha256"] = sha
+          with open("registry/index.json", "w") as f:
+              json.dump(index, f, indent=2)
+              f.write("\n")
+          EOF
+
+      - name: Commit updated registry index
+        run: |
+          if git diff --quiet registry/index.json; then
+            echo "Checksum unchanged, nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add registry/index.json
+          git commit -m "chore: update registry checksum for immich module"
+          git push origin main
