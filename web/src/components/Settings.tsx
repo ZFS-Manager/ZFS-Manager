@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Key, Lock, Plus, Trash2, Eye, EyeOff, CheckCircle, XCircle, Copy, AlertTriangle, Monitor, Database, Shield, Zap } from 'lucide-react';
+import { Key, Lock, Plus, Trash2, Eye, EyeOff, CheckCircle, XCircle, Copy, AlertTriangle, Monitor, Database, Shield, Zap, ChevronUp, ChevronDown, FolderPlus, RotateCcw, Edit2, Check, X } from 'lucide-react';
 import { api } from '../api';
 import PageTransition from './PageTransition';
 import { useIsMobile } from '../hooks/useBreakpoint';
+import { getNavLayout, saveNavLayout, resetNavLayout, syncCustomTabsToLayout, NavCategory, NavItem } from '../utils/navStorage';
 
 interface SettingsProps {
   onPasswordChanged?: () => void;
@@ -30,15 +31,20 @@ let toastIdCounter = 0;
 type Tab = 'security' | 'api' | 'appearance' | 'general' | 'custom_tabs';
 
 function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' | 'error') => void }) {
-  const [tabs, setTabs] = useState<any[]>([]);
+  const [layout, setLayout] = useState<NavCategory[]>([]);
   const [loading, setLoading] = useState(true);
-  const [name, setName] = useState('');
+  const [newTabName, setNewTabName] = useState('');
+  const [newCatName, setNewCatName] = useState('');
+  const [editingCatId, setEditingCatId] = useState<string | null>(null);
+  const [editingCatLabel, setEditingCatLabel] = useState('');
 
   const load = async () => {
     try {
       const res = await api.getCustomTabs();
-      setTabs(res.tabs);
+      const synced = syncCustomTabsToLayout(res.tabs);
+      setLayout(synced);
     } catch (err: any) {
+      setLayout(getNavLayout());
       addToast(err.message || 'Failed to load custom tabs', 'error');
     } finally {
       setLoading(false);
@@ -47,19 +53,24 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
 
   useEffect(() => { load(); }, []);
 
-  const handleCreate = async () => {
-    if (!name.trim()) return;
+  const updateAndSaveLayout = (newLayout: NavCategory[]) => {
+    setLayout(newLayout);
+    saveNavLayout(newLayout);
+  };
+
+  const handleCreateTab = async () => {
+    if (!newTabName.trim()) return;
     try {
-      await api.createCustomTab(name.trim(), 'layout');
-      setName('');
-      addToast(`Custom tab "${name}" created`, 'success');
+      await api.createCustomTab(newTabName.trim(), 'layout');
+      setNewTabName('');
+      addToast(`Custom tab "${newTabName}" created`, 'success');
       await load();
     } catch (err: any) {
       addToast(err.message || 'Failed to create custom tab', 'error');
     }
   };
 
-  const handleDelete = async (slug: string, tabName: string) => {
+  const handleDeleteTab = async (slug: string, tabName: string) => {
     if (!window.confirm(`Delete custom tab "${tabName}"?`)) return;
     try {
       await api.deleteCustomTab(slug);
@@ -70,62 +81,335 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
     }
   };
 
+  const handleAddCategory = () => {
+    if (!newCatName.trim()) return;
+    const catId = `cat_${Date.now()}`;
+    const newCat: NavCategory = {
+      id: catId,
+      label: newCatName.trim(),
+      items: [],
+    };
+    const nextLayout = [...layout, newCat];
+    setNewCatName('');
+    updateAndSaveLayout(nextLayout);
+    addToast(`Category "${newCat.label}" added`, 'success');
+  };
+
+  const handleDeleteCategory = (catId: string, label: string) => {
+    if (layout.length <= 1) {
+      addToast('Mindestens eine Kategorie muss erhalten bleiben.', 'error');
+      return;
+    }
+    if (!window.confirm(`Kategorie "${label}" löschen? Enthaltene Tabs werden in die erste Kategorie verschoben.`)) return;
+    const targetCat = layout.find(c => c.id !== catId);
+    if (!targetCat) return;
+
+    const catToDelete = layout.find(c => c.id === catId);
+    const orphanedItems = catToDelete ? catToDelete.items : [];
+
+    const nextLayout = layout.filter(c => c.id !== catId).map(c => {
+      if (c.id === targetCat.id) {
+        return { ...c, items: [...c.items, ...orphanedItems] };
+      }
+      return c;
+    });
+
+    updateAndSaveLayout(nextLayout);
+    addToast(`Kategorie "${label}" gelöscht`, 'success');
+  };
+
+  const handleMoveCategory = (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= layout.length) return;
+    const nextLayout = [...layout];
+    const [moved] = nextLayout.splice(index, 1);
+    nextLayout.splice(targetIndex, 0, moved);
+    updateAndSaveLayout(nextLayout);
+  };
+
+  const handleMoveItem = (catIndex: number, itemIndex: number, direction: 'up' | 'down') => {
+    const targetItemIndex = direction === 'up' ? itemIndex - 1 : itemIndex + 1;
+    const cat = layout[catIndex];
+    if (targetItemIndex < 0 || targetItemIndex >= cat.items.length) return;
+
+    const nextLayout = layout.map((c, idx) => {
+      if (idx !== catIndex) return c;
+      const items = [...c.items];
+      const [moved] = items.splice(itemIndex, 1);
+      items.splice(targetItemIndex, 0, moved);
+      return { ...c, items };
+    });
+
+    updateAndSaveLayout(nextLayout);
+  };
+
+  const handleTransferItem = (fromCatIndex: number, itemIndex: number, targetCatId: string) => {
+    const itemToMove = layout[fromCatIndex].items[itemIndex];
+    const nextLayout = layout.map((c, idx) => {
+      if (idx === fromCatIndex) {
+        return { ...c, items: c.items.filter((_, i) => i !== itemIndex) };
+      }
+      if (c.id === targetCatId) {
+        return { ...c, items: [...c.items, itemToMove] };
+      }
+      return c;
+    });
+    updateAndSaveLayout(nextLayout);
+  };
+
+  const handleSaveCatRename = (catId: string) => {
+    if (!editingCatLabel.trim()) return;
+    const nextLayout = layout.map(c => c.id === catId ? { ...c, label: editingCatLabel.trim() } : c);
+    setEditingCatId(null);
+    updateAndSaveLayout(nextLayout);
+  };
+
+  const handleReset = () => {
+    if (window.confirm('Navigation auf Standardeinstellungen zurücksetzen?')) {
+      resetNavLayout();
+      load();
+      addToast('Navigation zurückgesetzt', 'success');
+    }
+  };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <div>
-        <label style={labelStyle}>Create New Custom Tab</label>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input
-            type="text"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="Tab Name (e.g. Immich Metrics)"
-            style={{ ...inputStyle, flex: 1 }}
-          />
-          <button
-            onClick={handleCreate}
-            disabled={!name.trim()}
-            className="btn btn-primary"
-            style={{ flexShrink: 0 }}
-          >
-            <Plus size={14} /> Create Tab
-          </button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+      {/* Top Action Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
+        {/* Create Custom Tab */}
+        <div style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <label style={{ ...labelStyle, margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Zap size={14} color="var(--accent)" /> Neuen Custom Tab erstellen
+          </label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="text"
+              value={newTabName}
+              onChange={e => setNewTabName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCreateTab()}
+              placeholder="z. B. Immich Metrics"
+              style={{ ...inputStyle, flex: 1 }}
+            />
+            <button
+              onClick={handleCreateTab}
+              disabled={!newTabName.trim()}
+              className="btn btn-primary"
+              style={{ flexShrink: 0 }}
+            >
+              <Plus size={14} /> Tab erstellen
+            </button>
+          </div>
+        </div>
+
+        {/* Create Category */}
+        <div style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <label style={{ ...labelStyle, margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <FolderPlus size={14} color="var(--accent)" /> Neue Navigations-Kategorie
+          </label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="text"
+              value={newCatName}
+              onChange={e => setNewCatName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleAddCategory()}
+              placeholder="z. B. Custom Dashboards"
+              style={{ ...inputStyle, flex: 1 }}
+            />
+            <button
+              onClick={handleAddCategory}
+              disabled={!newCatName.trim()}
+              className="btn btn-secondary"
+              style={{ flexShrink: 0 }}
+            >
+              <Plus size={14} /> Kategorie erstellen
+            </button>
+          </div>
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <label style={labelStyle}>Existing Custom Tabs</label>
-        {loading ? (
-          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading tabs...</div>
-        ) : tabs.length === 0 ? (
-          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No custom tabs created yet.</div>
-        ) : (
-          tabs.map(t => (
-            <div key={t.slug} style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '12px 16px', background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-              borderRadius: 'var(--radius)',
+      {/* Header & Reset Button */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <h4 style={{ margin: 0, fontFamily: 'var(--font-ui)', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+            Sidebar-Navigation & Kategorien anpassen
+          </h4>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            Verschiebe Kategorien und Ordne Tabs per Klick oder Dropdown zu. Änderungen werden sofort in der Sidebar übernommen!
+          </span>
+        </div>
+        <button
+          onClick={handleReset}
+          className="btn btn-secondary"
+          style={{ height: 32, padding: '0 12px', fontSize: 12, color: 'var(--text-muted)' }}
+          title="Zurücksetzen auf Standard-Layout"
+        >
+          <RotateCcw size={13} /> Standard wiederherstellen
+        </button>
+      </div>
+
+      {/* Category List */}
+      {loading ? (
+        <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Lade Navigationsstruktur...</div>
+      ) : layout.length === 0 ? (
+        <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Keine Navigations-Kategorien vorhanden.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {layout.map((cat, catIdx) => (
+            <div key={cat.id} style={{
+              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)', overflow: 'hidden'
             }}>
-              <div>
-                <div style={{ fontFamily: 'var(--font-ui)', fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
-                  {t.name}
+              {/* Category Header */}
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '10px 14px', background: 'var(--bg-hover)', borderBottom: '1px solid var(--border)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+                  {editingCatId === cat.id ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+                      <input
+                        type="text"
+                        value={editingCatLabel}
+                        onChange={e => setEditingCatLabel(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleSaveCatRename(cat.id)}
+                        style={{ ...inputStyle, height: 30, fontSize: 13 }}
+                        autoFocus
+                      />
+                      <button className="btn btn-primary" style={{ height: 30, padding: '0 8px' }} onClick={() => handleSaveCatRename(cat.id)}>
+                        <Check size={14} />
+                      </button>
+                      <button className="btn btn-secondary" style={{ height: 30, padding: '0 8px' }} onClick={() => setEditingCatId(null)}>
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <span style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                        {cat.label}
+                      </span>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                        ({cat.items.length} {cat.items.length === 1 ? 'Tab' : 'Tabs'})
+                      </span>
+                      <button
+                        onClick={() => { setEditingCatId(cat.id); setEditingCatLabel(cat.label); }}
+                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex' }}
+                        title="Kategorie umbenennen"
+                      >
+                        <Edit2 size={12} />
+                      </button>
+                    </>
+                  )}
                 </div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
-                  /custom/{t.slug}
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <button
+                    disabled={catIdx === 0}
+                    onClick={() => handleMoveCategory(catIdx, 'up')}
+                    style={{ background: 'transparent', border: 'none', color: catIdx === 0 ? 'var(--border)' : 'var(--text-muted)', cursor: catIdx === 0 ? 'default' : 'pointer' }}
+                    title="Kategorie nach oben verschieben"
+                  >
+                    <ChevronUp size={16} />
+                  </button>
+                  <button
+                    disabled={catIdx === layout.length - 1}
+                    onClick={() => handleMoveCategory(catIdx, 'down')}
+                    style={{ background: 'transparent', border: 'none', color: catIdx === layout.length - 1 ? 'var(--border)' : 'var(--text-muted)', cursor: catIdx === layout.length - 1 ? 'default' : 'pointer' }}
+                    title="Kategorie nach unten verschieben"
+                  >
+                    <ChevronDown size={16} />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteCategory(cat.id, cat.label)}
+                    style={{ background: 'transparent', border: 'none', color: 'var(--danger)', cursor: 'pointer', marginLeft: 6, opacity: 0.8 }}
+                    title="Kategorie löschen"
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
               </div>
 
-              <button
-                className="btn btn-secondary"
-                style={{ height: 28, padding: '0 10px', fontSize: 11, color: 'var(--danger)' }}
-                onClick={() => handleDelete(t.slug, t.name)}
-              >
-                <Trash2 size={11} /> Delete
-              </button>
+              {/* Items inside Category */}
+              <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {cat.items.length === 0 ? (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', padding: 8 }}>
+                    Keine Tabs in dieser Kategorie. Verschiebe Tabs hierher.
+                  </div>
+                ) : (
+                  cat.items.map((item, itemIdx) => (
+                    <div key={item.id} style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '8px 12px', background: 'var(--bg-base)', border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius)'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
+                          {item.label}
+                        </span>
+                        {item.isCustom && (
+                          <span style={{ fontSize: 10, background: 'var(--accent-dim)', color: 'var(--accent)', padding: '2px 6px', borderRadius: 4, fontFamily: 'var(--font-mono)' }}>
+                            Custom
+                          </span>
+                        )}
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+                          {item.path}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {/* Transfer to another Category */}
+                        <select
+                          value={cat.id}
+                          onChange={e => handleTransferItem(catIdx, itemIdx, e.target.value)}
+                          style={{
+                            height: 26, padding: '0 6px', background: 'var(--bg-elevated)',
+                            border: '1px solid var(--border)', borderRadius: 4,
+                            color: 'var(--text-secondary)', fontSize: 11, fontFamily: 'var(--font-ui)'
+                          }}
+                        >
+                          {layout.map(c => (
+                            <option key={c.id} value={c.id}>
+                              {c.label}
+                            </option>
+                          ))}
+                        </select>
+
+                        {/* Reorder within category */}
+                        <button
+                          disabled={itemIdx === 0}
+                          onClick={() => handleMoveItem(catIdx, itemIdx, 'up')}
+                          style={{ background: 'transparent', border: 'none', color: itemIdx === 0 ? 'var(--border)' : 'var(--text-muted)', cursor: itemIdx === 0 ? 'default' : 'pointer' }}
+                          title="Tab nach oben verschieben"
+                        >
+                          <ChevronUp size={14} />
+                        </button>
+                        <button
+                          disabled={itemIdx === cat.items.length - 1}
+                          onClick={() => handleMoveItem(catIdx, itemIdx, 'down')}
+                          style={{ background: 'transparent', border: 'none', color: itemIdx === cat.items.length - 1 ? 'var(--border)' : 'var(--text-muted)', cursor: itemIdx === cat.items.length - 1 ? 'default' : 'pointer' }}
+                          title="Tab nach unten verschieben"
+                        >
+                          <ChevronDown size={14} />
+                        </button>
+
+                        {/* Delete if custom */}
+                        {item.isCustom && item.customSlug && (
+                          <button
+                            onClick={() => handleDeleteTab(item.customSlug!, item.label)}
+                            style={{ background: 'transparent', border: 'none', color: 'var(--danger)', cursor: 'pointer', display: 'flex', marginLeft: 4 }}
+                            title="Custom Tab löschen"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
