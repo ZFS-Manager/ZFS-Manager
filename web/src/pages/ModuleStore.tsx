@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Package, Plus, Trash2, Download, CheckCircle, AlertTriangle, RefreshCw, X, ArrowUpCircle } from 'lucide-react';
+import { Package, Plus, Trash2, Download, CheckCircle, AlertTriangle, RefreshCw, X, ArrowUpCircle, Search } from 'lucide-react';
 import { api } from '../api';
 import { StoreModule } from '../types';
 import PageTransition from '../components/PageTransition';
@@ -67,6 +67,7 @@ export default function ModuleStore() {
   const [errors, setErrors] = useState<Array<{ registry_url: string; error: string }>>([]);
   const [registries, setRegistries] = useState<Array<{ id: number; url: string; is_default: boolean }>>([]);
   const [newRegistryUrl, setNewRegistryUrl] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -352,7 +353,17 @@ export default function ModuleStore() {
               Install community modules from configured registries. Artifacts are checksum-verified and run sandboxed.
             </p>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative', width: 220 }}>
+              <Search size={14} style={{ position: 'absolute', left: 12, top: 9, color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                placeholder="Search modules..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                style={{ ...inputStyle, paddingLeft: 34, width: '100%', height: 32 }}
+              />
+            </div>
             {duplicateGroups.length > 0 && (
               <button
                 style={{ ...buttonStyle, borderColor: 'rgba(245, 158, 11, 0.4)', background: 'rgba(245, 158, 11, 0.1)', color: 'var(--warning)' }}
@@ -383,7 +394,12 @@ export default function ModuleStore() {
           display: 'grid', gap: 16,
           gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
         }}>
-          {modules.map(mod => {
+          {modules.filter(mod => 
+            mod.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+            mod.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (mod.author && mod.author.toLowerCase().includes(searchQuery.toLowerCase())) ||
+            mod.description.toLowerCase().includes(searchQuery.toLowerCase())
+          ).map(mod => {
             const regIdx = registries.findIndex(r => r.url === mod.registry_url);
             const regNumber = regIdx !== -1 ? regIdx + 1 : null;
             const hasUpdate = mod.installed && isUpdateAvailable(mod.installed_version, mod.version);

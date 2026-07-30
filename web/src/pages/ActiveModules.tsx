@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Package, Play, Trash2, ChevronDown, ChevronUp,
-  CheckCircle, XCircle, Clock, History, RefreshCw, ArrowUpCircle,
+  CheckCircle, XCircle, Clock, History, RefreshCw, ArrowUpCircle, Search
 } from 'lucide-react';
 import { api } from '../api';
 import { ActiveModule, ModuleRun, StoreModule } from '../types';
@@ -16,6 +16,13 @@ const buttonStyle: React.CSSProperties = {
   borderRadius: 'var(--radius)', background: 'transparent',
   color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)', fontSize: 12,
   fontWeight: 600, cursor: 'pointer',
+};
+
+const inputStyle: React.CSSProperties = {
+  flex: 1, height: 38, padding: '0 12px',
+  background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+  borderRadius: 'var(--radius)', color: 'var(--text-primary)',
+  fontFamily: 'var(--font-ui)', fontSize: 13, outline: 'none',
 };
 
 function formatTime(iso: string | null): string {
@@ -49,6 +56,7 @@ export default function ActiveModules() {
   const [runs, setRuns] = useState<Record<string, ModuleRun[]>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const reload = async (forceRefresh = false) => {
     setLoading(true);
@@ -143,7 +151,7 @@ export default function ActiveModules() {
   return (
     <PageTransition>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
           <div>
             <h2 style={{ fontFamily: 'var(--font-ui)', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
               Active Modules
@@ -152,9 +160,21 @@ export default function ActiveModules() {
               Installed modules, their schedules, configuration and run history.
             </p>
           </div>
-          <button style={buttonStyle} onClick={() => reload(true)} disabled={loading} title="Cache leeren & Registries neu abfragen">
-            <RefreshCw size={14} className={loading ? 'spin' : ''} /> Refresh
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative', width: 220 }}>
+              <Search size={14} style={{ position: 'absolute', left: 12, top: 9, color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                placeholder="Search active modules..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                style={{ ...inputStyle, paddingLeft: 34, width: '100%', height: 32 }}
+              />
+            </div>
+            <button style={buttonStyle} onClick={() => reload(true)} disabled={loading} title="Cache leeren & Registries neu abfragen">
+              <RefreshCw size={14} className={loading ? 'spin' : ''} /> Refresh
+            </button>
+          </div>
         </div>
 
         {!loading && modules.length === 0 && (
@@ -163,7 +183,11 @@ export default function ActiveModules() {
           </div>
         )}
 
-        {modules.map(mod => {
+        {modules.filter(mod => 
+          mod.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+          mod.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          mod.description.toLowerCase().includes(searchQuery.toLowerCase())
+        ).map(mod => {
           const storeMod = storeModulesMap[mod.id];
           const hasUpdate = storeMod ? isUpdateAvailable(mod.version, storeMod.version) : false;
 
