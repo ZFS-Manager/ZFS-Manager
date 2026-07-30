@@ -96,6 +96,8 @@ async fn register_module(
 struct InstallBody {
     registry_url: String,
     id: String,
+    version: Option<String>,
+    wasm_url: Option<String>,
 }
 
 async fn install_from_registry(
@@ -121,7 +123,7 @@ async fn install_from_registry(
         .iter()
         .find(|m| m.id == body.id)
         .ok_or_else(|| ApiError::NotFound(format!("module {:?} not in registry", body.id)))?;
-    let package = registry::download_package(entry)
+    let package = registry::download_package_custom(entry, body.version, body.wasm_url)
         .await
         .map_err(ApiError::BadRequest)?;
 

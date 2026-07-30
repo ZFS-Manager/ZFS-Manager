@@ -328,10 +328,15 @@ export const api = {
   removeRegistry: (id: number) =>
     request<{ ok: boolean }>(`/modules/registries/${id}`, { method: 'DELETE' }),
 
-  installModule: (registryUrl: string, id: string) =>
+  getModuleReleases: (repositoryUrl: string) =>
+    request<{ releases: Array<{ tag_name: string; name: string; published_at: string; wasm_url: string }> }>(
+      `/modules/releases?repository_url=${encodeURIComponent(repositoryUrl)}`
+    ),
+
+  installModule: (registryUrl: string, id: string, version?: string, wasmUrl?: string) =>
     request<{ id: string; version: string }>('/modules/install', {
       method: 'POST',
-      body: JSON.stringify({ registry_url: registryUrl, id }),
+      body: JSON.stringify({ registry_url: registryUrl, id, version, wasm_url: wasmUrl }),
     }),
 
   getActiveModules: () => request<{ modules: ActiveModule[] }>('/modules/active'),

@@ -137,11 +137,19 @@ pub fn sha256_hex(data: &[u8]) -> String {
 
 /// Downloads manifest + wasm for a registry entry and verifies the checksum.
 pub async fn download_package(entry: &RegistryEntry) -> Result<ModulePackage, String> {
+    download_package_custom(entry, None, None).await
+}
+
+pub async fn download_package_custom(
+    entry: &RegistryEntry,
+    custom_version: Option<String>,
+    custom_wasm_url: Option<String>,
+) -> Result<ModulePackage, String> {
     let client = registry_http()?;
 
     let manifest_bytes = fetch_capped(&client, &entry.manifest_url, MAX_MANIFEST_BYTES).await?;
     let manifest_toml = String::from_utf8(manifest_bytes).map_err(|_| "manifest is not UTF-8")?;
-    let manifest = Manifest::parse(&manifest_toml)?;
+    let mut manifest = Manifest::parse(&manifest_toml)?;
     if manifest.id != entry.id {
         return Err(format!(
             "manifest id {:?} does not match registry id {:?}",
@@ -149,11 +157,21 @@ pub async fn download_package(entry: &RegistryEntry) -> Result<ModulePackage, St
         ));
     }
 
-    let wasm = fetch_capped(&client, &entry.wasm_url, MAX_WASM_BYTES).await?;
+    let target_wasm_url = custom_wasm_url.unwrap_or_else(|| entry.wasm_url.clone());
+    if let Some(v) = custom_version {
+        manifest.version = v;
+    } else if manifest.version.is_empty() {
+        manifest.version = entry.version.clone();
+    }
+
+    let wasm = fetch_capped(&client, &target_wasm_url, MAX_WASM_BYTES).await?;
     let digest = sha256_hex(&wasm);
-    if !digest.eq_ignore_ascii_case(&entry.wasm_sha256) {
-        warn!("module {}: checksum mismatch (expected {}, got {digest})", entry.id, entry.wasm_sha256);
-        return Err("wasm checksum does not match the registry index".into());
+
+    if custom_wasm_url.is_none() && !entry.wasm_sha256.is_empty() {
+        if !digest.eq_ignore_ascii_case(&entry.wasm_sha256) {
+            warn!("module {}: checksum mismatch (expected {}, got {digest})", entry.id, entry.wasm_sha256);
+            return Err("wasm checksum does not match the registry index".into());
+        }
     }
 
     Ok(ModulePackage {

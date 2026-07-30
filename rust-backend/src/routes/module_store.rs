@@ -15,6 +15,7 @@ use crate::state::AppState;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/v1/modules/store", get(store_listing))
+        .route("/api/v1/modules/releases", get(list_releases))
         .route(
             "/api/v1/modules/registries",
             get(list_registries).post(add_registry),
@@ -174,4 +175,67 @@ async fn remove_registry(
     let actor = actor_from_headers(&state, &headers).await;
     audit(&state, &actor, "registry_removed", None, json!({ "url": url })).await;
     Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct ReleasesQuery {
+    repository_url: String,
+}
+
+async fn list_releases(Query(q): Query<ReleasesQuery>) -> Result<Json<Value>, ApiError> {
+    let repo_url = q.repository_url.trim();
+    let parsed = reqwest::Url::parse(repo_url)
+        .map_err(|e| ApiError::BadRequest(format!("invalid repository url: {e}")))?;
+    if parsed.host_str() != Some("github.com") {
+        return Err(ApiError::BadRequest("releases fetch only supported for github.com repositories".into()));
+    }
+    let path_segments: Vec<&str> = parsed.path_segments().map(|c| c.collect()).unwrap_or_default();
+    if path_segments.len() < 2 {
+        return Err(ApiError::BadRequest("invalid github repository path".into()));
+    }
+    let owner = path_segments[0];
+    let repo = path_segments[1].trim_end_matches(".git");
+
+    let api_url = format!("https://api.github.com/repos/{owner}/{repo}/releases");
+    let client = reqwest::Client::builder()
+        .user_agent("ZFS-Dashboard")
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| ApiError::InternalError(e.to_string()))?;
+
+    let resp = client.get(&api_url).send().await;
+    let releases_json: Vec<Value> = match resp {
+        Ok(r) if r.status().is_success() => r.json().await.unwrap_or_default(),
+        _ => Vec::new(),
+    };
+
+    let mut releases = Vec::new();
+    for r in releases_json {
+        let tag_name = r.get("tag_name").and_then(|v| v.as_str()).unwrap_or("");
+        let name = r.get("name").and_then(|v| v.as_str()).unwrap_or(tag_name);
+        let published_at = r.get("published_at").and_then(|v| v.as_str()).unwrap_or("");
+        
+        let assets = r.get("assets").and_then(|v| v.as_array());
+        let wasm_asset = assets.and_then(|arr| {
+            arr.iter().find(|a| {
+                a.get("name").and_then(|n| n.as_str()).map(|n| n.ends_with(".wasm")).unwrap_or(false)
+            })
+        });
+
+        let wasm_url = wasm_asset
+            .and_then(|a| a.get("browser_download_url"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if !tag_name.is_empty() {
+            releases.push(json!({
+                "tag_name": tag_name,
+                "name": name,
+                "published_at": published_at,
+                "wasm_url": wasm_url,
+            }));
+        }
+    }
+
+    Ok(Json(json!({ "releases": releases })))
 }

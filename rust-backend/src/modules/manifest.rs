@@ -10,6 +10,7 @@ pub const MAX_WASM_BYTES: usize = 32 * 1024 * 1024;
 pub struct Manifest {
     pub id: String,
     pub name: String,
+    #[serde(default)]
     pub version: String,
     #[serde(default)]
     pub author: String,
@@ -79,8 +80,8 @@ impl Manifest {
         if self.name.is_empty() || self.name.len() > 128 {
             return Err("module name must be 1-128 chars".into());
         }
-        if self.version.is_empty() || self.version.len() > 32 {
-            return Err("module version must be 1-32 chars".into());
+        if self.version.len() > 32 {
+            return Err("module version must be 0-32 chars".into());
         }
         if self.wasm_entrypoint.is_empty()
             || self.wasm_entrypoint.contains('/')

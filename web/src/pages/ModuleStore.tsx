@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Package, Plus, Trash2, Download, CheckCircle, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Package, Plus, Trash2, Download, CheckCircle, AlertTriangle, RefreshCw, X } from 'lucide-react';
 import { api } from '../api';
 import { StoreModule } from '../types';
 import PageTransition from '../components/PageTransition';
@@ -35,6 +35,13 @@ export default function ModuleStore() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  // Version Picker Modal State
+  const [selectedModuleForVersionModal, setSelectedModuleForVersionModal] = useState<StoreModule | null>(null);
+  const [availableReleases, setAvailableReleases] = useState<Array<{ tag_name: string; name: string; published_at: string; wasm_url: string }>>([]);
+  const [loadingReleases, setLoadingReleases] = useState(false);
+  const [selectedReleaseTag, setSelectedReleaseTag] = useState('');
+  const [selectedWasmUrl, setSelectedWasmUrl] = useState('');
+
   const reload = async () => {
     setLoading(true);
     try {
@@ -51,11 +58,46 @@ export default function ModuleStore() {
 
   useEffect(() => { reload(); }, []);
 
-  const install = async (mod: StoreModule) => {
+  const openInstallModal = async (mod: StoreModule) => {
+    setSelectedModuleForVersionModal(mod);
+    setSelectedReleaseTag('');
+    setSelectedWasmUrl('');
+    setAvailableReleases([]);
+
+    if (mod.repository_url) {
+      setLoadingReleases(true);
+      try {
+        const res = await api.getModuleReleases(mod.repository_url);
+        setAvailableReleases(res.releases);
+        if (res.releases.length > 0) {
+          setSelectedReleaseTag(res.releases[0].tag_name);
+          setSelectedWasmUrl(res.releases[0].wasm_url);
+        }
+      } catch (err) {
+        console.warn('Failed to fetch releases:', err);
+      } finally {
+        setLoadingReleases(false);
+      }
+    }
+  };
+
+  const confirmInstallWithVersion = async () => {
+    if (!selectedModuleForVersionModal) return;
+    const mod = selectedModuleForVersionModal;
     setBusyId(mod.id);
     try {
-      await api.installModule(mod.registry_url, mod.id);
-      notify({ type: 'success', title: 'Module Store', message: `Module "${mod.name}" installed` });
+      await api.installModule(
+        mod.registry_url,
+        mod.id,
+        selectedReleaseTag || undefined,
+        selectedWasmUrl || undefined
+      );
+      notify({
+        type: 'success',
+        title: 'Module Store',
+        message: `Module "${mod.name}" ${selectedReleaseTag ? `(${selectedReleaseTag}) ` : ''}installed`,
+      });
+      setSelectedModuleForVersionModal(null);
       await reload();
     } catch (err) {
       notify({ type: 'error', title: 'Module Store', message: `Install failed: ${(err as Error).message}` });
@@ -134,7 +176,7 @@ export default function ModuleStore() {
                     {mod.name}
                   </div>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
-                    v{mod.version}{mod.author ? ` · ${mod.author}` : ''}
+                    {mod.author ? mod.author : 'Community Module'}
                   </div>
                 </div>
               </div>
@@ -149,7 +191,7 @@ export default function ModuleStore() {
                 <button
                   style={{ ...buttonStyle, opacity: busyId === mod.id ? 0.6 : 1 }}
                   disabled={busyId === mod.id}
-                  onClick={() => install(mod)}
+                  onClick={() => openInstallModal(mod)}
                 >
                   <Download size={14} /> {busyId === mod.id ? 'Installing…' : 'Install'}
                 </button>
@@ -205,7 +247,97 @@ export default function ModuleStore() {
             </div>
           </div>
         </div>
+
+        {/* Version Picker Modal */}
+        {selectedModuleForVersionModal && (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+          }}>
+            <div style={{
+              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)', width: '90%', maxWidth: 440, padding: 20,
+              display: 'flex', flexDirection: 'column', gap: 16, boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <h3 style={{ margin: 0, fontFamily: 'var(--font-ui)', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+                  Install {selectedModuleForVersionModal.name}
+                </h3>
+                <button
+                  onClick={() => setSelectedModuleForVersionModal(null)}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex' }}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <p style={{ margin: 0, fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-secondary)' }}>
+                Select a version from GitHub Releases:
+              </p>
+
+              {loadingReleases ? (
+                <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-muted)', padding: '12px 0' }}>
+                  Fetching available releases from GitHub...
+                </div>
+              ) : availableReleases.length === 0 ? (
+                <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-muted)', padding: '12px 0' }}>
+                  No specific releases found. Default version will be installed.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
+                  {availableReleases.map(rel => (
+                    <label
+                      key={rel.tag_name}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '10px 12px', border: `1px solid ${selectedReleaseTag === rel.tag_name ? 'var(--accent)' : 'var(--border)'}`,
+                        borderRadius: 'var(--radius)', background: selectedReleaseTag === rel.tag_name ? 'var(--accent-dim)' : 'transparent',
+                        cursor: 'pointer', fontFamily: 'var(--font-ui)', fontSize: 13,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input
+                          type="radio"
+                          name="release_version"
+                          checked={selectedReleaseTag === rel.tag_name}
+                          onChange={() => {
+                            setSelectedReleaseTag(rel.tag_name);
+                            setSelectedWasmUrl(rel.wasm_url);
+                          }}
+                        />
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{rel.tag_name}</span>
+                      </div>
+                      {rel.published_at && (
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                          {new Date(rel.published_at).toLocaleDateString()}
+                        </span>
+                      )}
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
+                <button
+                  style={{ ...buttonStyle, background: 'transparent', color: 'var(--text-secondary)' }}
+                  onClick={() => setSelectedModuleForVersionModal(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  style={{ ...buttonStyle, background: 'var(--accent)', color: '#fff' }}
+                  disabled={busyId === selectedModuleForVersionModal.id}
+                  onClick={confirmInstallWithVersion}
+                >
+                  {busyId === selectedModuleForVersionModal.id ? 'Installing...' : 'Install Version'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </PageTransition>
   );
 }
+
