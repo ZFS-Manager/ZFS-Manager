@@ -2,7 +2,7 @@ import React, { useEffect, useId, useState } from 'react';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { Activity, Clock, TrendingUp, BarChart2, Layers } from 'lucide-react';
+import { Activity } from 'lucide-react';
 import { api, formatBytes } from '../api';
 import { ModuleMetricPoint } from '../types';
 
@@ -37,7 +37,7 @@ export default function ModuleWidgetRenderer({
   metrics,
   title,
   unit,
-  color = '#38bdf8',
+  color = 'var(--accent)',
 }: ModuleWidgetRendererProps) {
   const [data, setData] = useState<ModuleMetricPoint[]>([]);
   const [timeRange, setTimeRange] = useState('1h');
@@ -71,12 +71,12 @@ export default function ModuleWidgetRenderer({
   const maxVal = values.length > 0 ? Math.max(...values) : 0;
   const avgVal = values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : 0;
 
-  // Grafana-style Panel Frame Container
+  // Grafana-style Technical Container Box using System Color Palette
   const panelFrameStyle: React.CSSProperties = {
-    background: 'linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(9,13,22,0.98) 100%)',
-    border: '1px solid #1e293b',
-    borderRadius: 8,
-    boxShadow: '0 4px 20px rgba(0,0,0,0.35)',
+    background: 'var(--bg-elevated)',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-lg)',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
     padding: '14px 16px',
     display: 'flex',
     flexDirection: 'column',
@@ -84,15 +84,18 @@ export default function ModuleWidgetRenderer({
     height: widgetType === 'stat' ? 140 : 280,
     width: '100%',
     boxSizing: 'border-box',
+    position: 'relative',
+    overflow: 'hidden',
   };
 
   // Render Stat Card
   if (widgetType === 'stat') {
     return (
       <div style={panelFrameStyle}>
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: color }} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}` }} />
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: color }} />
             <span style={{ fontFamily: 'var(--font-ui)', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               {title}
             </span>
@@ -101,20 +104,20 @@ export default function ModuleWidgetRenderer({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 32, fontWeight: 800, color: '#f8fafc', letterSpacing: '-0.02em' }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 30, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
             {formatVal(latestVal, unit)}
           </span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: 8 }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>
-            MIN: <strong style={{ color: '#94a3b8' }}>{formatVal(minVal, unit)}</strong>
+            MIN: <strong style={{ color: 'var(--text-secondary)' }}>{formatVal(minVal, unit)}</strong>
           </span>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>
-            AVG: <strong style={{ color: '#94a3b8' }}>{formatVal(avgVal, unit)}</strong>
+            AVG: <strong style={{ color: 'var(--text-secondary)' }}>{formatVal(avgVal, unit)}</strong>
           </span>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>
-            MAX: <strong style={{ color: '#94a3b8' }}>{formatVal(maxVal, unit)}</strong>
+            MAX: <strong style={{ color: 'var(--text-secondary)' }}>{formatVal(maxVal, unit)}</strong>
           </span>
         </div>
       </div>
@@ -129,9 +132,10 @@ export default function ModuleWidgetRenderer({
 
     return (
       <div style={{ ...panelFrameStyle, height: 200, alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: color }} />
         <div style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}` }} />
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: color }} />
             <span style={{ fontFamily: 'var(--font-ui)', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
               {title}
             </span>
@@ -141,7 +145,7 @@ export default function ModuleWidgetRenderer({
 
         <div style={{ position: 'relative', width: 110, height: 110, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <svg width="110" height="110" viewBox="0 0 100 100">
-            <circle cx="50" cy="50" r="38" stroke="#1e293b" strokeWidth="7" fill="none" />
+            <circle cx="50" cy="50" r="38" stroke="var(--border)" strokeWidth="7" fill="none" />
             <circle
               cx="50" cy="50" r="38" stroke={color} strokeWidth="7" fill="none"
               strokeDasharray={circumference}
@@ -152,7 +156,7 @@ export default function ModuleWidgetRenderer({
             />
           </svg>
           <div style={{ position: 'absolute', textAlign: 'center' }}>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 18, fontWeight: 800, color: '#f8fafc' }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>
               {formatVal(latestVal, unit)}
             </div>
             <div style={{ fontFamily: 'var(--font-ui)', fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
@@ -172,48 +176,49 @@ export default function ModuleWidgetRenderer({
 
   return (
     <div style={panelFrameStyle}>
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: color }} />
       {/* Header + Summaries */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}` }} />
-            <h4 style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 700, color: '#f8fafc', margin: 0 }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: color }} />
+            <h4 style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
               {title}
             </h4>
           </div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#64748b', marginTop: 2 }}>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
             {moduleId} · {primaryMetric}
           </div>
         </div>
 
-        {/* Header Metric Summaries Bar (Grafana-style) */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#0b1324', border: '1px solid #1e293b', borderRadius: 6, padding: '4px 10px' }}>
+        {/* Header Metric Summaries Bar (Grafana-style layout using system colors) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '4px 10px' }}>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <span style={{ fontSize: 9, fontFamily: 'var(--font-ui)', fontWeight: 800, color: '#64748b', letterSpacing: '0.05em' }}>LAST</span>
+            <span style={{ fontSize: 9, fontFamily: 'var(--font-ui)', fontWeight: 800, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>LAST</span>
             <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700, color: color }}>{formatVal(latestVal, unit)}</span>
           </div>
-          <div style={{ width: 1, height: 16, background: '#1e293b' }} />
+          <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <span style={{ fontSize: 9, fontFamily: 'var(--font-ui)', fontWeight: 800, color: '#64748b', letterSpacing: '0.05em' }}>MIN</span>
-            <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700, color: '#94a3b8' }}>{formatVal(minVal, unit)}</span>
+            <span style={{ fontSize: 9, fontFamily: 'var(--font-ui)', fontWeight: 800, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>MIN</span>
+            <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--text-secondary)' }}>{formatVal(minVal, unit)}</span>
           </div>
-          <div style={{ width: 1, height: 16, background: '#1e293b' }} />
+          <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <span style={{ fontSize: 9, fontFamily: 'var(--font-ui)', fontWeight: 800, color: '#64748b', letterSpacing: '0.05em' }}>AVG</span>
-            <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700, color: '#94a3b8' }}>{formatVal(avgVal, unit)}</span>
+            <span style={{ fontSize: 9, fontFamily: 'var(--font-ui)', fontWeight: 800, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>AVG</span>
+            <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--text-secondary)' }}>{formatVal(avgVal, unit)}</span>
           </div>
-          <div style={{ width: 1, height: 16, background: '#1e293b' }} />
+          <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <span style={{ fontSize: 9, fontFamily: 'var(--font-ui)', fontWeight: 800, color: '#64748b', letterSpacing: '0.05em' }}>MAX</span>
-            <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700, color: '#38bdf8' }}>{formatVal(maxVal, unit)}</span>
+            <span style={{ fontSize: 9, fontFamily: 'var(--font-ui)', fontWeight: 800, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>MAX</span>
+            <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700, color: color }}>{formatVal(maxVal, unit)}</span>
           </div>
 
           <select
             value={timeRange}
             onChange={e => setTimeRange(e.target.value)}
             style={{
-              background: '#0f172a', border: '1px solid #334155',
-              borderRadius: 4, color: '#cbd5e1',
+              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)',
               fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700, padding: '2px 6px',
               cursor: 'pointer', marginLeft: 4,
             }}
@@ -230,21 +235,21 @@ export default function ModuleWidgetRenderer({
       {/* Chart Canvas */}
       <div style={{ flex: 1, width: '100%', minHeight: 0, marginTop: 4 }}>
         {loading && chartData.length === 0 ? (
-          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b', fontSize: 12, fontFamily: 'var(--font-ui)' }}>
+          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12, fontFamily: 'var(--font-ui)' }}>
             Daten werden geladen…
           </div>
         ) : chartData.length === 0 ? (
-          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b', fontSize: 12, fontFamily: 'var(--font-ui)' }}>
+          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12, fontFamily: 'var(--font-ui)' }}>
             Keine Metrik-Daten im gewählten Zeitraum verfügbar
           </div>
         ) : widgetType === 'bar' ? (
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} margin={{ top: 8, right: 12, left: -20, bottom: 0 }}>
-              <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="time" stroke="#64748b" fontSize={10} tickLine={false} axisLine={{ stroke: '#1e293b' }} />
-              <YAxis stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} tickFormatter={v => formatVal(v, unit)} />
+              <CartesianGrid stroke="var(--border-subtle)" strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="time" stroke="var(--text-muted)" fontSize={10} tickLine={false} axisLine={{ stroke: 'var(--border)' }} />
+              <YAxis stroke="var(--text-muted)" fontSize={10} tickLine={false} axisLine={false} tickFormatter={v => formatVal(v, unit)} />
               <Tooltip
-                contentStyle={{ background: '#090d16', border: '1px solid #334155', borderRadius: 6, fontSize: 12, color: '#f8fafc' }}
+                contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, color: 'var(--text-primary)' }}
                 formatter={(val: any) => [formatVal(Number(val), unit), primaryMetric]}
               />
               <Bar dataKey="val" fill={color} radius={[3, 3, 0, 0]} />
@@ -255,15 +260,15 @@ export default function ModuleWidgetRenderer({
             <AreaChart data={chartData} margin={{ top: 8, right: 12, left: -20, bottom: 0 }}>
               <defs>
                 <linearGradient id={`grad-${gradId}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={color} stopOpacity={0.45} />
-                  <stop offset="95%" stopColor={color} stopOpacity={0.02} />
+                  <stop offset="5%" stopColor={color} stopOpacity={0.35} />
+                  <stop offset="95%" stopColor={color} stopOpacity={0.01} />
                 </linearGradient>
               </defs>
-              <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="time" stroke="#64748b" fontSize={10} tickLine={false} axisLine={{ stroke: '#1e293b' }} />
-              <YAxis stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} tickFormatter={v => formatVal(v, unit)} />
+              <CartesianGrid stroke="var(--border-subtle)" strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="time" stroke="var(--text-muted)" fontSize={10} tickLine={false} axisLine={{ stroke: 'var(--border)' }} />
+              <YAxis stroke="var(--text-muted)" fontSize={10} tickLine={false} axisLine={false} tickFormatter={v => formatVal(v, unit)} />
               <Tooltip
-                contentStyle={{ background: '#090d16', border: '1px solid #334155', borderRadius: 6, fontSize: 12, color: '#f8fafc' }}
+                contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, color: 'var(--text-primary)' }}
                 formatter={(val: any) => [formatVal(Number(val), unit), primaryMetric]}
               />
               <Area

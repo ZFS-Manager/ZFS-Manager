@@ -230,16 +230,16 @@ function Panel({ title, sub, right, children }: {
 }) {
   return (
     <div style={{
-      background: 'linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(9,13,22,0.98) 100%)',
-      border: '1px solid #1e293b',
+      background: 'var(--bg-elevated)',
+      border: '1px solid var(--border)',
       borderRadius: 'var(--radius-lg)',
-      boxShadow: '0 4px 20px rgba(0,0,0,0.35)',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
       overflow: 'hidden',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid #1e293b' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
         <div>
-          <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 700, color: '#f8fafc' }}>{title}</div>
-          {sub && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#64748b', marginTop: 2 }}>{sub}</div>}
+          <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{title}</div>
+          {sub && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{sub}</div>}
         </div>
         {right}
       </div>
@@ -255,9 +255,9 @@ function Toggle({ color, label, active, onClick }: { color: string; label: strin
       style={{
         display: 'flex', alignItems: 'center', gap: 5,
         height: 24, padding: '0 8px', borderRadius: 'var(--radius-sm)',
-        border: `1px solid ${active ? color + '66' : '#1e293b'}`,
-        background: active ? color + '22' : '#0f172a',
-        color: active ? color : '#64748b',
+        border: `1px solid ${active ? color : 'var(--border)'}`,
+        background: active ? 'var(--bg-hover)' : 'var(--bg-base)',
+        color: active ? color : 'var(--text-muted)',
         fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700,
         letterSpacing: '0.05em', textTransform: 'uppercase',
         cursor: 'pointer', transition: 'all 0.12s',
@@ -274,36 +274,36 @@ function GaugeCard({ label, value, unit, color, sub }: {
 }) {
   return (
     <div style={{
-      background: 'linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(9,13,22,0.98) 100%)',
-      border: '1px solid #1e293b',
+      background: 'var(--bg-elevated)',
+      border: '1px solid var(--border)',
       borderRadius: 'var(--radius-lg)',
       padding: '16px',
       display: 'flex',
       flexDirection: 'column',
-      justify: 'space-between',
+      justifyContent: 'space-between',
       height: 124,
-      boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
       position: 'relative',
       overflow: 'hidden',
       boxSizing: 'border-box',
     }}>
       {/* Glow line top */}
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: color, boxShadow: `0 0 10px ${color}` }} />
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: color }} />
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-        <span style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#94a3b8' }}>
+        <span style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
           {label}
         </span>
-        <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}` }} />
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: color }} />
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 26, fontWeight: 800, color: '#f8fafc', lineHeight: 1.1, letterSpacing: '-0.02em' }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 26, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1.1, letterSpacing: '-0.02em' }}>
           {value}
         </div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 4 }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color }}>{unit}</span>
-          {sub && <span style={{ fontFamily: 'var(--font-ui)', fontSize: 10, color: '#64748b' }}>{sub}</span>}
+          {sub && <span style={{ fontFamily: 'var(--font-ui)', fontSize: 10, color: 'var(--text-muted)' }}>{sub}</span>}
         </div>
       </div>
     </div>
