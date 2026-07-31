@@ -550,8 +550,8 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
 /* ── Tab definition ── */
 const TABS: { id: Tab; label: string; icon: React.ReactNode; desc: string }[] = [
   { id: 'security',   label: 'Security',   icon: <Lock size={15} />,    desc: 'Password & authentication' },
-  { id: 'api',        label: 'API Keys',   icon: <Key size={15} />,     desc: 'Programmatic access tokens' },
   { id: 'custom_tabs', label: 'Tabs',       icon: <Zap size={15} />,     desc: 'Modular dashboard tabs & navigation' },
+  { id: 'api',        label: 'API Keys',   icon: <Key size={15} />,     desc: 'Programmatic access tokens' },
   { id: 'appearance', label: 'Appearance', icon: <Monitor size={15} />, desc: 'Interface preferences' },
   { id: 'general',    label: 'General',    icon: <Database size={15} />, desc: 'Application defaults' },
 ];
