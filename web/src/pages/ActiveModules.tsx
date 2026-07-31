@@ -304,27 +304,6 @@ export default function ActiveModules() {
                   </button>
                 </div>
 
-                {/* Dynamic Status Fields */}
-                {mod.status_fields && mod.status_fields.length > 0 && (
-                  <div style={{
-                    background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius)', padding: 12, display: 'flex', flexDirection: 'column', gap: 8,
-                  }}>
-                    <div style={{ fontFamily: 'var(--font-ui)', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
-                      Module Status & Fields
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 }}>
-                      {mod.status_fields.map(sf => (
-                        <div key={sf.key} style={{ background: 'var(--bg-elevated)', padding: '8px 10px', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
-                          <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--text-muted)' }}>{sf.label}</div>
-                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginTop: 2 }}>
-                            {sf.unit ? `— ${sf.unit}` : 'Active'}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
 
                 <ModuleConfigForm
                   module={mod}
