@@ -1,5 +1,36 @@
 import type { ActiveModule, CustomTab, ModuleMetricPoint, ModuleRun, StoreModule } from './types';
 
+export interface ModuleDbSettings {
+  mode: 'internal' | 'external';
+  external: {
+    host: string;
+    port: number;
+    username: string;
+    database: string;
+    has_password: boolean;
+  };
+}
+
+export interface ModuleDbSettingsUpdate {
+  mode: 'internal' | 'external';
+  external?: {
+    host: string;
+    port: number;
+    username: string;
+    database: string;
+    /** omitted = keep stored password, '' = clear it */
+    password?: string;
+  };
+}
+
+export interface ModuleDbTestRequest {
+  host?: string;
+  port?: number;
+  username?: string;
+  database?: string;
+  password?: string;
+}
+
 const API_BASE_URL = '/api/v1';
 let API_KEY = localStorage.getItem('zfs_access_token') || import.meta.env.VITE_API_KEY || '';
 
@@ -108,6 +139,22 @@ export const api = {
     request<{ message: string }>('/settings/password', {
       method: 'POST',
       body: JSON.stringify({ current_password, new_password, confirm_password }),
+    }),
+
+  // ── Module database settings ───────────────────────────────────────────────
+  getModuleDbSettings: () =>
+    request<ModuleDbSettings>('/settings/module-db'),
+
+  updateModuleDbSettings: (data: ModuleDbSettingsUpdate) =>
+    request<ModuleDbSettings>('/settings/module-db', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  testModuleDbConnection: (data: ModuleDbTestRequest) =>
+    request<{ ok: boolean; message: string }>('/settings/module-db/test', {
+      method: 'POST',
+      body: JSON.stringify(data),
     }),
 
   // ── Pools ──────────────────────────────────────────────────────────────────

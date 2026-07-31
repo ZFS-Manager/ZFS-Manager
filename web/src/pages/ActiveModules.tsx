@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import {
   Package, Play, Trash2, ChevronDown, ChevronUp,
-  CheckCircle, XCircle, Clock, History, RefreshCw, ArrowUpCircle, Search
+  CheckCircle, XCircle, Clock, History, RefreshCw, ArrowUpCircle, Search,
+  Database, Loader2, Server
 } from 'lucide-react';
 import { api } from '../api';
 import { ActiveModule, ModuleRun, StoreModule } from '../types';
@@ -61,6 +62,88 @@ export default function ActiveModules() {
   const [searchQuery, setSearchQuery] = useState('');
   const [uninstallTarget, setUninstallTarget] = useState<ActiveModule | null>(null);
 
+  // ── Module database selection (internal PostgreSQL vs. external server) ──
+  const [dbMode, setDbMode] = useState<'internal' | 'external'>('internal');
+  const [dbForm, setDbForm] = useState({ host: '', port: 5432, username: '', database: '', password: '' });
+  const [dbHasPassword, setDbHasPassword] = useState(false);
+  const [dbSaving, setDbSaving] = useState(false);
+  const [dbTesting, setDbTesting] = useState(false);
+  const [dbTestResult, setDbTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  // Any change to the connection form invalidates a previous test result.
+  const patchDbForm = (patch: Partial<typeof dbForm>) => {
+    setDbForm(f => ({ ...f, ...patch }));
+    setDbTestResult(null);
+  };
+
+  const loadDbSettings = async () => {
+    try {
+      const res = await api.getModuleDbSettings();
+      setDbMode(res.mode);
+      setDbForm({
+        host: res.external.host,
+        port: res.external.port || 5432,
+        username: res.external.username,
+        database: res.external.database,
+        password: '',
+      });
+      setDbHasPassword(res.external.has_password);
+    } catch { /* settings are non-critical */ }
+  };
+
+  const saveDbSettings = async () => {
+    setDbSaving(true);
+    try {
+      const res = await api.updateModuleDbSettings(
+        dbMode === 'internal'
+          ? { mode: 'internal' }
+          : {
+              mode: 'external',
+              external: {
+                host: dbForm.host.trim(),
+                port: Number(dbForm.port) || 5432,
+                username: dbForm.username.trim(),
+                database: dbForm.database.trim(),
+                ...(dbForm.password ? { password: dbForm.password } : {}),
+              },
+            }
+      );
+      setDbHasPassword(res.external.has_password);
+      setDbForm(f => ({ ...f, password: '' }));
+      notify({
+        type: 'success',
+        title: 'Module Database',
+        message: dbMode === 'internal'
+          ? 'Interne PostgreSQL-Datenbank aktiviert.'
+          : 'Externe Datenbankverbindung gespeichert.',
+        toastOnly: true,
+      });
+    } catch (err) {
+      notify({ type: 'error', title: 'Module Database', message: `Speichern fehlgeschlagen: ${(err as Error).message}` });
+    } finally {
+      setDbSaving(false);
+    }
+  };
+
+  const testDbConnection = async () => {
+    setDbTesting(true);
+    setDbTestResult(null);
+    try {
+      const res = await api.testModuleDbConnection({
+        host: dbForm.host.trim(),
+        port: Number(dbForm.port) || 5432,
+        username: dbForm.username.trim(),
+        database: dbForm.database.trim(),
+        ...(dbForm.password ? { password: dbForm.password } : {}),
+      });
+      setDbTestResult(res);
+    } catch (err) {
+      setDbTestResult({ ok: false, message: (err as Error).message });
+    } finally {
+      setDbTesting(false);
+    }
+  };
+
   const reload = async (forceRefresh = false, silent = false) => {
     setLoading(true);
     try {
@@ -84,7 +167,7 @@ export default function ActiveModules() {
     }
   };
 
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { reload(); loadDbSettings(); }, []);
 
   const loadRuns = async (id: string) => {
     try {
@@ -188,6 +271,173 @@ export default function ActiveModules() {
               <RefreshCw size={14} className={loading ? 'spin' : ''} /> Refresh
             </button>
           </div>
+        </div>
+
+        {/* ── Module database selection ── */}
+        <div className="card" style={{ padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+            <div style={{
+              width: 36, height: 36, borderRadius: 'var(--radius)', flexShrink: 0,
+              background: 'var(--accent-dim)', border: '1px solid var(--accent-mid)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Database size={16} style={{ color: 'var(--accent)' }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: 'var(--font-ui)', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+                Module Database
+              </div>
+              <div style={{ fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                Wähle, wo Modul-Daten gespeichert werden — internes PostgreSQL oder ein externer Server.
+              </div>
+            </div>
+            {/* Segmented Internal / External switch */}
+            <div style={{ display: 'flex', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden', flexShrink: 0 }}>
+              {(['internal', 'external'] as const).map(m => {
+                const active = dbMode === m;
+                return (
+                  <button
+                    key={m}
+                    onClick={() => { setDbMode(m); setDbTestResult(null); }}
+                    style={{
+                      height: 32, padding: '0 16px', border: 'none',
+                      background: active ? 'var(--accent-dim)' : 'transparent',
+                      color: active ? 'var(--accent)' : 'var(--text-muted)',
+                      fontSize: 12, fontFamily: 'var(--font-ui)', fontWeight: 600,
+                      cursor: 'pointer', transition: 'all 0.12s',
+                      borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+                      display: 'flex', alignItems: 'center', gap: 6,
+                      textTransform: 'capitalize',
+                    }}
+                  >
+                    {m === 'internal' ? <Database size={13} /> : <Server size={13} />}
+                    {m}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {dbMode === 'internal' ? (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px',
+              background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+            }}>
+              <CheckCircle size={14} style={{ color: 'var(--success)', flexShrink: 0 }} />
+              <span style={{ fontFamily: 'var(--font-ui)', fontSize: 12.5, color: 'var(--text-secondary)' }}>
+                Internes <strong style={{ color: 'var(--text-primary)' }}>PostgreSQL</strong> (Standard) — Modul-Daten werden in der eingebetteten Datenbank gespeichert.
+              </span>
+              <button
+                className="btn btn-primary"
+                style={{ marginLeft: 'auto', flexShrink: 0, opacity: dbSaving ? 0.6 : 1 }}
+                disabled={dbSaving}
+                onClick={saveDbSettings}
+              >
+                {dbSaving ? <Loader2 size={13} className="spin" /> : <CheckCircle size={13} />} {dbSaving ? 'Speichern…' : 'Übernehmen'}
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+                <div>
+                  <label style={{ display: 'block', fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                    IP-Adresse / Host *
+                  </label>
+                  <input
+                    type="text"
+                    value={dbForm.host}
+                    onChange={e => patchDbForm({ host: e.target.value })}
+                    placeholder="z. B. 192.168.1.50"
+                    style={{ ...inputStyle, width: '100%' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                    Port
+                  </label>
+                  <input
+                    type="number"
+                    value={dbForm.port}
+                    onChange={e => patchDbForm({ port: parseInt(e.target.value, 10) || 5432 })}
+                    placeholder="5432"
+                    style={{ ...inputStyle, width: '100%' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                    Username *
+                  </label>
+                  <input
+                    type="text"
+                    value={dbForm.username}
+                    onChange={e => patchDbForm({ username: e.target.value })}
+                    placeholder="zfs_modules"
+                    autoComplete="off"
+                    style={{ ...inputStyle, width: '100%' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                    Passwort
+                  </label>
+                  <input
+                    type="password"
+                    value={dbForm.password}
+                    onChange={e => patchDbForm({ password: e.target.value })}
+                    placeholder={dbHasPassword ? '••••••••  (gespeichert — leer lassen zum Behalten)' : 'Passwort'}
+                    autoComplete="new-password"
+                    style={{ ...inputStyle, width: '100%' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                    Datenbankname *
+                  </label>
+                  <input
+                    type="text"
+                    value={dbForm.database}
+                    onChange={e => patchDbForm({ database: e.target.value })}
+                    placeholder="zfs_metrics"
+                    style={{ ...inputStyle, width: '100%' }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn-secondary"
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: dbTesting ? 0.6 : 1 }}
+                  disabled={dbTesting || !dbForm.host.trim() || !dbForm.username.trim() || !dbForm.database.trim()}
+                  onClick={testDbConnection}
+                >
+                  {dbTesting ? <Loader2 size={13} className="spin" /> : <Server size={13} />}
+                  {dbTesting ? 'Teste…' : 'Verbindung testen'}
+                </button>
+                <button
+                  className="btn btn-primary"
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: dbSaving ? 0.6 : 1 }}
+                  disabled={dbSaving || !dbForm.host.trim() || !dbForm.username.trim() || !dbForm.database.trim()}
+                  onClick={saveDbSettings}
+                >
+                  {dbSaving ? <Loader2 size={13} className="spin" /> : <CheckCircle size={13} />}
+                  {dbSaving ? 'Speichern…' : 'Speichern'}
+                </button>
+                {dbTestResult && (
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    fontFamily: 'var(--font-ui)', fontSize: 12, fontWeight: 600,
+                    color: dbTestResult.ok ? 'var(--success)' : 'var(--danger)',
+                  }}>
+                    {dbTestResult.ok ? <CheckCircle size={13} /> : <XCircle size={13} />}
+                    {dbTestResult.message}
+                  </span>
+                )}
+              </div>
+              <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                Das Passwort wird verschlüsselt (AES-256-GCM) gespeichert. Leer lassen, um das gespeicherte Passwort beizubehalten.
+              </div>
+            </div>
+          )}
         </div>
 
         {!loading && modules.length === 0 && (
