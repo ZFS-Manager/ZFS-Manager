@@ -26,6 +26,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/modules/active", get(list_active))
         .route("/api/v1/modules/:id", axum::routing::delete(uninstall))
         .route("/api/v1/modules/:id/config", put(update_config))
+        .route("/api/v1/modules/:id/database", get(get_module_database).put(update_module_database))
+        .route("/api/v1/modules/:id/database/test", post(test_module_database))
         .route("/api/v1/modules/:id/enable", post(enable))
         .route("/api/v1/modules/:id/disable", post(disable))
         .route("/api/v1/modules/:id/run", post(trigger_run))
@@ -326,6 +328,10 @@ async fn uninstall(
     if let Some(path) = registry::wasm_path(&id) {
         let _ = tokio::fs::remove_file(path).await;
     }
+    // Drop the per-module database selection as well.
+    let _ = pg
+        .execute("DELETE FROM app_settings WHERE key = $1", &[&module_db_key(&id)])
+        .await;
 
     let actor = actor_from_headers(&state, &headers).await;
     audit(&state, &actor, "module_uninstalled", Some(&id), json!({})).await;
@@ -724,4 +730,229 @@ async fn trigger_action(
         "metrics_written": outcome.metrics_written,
         "error": outcome.error,
     })))
+}
+
+// ── Per-module database selection (internal PostgreSQL vs. external server) ──
+
+fn module_db_key(id: &str) -> String {
+    format!("module_db:{id}")
+}
+
+async fn read_module_db_raw(pg: &tokio_postgres::Client, id: &str) -> Value {
+    pg.query_opt("SELECT value FROM app_settings WHERE key = $1", &[&module_db_key(id)])
+        .await
+        .ok()
+        .flatten()
+        .map(|row| row.get::<_, Value>(0))
+        .unwrap_or_else(|| json!({}))
+}
+
+async fn write_module_db_raw(pg: &tokio_postgres::Client, id: &str, value: &Value) -> Result<(), ApiError> {
+    pg.execute(
+        "INSERT INTO app_settings(key, value, updated_at) VALUES($1, $2, NOW()) \
+         ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()",
+        &[&module_db_key(id), value],
+    )
+    .await
+    .map_err(|e| ApiError::InternalError(format!("DB error: {e}")))?;
+    Ok(())
+}
+
+fn public_module_db(stored: &Value) -> Value {
+    let mode = stored.get("mode").and_then(|v| v.as_str()).unwrap_or("internal");
+    let ext = stored.get("external").cloned().unwrap_or_else(|| json!({}));
+    let has_password = ext
+        .get("password_enc")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    json!({
+        "mode": mode,
+        "external": {
+            "host": ext.get("host").and_then(|v| v.as_str()).unwrap_or(""),
+            "port": ext.get("port").and_then(|v| v.as_i64()).unwrap_or(5432),
+            "username": ext.get("username").and_then(|v| v.as_str()).unwrap_or(""),
+            "database": ext.get("database").and_then(|v| v.as_str()).unwrap_or(""),
+            "has_password": has_password,
+        }
+    })
+}
+
+async fn ensure_module_exists(pg: &tokio_postgres::Client, id: &str) -> Result<(), ApiError> {
+    let exists = pg
+        .query_opt("SELECT 1 FROM modules WHERE id = $1", &[&id])
+        .await
+        .map_err(|e| ApiError::InternalError(e.to_string()))?;
+    if exists.is_none() {
+        return Err(ApiError::NotFound(format!("module {id:?} not installed")));
+    }
+    Ok(())
+}
+
+async fn get_module_database(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let pg = db(&state)?;
+    ensure_module_exists(pg, &id).await?;
+    let stored = read_module_db_raw(pg, &id).await;
+    Ok(Json(public_module_db(&stored)))
+}
+
+#[derive(Deserialize)]
+struct ModuleDbExternalBody {
+    host: Option<String>,
+    port: Option<u16>,
+    username: Option<String>,
+    database: Option<String>,
+    /// None = keep stored password, Some("") = clear it, Some(pw) = replace it
+    password: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ModuleDbBody {
+    mode: String,
+    external: Option<ModuleDbExternalBody>,
+}
+
+async fn update_module_database(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<ModuleDbBody>,
+) -> Result<Json<Value>, ApiError> {
+    mgmt_rate_limit(&state, &headers)?;
+    if body.mode != "internal" && body.mode != "external" {
+        return Err(ApiError::BadRequest("'mode' must be 'internal' or 'external'".into()));
+    }
+
+    let pg = db(&state)?;
+    ensure_module_exists(pg, &id).await?;
+
+    let mut stored = read_module_db_raw(pg, &id).await;
+    if stored.get("external").is_none() {
+        stored["external"] = json!({});
+    }
+
+    if body.mode == "external" {
+        let ext = body.external.as_ref()
+            .ok_or_else(|| ApiError::BadRequest("'external' configuration is required".into()))?;
+        let host = ext.host.as_deref().unwrap_or("").trim().to_string();
+        let username = ext.username.as_deref().unwrap_or("").trim().to_string();
+        let database = ext.database.as_deref().unwrap_or("").trim().to_string();
+        if host.is_empty() || username.is_empty() || database.is_empty() {
+            return Err(ApiError::BadRequest("'host', 'username' and 'database' are required for an external database".into()));
+        }
+        let port = ext.port.unwrap_or(5432);
+
+        let password_enc = match &ext.password {
+            None => stored
+                .pointer("/external/password_enc")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            Some(p) if p.is_empty() => None,
+            Some(p) => {
+                let key = state.master_key
+                    .ok_or_else(|| ApiError::InternalError("secrets master key unavailable".into()))?;
+                let mut map = HashMap::new();
+                map.insert("password".to_string(), p.clone());
+                let blob = secrets::encrypt_secrets(&key, &map).map_err(ApiError::InternalError)?;
+                Some(base64::engine::general_purpose::STANDARD.encode(blob))
+            }
+        };
+
+        stored["mode"] = json!("external");
+        stored["external"] = json!({
+            "host": host,
+            "port": port,
+            "username": username,
+            "database": database,
+            "password_enc": password_enc,
+        });
+    } else {
+        // Switching back to internal keeps the external config stored for later.
+        stored["mode"] = json!("internal");
+    }
+
+    write_module_db_raw(pg, &id, &stored).await?;
+
+    let actor = actor_from_headers(&state, &headers).await;
+    audit(&state, &actor, "module_database_updated", Some(&id), json!({ "mode": body.mode })).await;
+    Ok(Json(public_module_db(&stored)))
+}
+
+#[derive(Deserialize)]
+struct ModuleDbTestBody {
+    host: Option<String>,
+    port: Option<u16>,
+    username: Option<String>,
+    database: Option<String>,
+    /// Explicit password wins; when None, the stored password is used.
+    password: Option<String>,
+}
+
+async fn test_module_database(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<ModuleDbTestBody>,
+) -> Result<Json<Value>, ApiError> {
+    mgmt_rate_limit(&state, &headers)?;
+    let pg = db(&state)?;
+    ensure_module_exists(pg, &id).await?;
+
+    let stored = read_module_db_raw(pg, &id).await;
+    let stored_ext = stored.get("external").cloned().unwrap_or_else(|| json!({}));
+    let stored_str = |k: &str| stored_ext.get(k).and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    let host = body.host.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| stored_str("host"))
+        .ok_or_else(|| ApiError::BadRequest("'host' is required".into()))?;
+    let username = body.username.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| stored_str("username"))
+        .ok_or_else(|| ApiError::BadRequest("'username' is required".into()))?;
+    let database = body.database.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| stored_str("database"))
+        .ok_or_else(|| ApiError::BadRequest("'database' is required".into()))?;
+    let port = body.port
+        .or_else(|| stored_ext.get("port").and_then(|v| v.as_i64()).map(|p| p as u16))
+        .unwrap_or(5432);
+
+    let password = match body.password {
+        Some(p) if !p.is_empty() => Some(p),
+        _ => match stored_str("password_enc") {
+            Some(enc) => {
+                let key = state.master_key
+                    .ok_or_else(|| ApiError::InternalError("secrets master key unavailable".into()))?;
+                let blob = base64::engine::general_purpose::STANDARD
+                    .decode(enc)
+                    .map_err(|e| ApiError::InternalError(format!("stored password is corrupt: {e}")))?;
+                let map = secrets::decrypt_secrets(&key, &blob).map_err(ApiError::InternalError)?;
+                map.get("password").cloned()
+            }
+            None => None,
+        },
+    };
+
+    let mut cfg = tokio_postgres::Config::new();
+    cfg.host(&host).port(port).user(&username).dbname(&database);
+    if let Some(ref pw) = password {
+        cfg.password(pw);
+    }
+
+    let connect = cfg.connect(tokio_postgres::NoTls);
+    match tokio::time::timeout(std::time::Duration::from_secs(5), connect).await {
+        Ok(Ok((client, connection))) => {
+            tokio::spawn(async move { let _ = connection.await; });
+            match client.simple_query("SELECT 1").await {
+                Ok(_) => Ok(Json(json!({ "ok": true, "message": "Verbindung erfolgreich" }))),
+                Err(e) => Ok(Json(json!({ "ok": false, "message": format!("Query failed: {e}") }))),
+            }
+        }
+        Ok(Err(e)) => Ok(Json(json!({ "ok": false, "message": format!("Connection failed: {e}") }))),
+        Err(_) => Ok(Json(json!({ "ok": false, "message": "Connection timed out after 5s" }))),
+    }
 }

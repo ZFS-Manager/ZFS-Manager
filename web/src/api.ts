@@ -141,18 +141,18 @@ export const api = {
       body: JSON.stringify({ current_password, new_password, confirm_password }),
     }),
 
-  // ── Module database settings ───────────────────────────────────────────────
-  getModuleDbSettings: () =>
-    request<ModuleDbSettings>('/settings/module-db'),
+  // ── Per-module database settings ───────────────────────────────────────────
+  getModuleDatabase: (id: string) =>
+    request<ModuleDbSettings>(`/modules/${encodeURIComponent(id)}/database`),
 
-  updateModuleDbSettings: (data: ModuleDbSettingsUpdate) =>
-    request<ModuleDbSettings>('/settings/module-db', {
+  updateModuleDatabase: (id: string, data: ModuleDbSettingsUpdate) =>
+    request<ModuleDbSettings>(`/modules/${encodeURIComponent(id)}/database`, {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
 
-  testModuleDbConnection: (data: ModuleDbTestRequest) =>
-    request<{ ok: boolean; message: string }>('/settings/module-db/test', {
+  testModuleDatabase: (id: string, data: ModuleDbTestRequest) =>
+    request<{ ok: boolean; message: string }>(`/modules/${encodeURIComponent(id)}/database/test`, {
       method: 'POST',
       body: JSON.stringify(data),
     }),
