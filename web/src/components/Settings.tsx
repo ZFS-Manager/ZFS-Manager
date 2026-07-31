@@ -183,6 +183,16 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
   };
 
   // --- Category Drag & Drop ---
+  // Clears every drag-related state. MUST run on dragend so an element never
+  // stays stuck in the translucent "being dragged" look (e.g. when the drag
+  // is cancelled, dropped outside a target, or ended without moving).
+  const clearDragState = () => {
+    setDraggedCatIdx(null);
+    setDragOverCatIdx(null);
+    setDraggedItem(null);
+    setDragOverItem(null);
+  };
+
   const handleCatDragStart = (e: React.DragEvent, catIdx: number) => {
     e.stopPropagation();
     setDraggedCatIdx(catIdx);
@@ -193,21 +203,21 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
   const handleCatDragOver = (e: React.DragEvent, catIdx: number) => {
     e.preventDefault();
     e.stopPropagation();
-    if (draggedCatIdx !== null && draggedCatIdx !== catIdx) {
-      setDragOverCatIdx(catIdx);
+    if (draggedCatIdx !== null) {
+      setDragOverCatIdx(draggedCatIdx !== catIdx ? catIdx : null);
     }
   };
 
   const handleCatDrop = (e: React.DragEvent, targetCatIdx: number) => {
     e.preventDefault();
     e.stopPropagation();
-    setDragOverCatIdx(null);
+    const srcCatIdx = draggedCatIdx;
+    clearDragState();
 
-    if (draggedCatIdx !== null && draggedCatIdx !== targetCatIdx) {
+    if (srcCatIdx !== null && srcCatIdx !== targetCatIdx) {
       const nextLayout = [...layout];
-      const [moved] = nextLayout.splice(draggedCatIdx, 1);
+      const [moved] = nextLayout.splice(srcCatIdx, 1);
       nextLayout.splice(targetCatIdx, 0, moved);
-      setDraggedCatIdx(null);
       updateAndSaveLayout(nextLayout);
     }
   };
@@ -231,12 +241,14 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
   const handleItemDrop = (e: React.DragEvent, targetCatIdx: number, targetItemIdx?: number) => {
     e.preventDefault();
     e.stopPropagation();
-    setDragOverItem(null);
 
-    if (!draggedItem) return;
+    if (!draggedItem) {
+      clearDragState();
+      return;
+    }
 
     const { catIdx: srcCatIdx, itemIdx: srcItemIdx } = draggedItem;
-    setDraggedItem(null);
+    clearDragState();
 
     if (srcCatIdx === targetCatIdx && srcItemIdx === targetItemIdx) return;
 
@@ -363,6 +375,7 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
                 <div
                   draggable={editingCatId !== cat.id}
                   onDragStart={(e) => handleCatDragStart(e, catIdx)}
+                  onDragEnd={clearDragState}
                   style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     padding: '10px 14px', background: 'var(--bg-hover)', borderBottom: '1px solid var(--border)',
@@ -421,8 +434,22 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
 
                 {/* Items inside Category (Draggable between categories and within category) */}
                 <div
-                  onDragOver={(e) => handleItemDragOver(e, catIdx)}
-                  onDrop={(e) => handleItemDrop(e, catIdx)}
+                  onDragOver={(e) => {
+                    if (draggedCatIdx !== null) {
+                      handleCatDragOver(e, catIdx);
+                    } else {
+                      handleItemDragOver(e, catIdx);
+                    }
+                  }}
+                  onDrop={(e) => {
+                    // A category dropped onto the items area of another
+                    // category must still snap into place (not be swallowed).
+                    if (draggedCatIdx !== null) {
+                      handleCatDrop(e, catIdx);
+                    } else {
+                      handleItemDrop(e, catIdx);
+                    }
+                  }}
                   style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 6, minHeight: 44 }}
                 >
                   {cat.items.length === 0 ? (
@@ -439,8 +466,23 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
                           key={item.id}
                           draggable={true}
                           onDragStart={(e) => handleItemDragStart(e, catIdx, itemIdx)}
-                          onDragOver={(e) => handleItemDragOver(e, catIdx, itemIdx)}
-                          onDrop={(e) => handleItemDrop(e, catIdx, itemIdx)}
+                          onDragEnd={clearDragState}
+                          onDragOver={(e) => {
+                            if (draggedCatIdx !== null) {
+                              handleCatDragOver(e, catIdx);
+                            } else {
+                              handleItemDragOver(e, catIdx, itemIdx);
+                            }
+                          }}
+                          onDrop={(e) => {
+                            // While dragging a category, item rows must not
+                            // swallow the drop — let the category snap in.
+                            if (draggedCatIdx !== null) {
+                              handleCatDrop(e, catIdx);
+                            } else {
+                              handleItemDrop(e, catIdx, itemIdx);
+                            }
+                          }}
                           style={{
                             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                             padding: '8px 12px', background: 'var(--bg-base)',
