@@ -51,12 +51,15 @@ export default function Sidebar({
   const [navLayout, setNavLayout] = useState<NavCategory[]>([]);
 
   const loadNav = async () => {
+    // Render the cached layout instantly so nav changes (e.g. deleted tabs)
+    // appear immediately without waiting for the network round-trip.
+    setNavLayout(getNavLayout());
     try {
       const res = await api.getCustomTabs();
       const synced = syncCustomTabsToLayout(res.tabs);
       setNavLayout(synced);
     } catch {
-      setNavLayout(getNavLayout());
+      /* keep cached layout */
     }
   };
 

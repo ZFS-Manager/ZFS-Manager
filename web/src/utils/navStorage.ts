@@ -82,7 +82,23 @@ export function resetNavLayout(): void {
   window.dispatchEvent(new CustomEvent('zfs_nav_updated'));
 }
 
-export function syncCustomTabsToLayout(customTabs: CustomTab[]): NavCategory[] {
+/**
+ * Slugs of custom tabs whose deletion is currently in flight.
+ * While a delete request is running, a background sync must not
+ * "resurrect" the tab from a stale backend list (flicker fix).
+ */
+const pendingDeletions = new Set<string>();
+
+export function markCustomTabDeleting(slug: string): void {
+  pendingDeletions.add(slug);
+}
+
+export function unmarkCustomTabDeleting(slug: string): void {
+  pendingDeletions.delete(slug);
+}
+
+export function syncCustomTabsToLayout(allTabs: CustomTab[]): NavCategory[] {
+  const customTabs = allTabs.filter(t => !pendingDeletions.has(t.slug));
   const currentLayout = getNavLayout();
   let modified = false;
 

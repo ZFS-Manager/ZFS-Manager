@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { AnimatePresence } from 'framer-motion';
 import {
   Package, Play, Trash2, ChevronDown, ChevronUp,
   CheckCircle, XCircle, Clock, History, RefreshCw, ArrowUpCircle, Search
@@ -7,6 +8,7 @@ import { api } from '../api';
 import { ActiveModule, ModuleRun, StoreModule } from '../types';
 import ModuleConfigForm from '../components/ModuleConfigForm';
 import PageTransition from '../components/PageTransition';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { useNotifications } from '../context/NotificationContext';
 import { getActiveModulesCached, getModuleStoreCached, isUpdateAvailable } from '../utils/moduleCache';
 
@@ -57,6 +59,7 @@ export default function ActiveModules() {
   const [busy, setBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [uninstallTarget, setUninstallTarget] = useState<ActiveModule | null>(null);
 
   const reload = async (forceRefresh = false, silent = false) => {
     setLoading(true);
@@ -125,15 +128,25 @@ export default function ActiveModules() {
     }
   };
 
-  const uninstall = async (mod: ActiveModule) => {
-    if (!window.confirm(`Uninstall module "${mod.name}"? Its configuration and run history will be deleted.`)) return;
+  const uninstall = (mod: ActiveModule) => {
+    setUninstallTarget(mod);
+  };
+
+  const confirmUninstall = async () => {
+    const mod = uninstallTarget;
+    if (!mod) return;
+    setUninstallTarget(null);
+    // Optimistic update: remove the module from the list immediately so the UI
+    // stays fluid instead of waiting for the backend round-trip.
+    setModules(prev => prev.filter(m => m.id !== mod.id));
+    setExpanded(null);
     try {
       await api.uninstallModule(mod.id);
       notify({ type: 'success', title: 'Modules', message: `"${mod.name}" uninstalled` });
-      setExpanded(null);
       await reload(true, true);
     } catch (err) {
       notify({ type: 'error', title: 'Modules', message: `Uninstall failed: ${(err as Error).message}` });
+      await reload(true, true); // restore consistent state on failure
     }
   };
 
@@ -358,9 +371,22 @@ export default function ActiveModules() {
                 </div>
               </div>
             )}
-          </div>
-        );
-      })}
+           </div>
+         );
+       })}
+
+      {uninstallTarget && (
+        <AnimatePresence>
+          <ConfirmDialog
+            title="Modul deinstallieren"
+            message={`Modul "${uninstallTarget.name}" wirklich deinstallieren? Konfiguration und Ausführungs-Verlauf werden gelöscht.`}
+            confirmLabel="Deinstallieren"
+            variant="danger"
+            onConfirm={confirmUninstall}
+            onCancel={() => setUninstallTarget(null)}
+          />
+        </AnimatePresence>
+      )}
     </div>
   </PageTransition>
   );

@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Key, Lock, Plus, Trash2, Eye, EyeOff, CheckCircle, XCircle, Copy, AlertTriangle, Monitor, Database, Shield, Zap, FolderPlus, RotateCcw, Edit2, Check, X, GripVertical } from 'lucide-react';
+import { AnimatePresence } from 'framer-motion';
+import { Key, Lock, Plus, Trash2, Eye, EyeOff, CheckCircle, XCircle, Copy, Monitor, Database, Shield, Zap, FolderPlus, RotateCcw, Edit2, Check, X, GripVertical } from 'lucide-react';
 import { api } from '../api';
 import PageTransition from './PageTransition';
+import ConfirmDialog from './ConfirmDialog';
 import { useIsMobile } from '../hooks/useBreakpoint';
-import { getNavLayout, saveNavLayout, resetNavLayout, syncCustomTabsToLayout, NavCategory, NavItem } from '../utils/navStorage';
+import { getNavLayout, saveNavLayout, resetNavLayout, syncCustomTabsToLayout, markCustomTabDeleting, unmarkCustomTabDeleting, NavCategory, NavItem } from '../utils/navStorage';
 
 interface SettingsProps {
   onPasswordChanged?: () => void;
@@ -37,6 +39,13 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
   const [newCatName, setNewCatName] = useState('');
   const [editingCatId, setEditingCatId] = useState<string | null>(null);
   const [editingCatLabel, setEditingCatLabel] = useState('');
+  const [confirmState, setConfirmState] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    variant: 'danger' | 'primary';
+    onConfirm: () => void;
+  } | null>(null);
 
   // Drag and Drop state
   const [draggedCatIdx, setDraggedCatIdx] = useState<number | null>(null);
@@ -77,15 +86,35 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
     }
   };
 
-  const handleDeleteTab = async (slug: string, tabName: string) => {
-    if (!window.confirm(`Tab "${tabName}" löschen?`)) return;
-    try {
-      await api.deleteCustomTab(slug);
-      addToast(`Tab "${tabName}" gelöscht`, 'success');
-      await load();
-    } catch (err: any) {
-      addToast(err.message || 'Fehler beim Löschen des Tabs', 'error');
-    }
+  const handleDeleteTab = (slug: string, tabName: string) => {
+    setConfirmState({
+      title: 'Tab löschen',
+      message: `Tab "${tabName}" wirklich löschen? Das Layout und alle enthaltenen Widgets gehen verloren.`,
+      confirmLabel: 'Löschen',
+      variant: 'danger',
+      onConfirm: async () => {
+        // Optimistic update: remove the tab from the nav layout immediately so
+        // it disappears instantly instead of waiting for backend round-trips.
+        // The pending-deletion marker prevents background syncs from
+        // resurrecting the tab while the delete request is in flight.
+        markCustomTabDeleting(slug);
+        const nextLayout = layout.map(c => ({
+          ...c,
+          items: c.items.filter(i => i.customSlug !== slug),
+        }));
+        updateAndSaveLayout(nextLayout);
+        try {
+          await api.deleteCustomTab(slug);
+          addToast(`Tab "${tabName}" gelöscht`, 'success');
+          load(); // silent background re-sync
+        } catch (err: any) {
+          addToast(err.message || 'Fehler beim Löschen des Tabs', 'error');
+          load(); // restore consistent state on failure
+        } finally {
+          unmarkCustomTabDeleting(slug);
+        }
+      },
+    });
   };
 
   const handleAddCategory = () => {
@@ -107,22 +136,29 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
       addToast('Mindestens eine Kategorie muss erhalten bleiben.', 'error');
       return;
     }
-    if (!window.confirm(`Kategorie "${label}" löschen? Enthaltene Tabs werden in die erste Kategorie verschoben.`)) return;
-    const targetCat = layout.find(c => c.id !== catId);
-    if (!targetCat) return;
+    setConfirmState({
+      title: 'Kategorie löschen',
+      message: `Kategorie "${label}" löschen? Enthaltene Tabs werden in die erste Kategorie verschoben.`,
+      confirmLabel: 'Löschen',
+      variant: 'danger',
+      onConfirm: () => {
+        const targetCat = layout.find(c => c.id !== catId);
+        if (!targetCat) return;
 
-    const catToDelete = layout.find(c => c.id === catId);
-    const orphanedItems = catToDelete ? catToDelete.items : [];
+        const catToDelete = layout.find(c => c.id === catId);
+        const orphanedItems = catToDelete ? catToDelete.items : [];
 
-    const nextLayout = layout.filter(c => c.id !== catId).map(c => {
-      if (c.id === targetCat.id) {
-        return { ...c, items: [...c.items, ...orphanedItems] };
-      }
-      return c;
+        const nextLayout = layout.filter(c => c.id !== catId).map(c => {
+          if (c.id === targetCat.id) {
+            return { ...c, items: [...c.items, ...orphanedItems] };
+          }
+          return c;
+        });
+
+        updateAndSaveLayout(nextLayout);
+        addToast(`Kategorie "${label}" gelöscht`, 'success');
+      },
     });
-
-    updateAndSaveLayout(nextLayout);
-    addToast(`Kategorie "${label}" gelöscht`, 'success');
   };
 
   const handleSaveCatRename = (catId: string) => {
@@ -133,11 +169,17 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
   };
 
   const handleReset = () => {
-    if (window.confirm('Navigation auf Standardeinstellungen zurücksetzen?')) {
-      resetNavLayout();
-      load();
-      addToast('Navigation zurückgesetzt', 'success');
-    }
+    setConfirmState({
+      title: 'Navigation zurücksetzen',
+      message: 'Navigation auf Standardeinstellungen zurücksetzen? Eigene Kategorien und Reihenfolgen gehen verloren.',
+      confirmLabel: 'Zurücksetzen',
+      variant: 'primary',
+      onConfirm: () => {
+        resetNavLayout();
+        load();
+        addToast('Navigation zurückgesetzt', 'success');
+      },
+    });
   };
 
   // --- Category Drag & Drop ---
@@ -441,10 +483,23 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
                     })
                   )}
                 </div>
-              </div>
-            );
-          })}
-        </div>
+               </div>
+             );
+           })}
+         </div>
+       )}
+
+      {confirmState && (
+        <AnimatePresence>
+          <ConfirmDialog
+            title={confirmState.title}
+            message={confirmState.message}
+            confirmLabel={confirmState.confirmLabel}
+            variant={confirmState.variant}
+            onConfirm={() => { const fn = confirmState.onConfirm; setConfirmState(null); fn(); }}
+            onCancel={() => setConfirmState(null)}
+          />
+        </AnimatePresence>
       )}
     </div>
   );
@@ -752,21 +807,16 @@ function ApiKeysTab({ addToast }: { addToast: (msg: string, type: 'success' | 'e
       )}
 
       {confirmState && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, backdropFilter: 'blur(4px)' }}>
-          <div style={{ background: 'var(--bg-surface)', padding: 24, borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)', maxWidth: 400, width: '100%', boxShadow: '0 20px 50px rgba(0,0,0,0.6)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-              <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--danger)' }}>
-                <AlertTriangle size={20} />
-              </div>
-              <h4 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{confirmState.title}</h4>
-            </div>
-            <p style={{ color: 'var(--text-muted)', fontSize: 13, lineHeight: 1.5, margin: '0 0 20px 0' }}>{confirmState.message}</p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-              <button className="btn btn-secondary" onClick={() => setConfirmState(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={() => { confirmState.onConfirm(); setConfirmState(null); }} style={{ background: 'var(--danger)', borderColor: 'var(--danger)' }}>Revoke</button>
-            </div>
-          </div>
-        </div>
+        <AnimatePresence>
+          <ConfirmDialog
+            title={confirmState.title}
+            message={confirmState.message}
+            confirmLabel="Revoke"
+            variant="danger"
+            onConfirm={() => { const fn = confirmState.onConfirm; setConfirmState(null); fn(); }}
+            onCancel={() => setConfirmState(null)}
+          />
+        </AnimatePresence>
       )}
     </div>
   );
