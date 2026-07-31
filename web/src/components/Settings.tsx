@@ -287,7 +287,7 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
               onClick={handleCreateTab}
               disabled={!newTabName.trim()}
               className="btn btn-primary"
-              style={{ flexShrink: 0 }}
+              style={{ flexShrink: 0, height: 40 }}
             >
               <Plus size={14} /> Tab erstellen
             </button>
@@ -312,7 +312,7 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
               onClick={handleAddCategory}
               disabled={!newCatName.trim()}
               className="btn btn-secondary"
-              style={{ flexShrink: 0 }}
+              style={{ flexShrink: 0, height: 40 }}
             >
               <Plus size={14} /> Kategorie erstellen
             </button>
@@ -809,7 +809,7 @@ function ApiKeysTab({ addToast }: { addToast: (msg: string, type: 'success' | 'e
             <option value="readwrite">Read / Write</option>
             <option value="admin">Admin</option>
           </select>
-          <button onClick={handleCreate} disabled={creating || !newKeyName.trim()} className="btn btn-primary" style={{ flexShrink: 0, opacity: (creating || !newKeyName.trim()) ? 0.5 : 1 }}>
+          <button onClick={handleCreate} disabled={creating || !newKeyName.trim()} className="btn btn-primary" style={{ flexShrink: 0, height: 40, opacity: (creating || !newKeyName.trim()) ? 0.5 : 1 }}>
             <Plus size={14} /> {creating ? 'Creating…' : 'Create Key'}
           </button>
         </div>

@@ -348,7 +348,7 @@ export default function Sidebar({
             title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              gap: 6, height: 34, padding: '0', width: '100%',
+              gap: 6, height: 40, padding: '0', width: '100%',
               border: 'none', background: 'transparent', cursor: 'pointer',
               color: 'var(--text-muted)', fontFamily: 'var(--font-ui)',
               fontSize: 11, fontWeight: 400, transition: 'all 0.1s', marginTop: 4,
