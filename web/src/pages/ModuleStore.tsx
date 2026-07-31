@@ -9,24 +9,9 @@ import { useNotifications } from '../context/NotificationContext';
 import { getModuleStoreCached, isUpdateAvailable } from '../utils/moduleCache';
 
 const cardStyle: React.CSSProperties = {
-  background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-  borderRadius: 'var(--radius)', padding: 16,
+  background: 'var(--bg-surface)', border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-lg)', padding: 18,
   display: 'flex', flexDirection: 'column', gap: 10,
-};
-
-const inputStyle: React.CSSProperties = {
-  flex: 1, height: 38, padding: '0 12px',
-  background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-  borderRadius: 'var(--radius)', color: 'var(--text-primary)',
-  fontFamily: 'var(--font-ui)', fontSize: 13, outline: 'none',
-};
-
-const buttonStyle: React.CSSProperties = {
-  display: 'inline-flex', alignItems: 'center', gap: 6,
-  height: 34, padding: '0 14px', border: '1px solid var(--border)',
-  borderRadius: 'var(--radius)', background: 'var(--accent-dim)',
-  color: 'var(--accent)', fontFamily: 'var(--font-ui)', fontSize: 12,
-  fontWeight: 600, cursor: 'pointer',
 };
 
 function formatVersion(version?: string): string {
@@ -346,36 +331,38 @@ export default function ModuleStore() {
   return (
     <PageTransition>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
-            <h2 style={{ fontFamily: 'var(--font-ui)', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+            <h1 style={{ fontFamily: 'var(--font-ui)', fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.01em', margin: 0 }}>
               Module Store
-            </h2>
-            <p style={{ fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 0' }}>
-              Install community modules from configured registries. Artifacts are checksum-verified and run sandboxed.
+            </h1>
+            <p style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--text-muted)', marginTop: 4, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+              Community modules · checksum-verified · sandboxed
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <div style={{ position: 'relative', width: 220 }}>
-              <Search size={14} style={{ position: 'absolute', left: 12, top: 9, color: 'var(--text-muted)' }} />
+            <div style={{ position: 'relative', minWidth: 180 }}>
+              <Search size={13} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
               <input
                 type="text"
-                placeholder="Search modules..."
+                className="input"
+                placeholder="Filter…"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                style={{ ...inputStyle, paddingLeft: 34, width: '100%', height: 32 }}
+                style={{ paddingLeft: 34, width: '100%' }}
               />
             </div>
             {duplicateGroups.length > 0 && (
               <button
-                style={{ ...buttonStyle, borderColor: 'rgba(245, 158, 11, 0.4)', background: 'rgba(245, 158, 11, 0.1)', color: 'var(--warning)' }}
+                className="btn"
+                style={{ borderColor: 'rgba(245, 158, 11, 0.4)', background: 'rgba(245, 158, 11, 0.1)', color: 'var(--warning)', display: 'flex', alignItems: 'center', gap: 6 }}
                 onClick={() => setShowDuplicateModal(true)}
                 title="Resolve duplicate module sources"
               >
                 <AlertTriangle size={14} /> Duplicates ({duplicateGroups.length})
               </button>
             )}
-            <button style={buttonStyle} onClick={() => reload(false, true)} disabled={loading} title="Cache leeren & Registries neu abfragen">
+            <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={() => reload(false, true)} disabled={loading} title="Cache leeren & Registries neu abfragen">
               <RefreshCw size={14} className={loading ? 'spin' : ''} /> Refresh
             </button>
           </div>
@@ -466,7 +453,8 @@ export default function ModuleStore() {
                       <span>Installed {mod.installed_version ? `(${formatVersion(mod.installed_version)})` : ''}</span>
                     </div>
                     <button
-                      style={{ ...buttonStyle, opacity: busyId === mod.id ? 0.6 : 1, padding: '0 10px', height: 28, fontSize: 11, color: hasUpdate ? 'var(--warning)' : 'var(--text-secondary)', borderColor: hasUpdate ? 'rgba(245, 158, 11, 0.4)' : 'var(--border)' }}
+                      className="btn btn-secondary"
+                      style={{ opacity: busyId === mod.id ? 0.6 : 1, padding: '0 10px', height: 28, fontSize: 11, display: 'flex', alignItems: 'center', gap: 6, color: hasUpdate ? 'var(--warning)' : 'var(--text-secondary)', borderColor: hasUpdate ? 'rgba(245, 158, 11, 0.4)' : 'var(--border)' }}
                       disabled={busyId === mod.id}
                       onClick={() => openInstallModal(mod)}
                     >
@@ -475,7 +463,8 @@ export default function ModuleStore() {
                   </div>
                 ) : (
                   <button
-                    style={{ ...buttonStyle, opacity: busyId === mod.id ? 0.6 : 1 }}
+                    className="btn btn-primary"
+                    style={{ opacity: busyId === mod.id ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
                     disabled={busyId === mod.id}
                     onClick={() => openInstallModal(mod)}
                   >
@@ -492,11 +481,19 @@ export default function ModuleStore() {
           )}
         </div>
 
-        <div>
-          <h3 style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 10px' }}>
-            Registries
-          </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <div>
+              <h3 style={{ fontFamily: 'var(--font-ui)', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+                Registries
+              </h3>
+              <p style={{ fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-muted)', margin: '2px 0 0' }}>
+                Quellen, aus denen Community-Module geladen werden
+              </p>
+            </div>
+            <span className="badge">{registries.length}</span>
+          </div>
+          <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
             {registries.map((reg, idx) => (
               <div key={reg.id} style={{
                 display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
@@ -530,13 +527,14 @@ export default function ModuleStore() {
             ))}
             <div style={{ display: 'flex', gap: 8 }}>
               <input
-                style={inputStyle}
+                className="input"
+                style={{ flex: 1 }}
                 placeholder="https://example.com/my-registry/index.json"
                 value={newRegistryUrl}
                 onChange={e => setNewRegistryUrl(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && addRegistry()}
               />
-              <button style={buttonStyle} onClick={addRegistry}>
+              <button className="btn btn-primary" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }} onClick={addRegistry}>
                 <Plus size={14} /> Add registry
               </button>
             </div>

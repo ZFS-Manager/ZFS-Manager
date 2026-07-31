@@ -247,27 +247,28 @@ export default function ActiveModules() {
   return (
     <PageTransition>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
-            <h2 style={{ fontFamily: 'var(--font-ui)', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+            <h1 style={{ fontFamily: 'var(--font-ui)', fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.01em', margin: 0 }}>
               Active Modules
-            </h2>
-            <p style={{ fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 0' }}>
-              Installed modules, their schedules, configuration and run history.
+            </h1>
+            <p style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--text-muted)', marginTop: 4, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+              {modules.length} installed · schedules · configuration · run history
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <div style={{ position: 'relative', width: 220 }}>
-              <Search size={14} style={{ position: 'absolute', left: 12, top: 9, color: 'var(--text-muted)' }} />
+            <div style={{ position: 'relative', minWidth: 180 }}>
+              <Search size={13} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
               <input
                 type="text"
-                placeholder="Search active modules..."
+                className="input"
+                placeholder="Filter…"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                style={{ ...inputStyle, paddingLeft: 34, width: '100%', height: 32 }}
+                style={{ paddingLeft: 34, width: '100%' }}
               />
             </div>
-            <button style={buttonStyle} onClick={() => reload(true)} disabled={loading} title="Cache leeren & Registries neu abfragen">
+            <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={() => reload(true)} disabled={loading} title="Cache leeren & Registries neu abfragen">
               <RefreshCw size={14} className={loading ? 'spin' : ''} /> Refresh
             </button>
           </div>
@@ -455,12 +456,9 @@ export default function ActiveModules() {
           const hasUpdate = storeMod ? isUpdateAvailable(mod.version, storeMod.version) : false;
 
           return (
-            <div key={mod.id} style={{
-              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-              borderRadius: 'var(--radius)', overflow: 'hidden',
-            }}>
+            <div key={mod.id} className="card" style={{ overflow: 'hidden' }}>
               <div
-                style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', cursor: 'pointer' }}
+                style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px', cursor: 'pointer' }}
                 onClick={() => toggleExpand(mod.id)}
               >
                 <div style={{
