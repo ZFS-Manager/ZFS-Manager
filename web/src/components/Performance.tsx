@@ -87,16 +87,17 @@ const CHART_MARGIN = { top: 24, right: 8, left: 16, bottom: 8 };
 
 const TOOLTIP_STYLE = {
   contentStyle: {
-    background: '#18181b', border: '1px solid #3f3f46',
-    borderRadius: 6, padding: '6px 10px',
+    background: '#090d16', border: '1px solid #334155',
+    borderRadius: 6, padding: '8px 12px',
     fontSize: 11, fontFamily: '"JetBrains Mono", monospace',
-    boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+    color: '#f8fafc',
   },
-  labelStyle: { color: '#71717a', fontSize: 10, marginBottom: 2 },
+  labelStyle: { color: '#94a3b8', fontSize: 10, marginBottom: 4, fontWeight: 600 },
   itemStyle: { fontWeight: 600 },
 };
-const AXIS_TICK  = { fill: '#52525b', fontSize: 10 };
-const GRID_PROPS = { strokeDasharray: '3 6' as const, stroke: 'rgba(255,255,255,0.15)', vertical: false };
+const AXIS_TICK  = { fill: '#64748b', fontSize: 10 };
+const GRID_PROPS = { strokeDasharray: '3 3' as const, stroke: '#1e293b', vertical: false };
 
 function getBwScale(maxMB: number): { unit: string; fmt: (v: number) => string } {
   // 1 GB = 1024 MB, 1 TB = ~1.05e6 MB, 1 PB = ~1.07e9 MB, 1 EB = ~1.10e12 MB, 1 ZB = ~1.13e15 MB, 1 YB = ~1.16e18 MB
@@ -228,11 +229,17 @@ function Panel({ title, sub, right, children }: {
   title: string; sub?: string; right?: React.ReactNode; children: React.ReactNode;
 }) {
   return (
-    <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+    <div style={{
+      background: 'linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(9,13,22,0.98) 100%)',
+      border: '1px solid #1e293b',
+      borderRadius: 'var(--radius-lg)',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.35)',
+      overflow: 'hidden',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid #1e293b' }}>
         <div>
-          <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{title}</div>
-          {sub && <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{sub}</div>}
+          <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 700, color: '#f8fafc' }}>{title}</div>
+          {sub && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#64748b', marginTop: 2 }}>{sub}</div>}
         </div>
         {right}
       </div>
@@ -248,10 +255,10 @@ function Toggle({ color, label, active, onClick }: { color: string; label: strin
       style={{
         display: 'flex', alignItems: 'center', gap: 5,
         height: 24, padding: '0 8px', borderRadius: 'var(--radius-sm)',
-        border: `1px solid ${active ? color + '44' : 'var(--border)'}`,
-        background: active ? color + '15' : 'transparent',
-        color: active ? color : 'var(--text-muted)',
-        fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600,
+        border: `1px solid ${active ? color + '66' : '#1e293b'}`,
+        background: active ? color + '22' : '#0f172a',
+        color: active ? color : '#64748b',
+        fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700,
         letterSpacing: '0.05em', textTransform: 'uppercase',
         cursor: 'pointer', transition: 'all 0.12s',
       }}
@@ -266,20 +273,37 @@ function GaugeCard({ label, value, unit, color, sub }: {
   label: string; value: string; unit: string; color: string; sub?: string;
 }) {
   return (
-    <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '14px 12px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, marginBottom: 8 }}>
-        <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0, display: 'inline-block' }} />
-        <span style={{ fontFamily: 'var(--font-ui)', fontSize: 10, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
+    <div style={{
+      background: 'linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(9,13,22,0.98) 100%)',
+      border: '1px solid #1e293b',
+      borderRadius: 'var(--radius-lg)',
+      padding: '16px',
+      display: 'flex',
+      flexDirection: 'column',
+      justify: 'space-between',
+      height: 124,
+      boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+      position: 'relative',
+      overflow: 'hidden',
+      boxSizing: 'border-box',
+    }}>
+      {/* Glow line top */}
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: color, boxShadow: `0 0 10px ${color}` }} />
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <span style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#94a3b8' }}>
           {label}
         </span>
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}` }} />
       </div>
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 'clamp(20px, 4vw, 30px)', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1, letterSpacing: '-0.03em' }}>
+
+      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 26, fontWeight: 800, color: '#f8fafc', lineHeight: 1.1, letterSpacing: '-0.02em' }}>
           {value}
         </div>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 5, marginTop: 3 }}>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color }}>{unit}</span>
-          {sub && <span style={{ fontFamily: 'var(--font-ui)', fontSize: 9, color: 'var(--text-muted)' }}>{sub}</span>}
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 4 }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color }}>{unit}</span>
+          {sub && <span style={{ fontFamily: 'var(--font-ui)', fontSize: 10, color: '#64748b' }}>{sub}</span>}
         </div>
       </div>
     </div>
@@ -702,6 +726,80 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
 
   const renderWidget = (id: string): React.ReactNode => {
     switch (id) {
+      case 'live-read-speed': {
+        const rSpeed = splitUnit(formatSpeed(ioReadBw * 1048576));
+        return (
+          <GaugeCard
+            label="↑ Read Speed"
+            value={rSpeed.value}
+            unit={rSpeed.unit}
+            color={C.read}
+            sub={`Peak ${fmtBw(livePeakR)}`}
+          />
+        );
+      }
+
+      case 'live-write-speed': {
+        const wSpeed = splitUnit(formatSpeed(ioWriteBw * 1048576));
+        return (
+          <GaugeCard
+            label="↓ Write Speed"
+            value={wSpeed.value}
+            unit={wSpeed.unit}
+            color={C.write}
+            sub={`Peak ${fmtBw(livePeakW)}`}
+          />
+        );
+      }
+
+      case 'live-read-iops': {
+        return (
+          <GaugeCard
+            label="↑ Read IOPS"
+            value={ioReadIops.toFixed(0)}
+            unit="ops/s"
+            color={C.read}
+          />
+        );
+      }
+
+      case 'live-write-iops': {
+        return (
+          <GaugeCard
+            label="↓ Write IOPS"
+            value={ioWriteIops.toFixed(0)}
+            unit="ops/s"
+            color={C.write}
+          />
+        );
+      }
+
+      case 'live-total-read': {
+        const totalRead = splitUnit(formatBytes(totalReadGB * 1073741824));
+        return (
+          <GaugeCard
+            label="Total Read"
+            value={totalRead.value}
+            unit={totalRead.unit}
+            color={C.read}
+            sub="all time"
+          />
+        );
+      }
+
+      case 'live-total-write': {
+        const totalWrite = splitUnit(formatBytes(totalWriteGB * 1073741824));
+        return (
+          <GaugeCard
+            label="Total Write"
+            value={totalWrite.value}
+            unit={totalWrite.unit}
+            color={C.write}
+            sub="all time"
+          />
+        );
+      }
+
       case 'live-gauges': {
         const rSpeed   = splitUnit(formatSpeed(ioReadBw  * 1048576));
         const wSpeed   = splitUnit(formatSpeed(ioWriteBw * 1048576));
@@ -994,7 +1092,7 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
             <div style={{ maxHeight: filteredSmartData.length > 8 ? 520 : undefined, overflowY: filteredSmartData.length > 8 ? 'auto' : undefined, paddingRight: filteredSmartData.length > 8 ? 4 : 0 }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
               {smartData.length === 0 ? (
-                [1, 2, 3].map(i => <Skeleton key={i} height={80} />)
+                [1, 2, 3].map(i => <div key={i}><Skeleton height={80} /></div>)
               ) : filteredSmartData.length === 0 ? (
                 <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: 12, fontFamily: 'var(--font-ui)' }}>
                   No SMART data for disks in this pool
@@ -1107,21 +1205,27 @@ export default function Performance({ stats, liveMetrics, serverTimeOffsetMs = 0
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-        {widgets.filter(w => w.visible).map(w => (
-          <WidgetShell
-            key={w.id}
-            id={w.id}
-            editMode={editMode}
-            onDragStart={() => handleDragStart(w.id)}
-            onDragOver={() => handleDragOver(w.id)}
-            onDrop={() => handleDrop(w.id)}
-            isDragOver={dragOver === w.id}
-            onRemove={() => handleRemove(w.id)}
-          >
-            {renderWidget(w.id)}
-          </WidgetShell>
-        ))}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16 }}>
+        {widgets.filter(w => w.visible).map(w => {
+          const isGauge = w.id.startsWith('live-') && w.id !== 'live-gauges';
+          const content = renderWidget(w.id);
+          if (!content) return null;
+          return (
+            <div key={w.id} style={{ gridColumn: isGauge ? undefined : '1 / -1' }}>
+              <WidgetShell
+                id={w.id}
+                editMode={editMode}
+                onDragStart={() => handleDragStart(w.id)}
+                onDragOver={() => handleDragOver(w.id)}
+                onDrop={() => handleDrop(w.id)}
+                isDragOver={dragOver === w.id}
+                onRemove={() => handleRemove(w.id)}
+              >
+                {content}
+              </WidgetShell>
+            </div>
+          );
+        })}
       </div>
 
       {editMode && (
