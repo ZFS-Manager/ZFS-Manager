@@ -375,8 +375,8 @@ export default function ActiveModules() {
          );
        })}
 
-      {uninstallTarget && (
-        <AnimatePresence>
+      <AnimatePresence>
+        {uninstallTarget && (
           <ConfirmDialog
             title="Modul deinstallieren"
             message={`Modul "${uninstallTarget.name}" wirklich deinstallieren? Konfiguration und Ausführungs-Verlauf werden gelöscht.`}
@@ -385,8 +385,8 @@ export default function ActiveModules() {
             onConfirm={confirmUninstall}
             onCancel={() => setUninstallTarget(null)}
           />
-        </AnimatePresence>
-      )}
+        )}
+      </AnimatePresence>
     </div>
   </PageTransition>
   );

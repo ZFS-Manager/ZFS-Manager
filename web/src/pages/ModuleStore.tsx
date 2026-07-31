@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Package, Plus, Trash2, Download, CheckCircle, AlertTriangle, RefreshCw, X, ArrowUpCircle, Search } from 'lucide-react';
+import { AnimatePresence } from 'framer-motion';
+import { Package, Plus, Trash2, Download, CheckCircle, AlertTriangle, RefreshCw, ArrowUpCircle, Search } from 'lucide-react';
 import { api } from '../api';
 import { StoreModule } from '../types';
 import PageTransition from '../components/PageTransition';
+import Modal from '../components/Modal';
 import { useNotifications } from '../context/NotificationContext';
 import { getModuleStoreCached, isUpdateAvailable } from '../utils/moduleCache';
 
@@ -542,36 +544,18 @@ export default function ModuleStore() {
         </div>
 
         {/* Duplicate Module Selection Modal */}
-        {showDuplicateModal && duplicateGroups.length > 0 && (
-          <div style={{
-            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(4px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
-          }}>
-            <div style={{
-              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-              borderRadius: 'var(--radius)', width: '90%', maxWidth: 560, padding: 22,
-              display: 'flex', flexDirection: 'column', gap: 18, boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--warning)' }}>
-                  <AlertTriangle size={22} />
-                  <h3 style={{ margin: 0, fontFamily: 'var(--font-ui)', fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>
-                    Doppelte Module in Registries
-                  </h3>
-                                <button
-                  onClick={cancelDuplicateSelections}
-                  style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex' }}
-                >
-                  <X size={18} />
-                </button>
-              </div>
+        <AnimatePresence>
+          {showDuplicateModal && duplicateGroups.length > 0 && (
+            <Modal title="Doppelte Module in Registries" onClose={cancelDuplicateSelections} maxWidth={560}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                <div style={{ display: 'flex', gap: 14, padding: '14px 16px', background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.16)', borderRadius: 8 }}>
+                  <AlertTriangle size={18} style={{ color: 'var(--warning)', flexShrink: 0, marginTop: 2 }} />
+                  <p style={{ margin: 0, fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                    Folgende Module sind in mehreren Registries enthalten. Wähle pro Modul aus, aus welcher Registry es bezogen werden soll:
+                  </p>
+                </div>
 
-              <p style={{ margin: 0, fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                Folgende Module sind in mehreren Registries enthalten. Wähle pro Modul aus, aus welcher Registry es bezogen werden soll:
-              </p>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxHeight: 340, overflowY: 'auto', paddingRight: 4 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxHeight: 340, overflowY: 'auto', paddingRight: 4 }}>
                 {duplicateGroups.map(dup => (
                   <div key={dup.id} style={{
                     background: 'var(--bg-hover)', border: '1px solid var(--border)',
@@ -649,116 +633,106 @@ export default function ModuleStore() {
                     </div>
                   </div>
                 ))}
-              </div>
+                </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4 }}>
-                <button
-                  style={{ ...buttonStyle, background: 'transparent', color: 'var(--text-secondary)' }}
-                  onClick={cancelDuplicateSelections}
-                >
-                  Abbrechen
-                </button>
-                <button
-                  style={{ ...buttonStyle, background: 'var(--accent)', color: '#fff' }}
-                  onClick={confirmDuplicateSelections}
-                >
-                  {pendingAddRegistryUrl ? 'Auswahl übernehmen & Registry hinzufügen' : 'Auswahl übernehmen'}
-                </button>
-              </div>        </div>
-            </div>
-          </div>
-        )}
+                <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ flex: 1 }}
+                    onClick={cancelDuplicateSelections}
+                  >
+                    Abbrechen
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+                    onClick={confirmDuplicateSelections}
+                  >
+                    {pendingAddRegistryUrl ? 'Auswahl übernehmen & Registry hinzufügen' : 'Auswahl übernehmen'}
+                  </button>
+                </div>
+              </div>
+            </Modal>
+          )}
+        </AnimatePresence>
 
         {/* Version Picker Modal */}
-        {selectedModuleForVersionModal && (
-          <div style={{
-            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(4px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
-          }}>
-            <div style={{
-              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-              borderRadius: 'var(--radius)', width: '90%', maxWidth: 440, padding: 20,
-              display: 'flex', flexDirection: 'column', gap: 16, boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <h3 style={{ margin: 0, fontFamily: 'var(--font-ui)', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
-                  {selectedModuleForVersionModal.installed ? `Switch Version: ${selectedModuleForVersionModal.name}` : `Install ${selectedModuleForVersionModal.name}`}
-                </h3>
-                <button
-                  onClick={() => setSelectedModuleForVersionModal(null)}
-                  style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex' }}
-                >
-                  <X size={18} />
-                </button>
+        <AnimatePresence>
+          {selectedModuleForVersionModal && (
+            <Modal
+              title={selectedModuleForVersionModal.installed ? `Switch Version: ${selectedModuleForVersionModal.name}` : `Install ${selectedModuleForVersionModal.name}`}
+              onClose={() => setSelectedModuleForVersionModal(null)}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                <p style={{ margin: 0, fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-secondary)' }}>
+                  Select a version from GitHub Releases:
+                </p>
+
+                {loadingReleases ? (
+                  <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-muted)', padding: '12px 0' }}>
+                    Fetching available releases from GitHub...
+                  </div>
+                ) : availableReleases.length === 0 ? (
+                  <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-muted)', padding: '12px 0' }}>
+                    No specific releases found. Default version will be installed.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 260, overflowY: 'auto' }}>
+                    {availableReleases.map(rel => (
+                      <label
+                        key={rel.tag_name}
+                        style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          padding: '10px 12px', border: `1px solid ${selectedReleaseTag === rel.tag_name ? 'var(--accent)' : 'var(--border)'}`,
+                          borderRadius: 'var(--radius)', background: selectedReleaseTag === rel.tag_name ? 'var(--accent-dim)' : 'transparent',
+                          cursor: 'pointer', fontFamily: 'var(--font-ui)', fontSize: 13,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <input
+                            type="radio"
+                            name="release_version"
+                            checked={selectedReleaseTag === rel.tag_name}
+                            onChange={() => {
+                              setSelectedReleaseTag(rel.tag_name);
+                              setSelectedWasmUrl(rel.wasm_url);
+                            }}
+                          />
+                          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{formatVersion(rel.tag_name)}</span>
+                        </div>
+                        {rel.published_at && (
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                            {new Date(rel.published_at).toLocaleDateString()}
+                          </span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ flex: 1 }}
+                    onClick={() => setSelectedModuleForVersionModal(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+                    disabled={busyId === selectedModuleForVersionModal.id}
+                    onClick={confirmInstallWithVersion}
+                  >
+                    {busyId === selectedModuleForVersionModal.id
+                      ? (selectedModuleForVersionModal.installed ? 'Switching…' : 'Installing…')
+                      : (selectedModuleForVersionModal.installed ? 'Switch Version' : 'Install Version')}
+                  </button>
+                </div>
               </div>
-
-              <p style={{ margin: 0, fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-secondary)' }}>
-                Select a version from GitHub Releases:
-              </p>
-
-              {loadingReleases ? (
-                <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-muted)', padding: '12px 0' }}>
-                  Fetching available releases from GitHub...
-                </div>
-              ) : availableReleases.length === 0 ? (
-                <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, color: 'var(--text-muted)', padding: '12px 0' }}>
-                  No specific releases found. Default version will be installed.
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
-                  {availableReleases.map(rel => (
-                    <label
-                      key={rel.tag_name}
-                      style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        padding: '10px 12px', border: `1px solid ${selectedReleaseTag === rel.tag_name ? 'var(--accent)' : 'var(--border)'}`,
-                        borderRadius: 'var(--radius)', background: selectedReleaseTag === rel.tag_name ? 'var(--accent-dim)' : 'transparent',
-                        cursor: 'pointer', fontFamily: 'var(--font-ui)', fontSize: 13,
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <input
-                          type="radio"
-                          name="release_version"
-                          checked={selectedReleaseTag === rel.tag_name}
-                          onChange={() => {
-                            setSelectedReleaseTag(rel.tag_name);
-                            setSelectedWasmUrl(rel.wasm_url);
-                          }}
-                        />
-                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{formatVersion(rel.tag_name)}</span>
-                      </div>
-                      {rel.published_at && (
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                          {new Date(rel.published_at).toLocaleDateString()}
-                        </span>
-                      )}
-                    </label>
-                  ))}
-                </div>
-              )}
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
-                <button
-                  style={{ ...buttonStyle, background: 'transparent', color: 'var(--text-secondary)' }}
-                  onClick={() => setSelectedModuleForVersionModal(null)}
-                >
-                  Cancel
-                </button>
-                <button
-                  style={{ ...buttonStyle, background: 'var(--accent)', color: '#fff' }}
-                  disabled={busyId === selectedModuleForVersionModal.id}
-                  onClick={confirmInstallWithVersion}
-                >
-                  {busyId === selectedModuleForVersionModal.id
-                    ? (selectedModuleForVersionModal.installed ? 'Switching…' : 'Installing…')
-                    : (selectedModuleForVersionModal.installed ? 'Switch Version' : 'Install Version')}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+            </Modal>
+          )}
+        </AnimatePresence>
       </div>
     </PageTransition>
   );

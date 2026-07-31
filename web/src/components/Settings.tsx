@@ -531,8 +531,8 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
          </div>
        )}
 
-      {confirmState && (
-        <AnimatePresence>
+      <AnimatePresence>
+        {confirmState && (
           <ConfirmDialog
             title={confirmState.title}
             message={confirmState.message}
@@ -541,8 +541,8 @@ function CustomTabsTab({ addToast }: { addToast: (msg: string, type: 'success' |
             onConfirm={() => { const fn = confirmState.onConfirm; setConfirmState(null); fn(); }}
             onCancel={() => setConfirmState(null)}
           />
-        </AnimatePresence>
-      )}
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -848,8 +848,8 @@ function ApiKeysTab({ addToast }: { addToast: (msg: string, type: 'success' | 'e
         </div>
       )}
 
-      {confirmState && (
-        <AnimatePresence>
+      <AnimatePresence>
+        {confirmState && (
           <ConfirmDialog
             title={confirmState.title}
             message={confirmState.message}
@@ -858,8 +858,8 @@ function ApiKeysTab({ addToast }: { addToast: (msg: string, type: 'success' | 'e
             onConfirm={() => { const fn = confirmState.onConfirm; setConfirmState(null); fn(); }}
             onCancel={() => setConfirmState(null)}
           />
-        </AnimatePresence>
-      )}
+        )}
+      </AnimatePresence>
     </div>
   );
 }
