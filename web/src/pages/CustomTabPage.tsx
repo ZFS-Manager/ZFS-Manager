@@ -5,7 +5,7 @@ import { Plus, Edit2, Check, Trash2, ArrowUp, ArrowDown, Blocks, Search, Package
 import { api } from '../api';
 import { ActiveModule, CustomTab, CustomTabWidgetPlacement, WidgetDefinition } from '../types';
 import ModuleWidgetRenderer from '../components/ModuleWidgetRenderer';
-import Modal from '../components/Modal';
+import AddModuleWidgetModal from '../components/AddModuleWidgetModal';
 
 /** Grafana-style accent color per widget visualization type */
 function widgetTypeColor(type: string): string {
@@ -268,132 +268,11 @@ export default function CustomTabPage() {
         })}
       </div>
 
-      {/* ── Add-widget picker (Grafana-style panel library) ── */}
-      <AnimatePresence>
-        {showAddModal && (
-          <Modal title="Add widget" onClose={closeAddModal} maxWidth={560}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {/* Search */}
-              <div style={{ position: 'relative' }}>
-                <Search size={13} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
-                <input
-                  className="input"
-                  placeholder="Search widgets by name, type or metric…"
-                  value={widgetSearch}
-                  onChange={e => setWidgetSearch(e.target.value)}
-                  style={{ paddingLeft: 34, width: '100%' }}
-                  autoFocus
-                />
-              </div>
-
-              {activeModules.length === 0 && (
-                <div style={{ fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
-                  No active modules with widgets available.
-                </div>
-              )}
-
-              {activeModules.length > 0 && widgetPickerModules.length === 0 && (
-                <div style={{ fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
-                  No widgets match "{widgetSearch}".
-                </div>
-              )}
-
-              {widgetPickerModules.map(({ mod, widgets }) => (
-                <div key={mod.id} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {/* Module header */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 2px' }}>
-                    <div style={{
-                      width: 24, height: 24, borderRadius: 'var(--radius)', flexShrink: 0,
-                      background: 'var(--accent-dim)', border: '1px solid var(--accent-mid)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      <Package size={12} style={{ color: 'var(--accent)' }} />
-                    </div>
-                    <span style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
-                      {mod.name}
-                    </span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>
-                      {mod.version}
-                    </span>
-                    <span className="badge" style={{ marginLeft: 'auto' }}>
-                      {widgets.length} widget{widgets.length !== 1 ? 's' : ''}
-                    </span>
-                  </div>
-
-                  {(!mod.widget_schema || mod.widget_schema.length === 0) ? (
-                    <div style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic', padding: '4px 2px' }}>
-                      No widgets declared in manifest.
-                    </div>
-                  ) : widgets.length === 0 ? null : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {widgets.map(w => (
-                        <button
-                          key={w.key}
-                          onClick={() => handleAddWidget(mod, w)}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left',
-                            background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-                            borderRadius: 'var(--radius)', padding: '10px 12px', cursor: 'pointer',
-                            transition: 'border-color 0.12s ease, background 0.12s ease',
-                          }}
-                          onMouseEnter={e => {
-                            (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent-mid)';
-                            (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)';
-                          }}
-                          onMouseLeave={e => {
-                            (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)';
-                            (e.currentTarget as HTMLElement).style.background = 'var(--bg-elevated)';
-                          }}
-                        >
-                          <div style={{
-                            width: 34, height: 34, borderRadius: 'var(--radius)', flexShrink: 0,
-                            background: 'var(--bg-base)', border: '1px solid var(--border)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          }}>
-                            {widgetTypeIcon(w.type)}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
-                              {w.label}
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
-                              <span style={{
-                                fontFamily: 'var(--font-ui)', fontSize: 9, fontWeight: 800,
-                                textTransform: 'uppercase', letterSpacing: '0.05em',
-                                color: widgetTypeColor(w.type),
-                                background: 'var(--bg-base)', border: '1px solid var(--border)',
-                                borderRadius: 3, padding: '1px 5px',
-                              }}>
-                                {w.type}
-                              </span>
-                              {w.metrics.map(m => (
-                                <span key={m} style={{
-                                  fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)',
-                                  background: 'var(--bg-base)', border: '1px solid var(--border)',
-                                  borderRadius: 3, padding: '1px 5px',
-                                }}>
-                                  {m}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                          <div style={{
-                            width: 26, height: 26, borderRadius: 'var(--radius)', flexShrink: 0,
-                            background: 'var(--accent-dim)', border: '1px solid var(--accent-mid)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          }}>
-                            <Plus size={13} style={{ color: 'var(--accent)' }} />
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </Modal>
-        )}
-      </AnimatePresence>
+      <AddModuleWidgetModal
+        isOpen={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        onSelectWidget={handleAddWidget}
+      />
     </div>
   );
 }

@@ -8,12 +8,15 @@ import {
   Camera, TrendingUp, AlertTriangle, Database,
   ArrowUp, ArrowDown, Edit2, Check, Plus,
 } from 'lucide-react';
-import { ZFSPool, ZFSDataset, ZFSLog } from '../types';
+import { ZFSPool, ZFSDataset, ZFSLog, ActiveModule } from '../types';
 import { formatBytes, formatSpeed, api } from '../api';
 import { useLayout } from '../hooks/useLayout';
 import WidgetShell from './WidgetShell';
 import PageTransition from './PageTransition';
 import PhysicalDisksTable from './PhysicalDisksTable';
+import ModuleWidgetRenderer from './ModuleWidgetRenderer';
+import AddModuleWidgetModal from './AddModuleWidgetModal';
+import { getActiveModulesCached } from '../utils/moduleCache';
 import { useIsMobile } from '../hooks/useBreakpoint';
 
 interface DashboardProps {
@@ -803,14 +806,20 @@ export default function Dashboard({
   onSelectPool,
 }: DashboardProps) {
   const isMobile = useIsMobile();
-  const { widgets, loaded, setVisible, reorder, toast } = useLayout('dashboard');
+  const { widgets, loaded, setVisible, reorder, toast, save } = useLayout('dashboard');
   const [editMode, setEditMode] = useState(false);
   const [dragFrom, setDragFrom] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
+  const [activeModules, setActiveModules] = useState<ActiveModule[]>([]);
+  const [showAddModuleModal, setShowAddModuleModal] = useState(false);
+
+  useEffect(() => {
+    getActiveModulesCached().then(res => setActiveModules(res.modules || [])).catch(() => {});
+  }, []);
 
   const [histData1d, setHistData1d] = useState<any[]>(() => dashboardHistData1dCache.data);
   const [histData7d, setHistData7d] = useState<any[]>(() => dashboardHistData7dCache.data);
-  const [scrubLive,  setScrubLive]  = useState<Record<string, {inProgress: boolean; progress: number; timeRemaining: string; isResilver: boolean; expansionInProgress: boolean; expansionVdev: string; expansionProgress: number; expansionEta: string}>>({});
+  const [scrubLive,  setScrubLive]  = useState<Record<string, any>>({});
   const [diskMetrics, setDiskMetrics] = useState<Record<string, any[]>>(() => dashboardDiskMetricsCache.data);
   const [diskPools,   setDiskPools]   = useState<string[]>([]);
   const [ioShowRead,  setIoShowRead]  = useState(true);
@@ -1306,8 +1315,32 @@ export default function Dashboard({
         ) : null;
       }
 
-      default:
+      default: {
+        if (id.startsWith('module:')) {
+          const parts = id.split(':');
+          const modId = parts[1];
+          const widgetKey = parts.slice(2).join(':');
+          const mod = activeModules.find(m => m.id === modId);
+          const wDef = mod?.widget_schema?.find(w => w.key === widgetKey);
+
+          return (
+            <Panel title={wDef?.label || widgetKey} sub={mod ? `Modul: ${mod.name}` : `Modul: ${modId}`}>
+              <div style={{ padding: '16px 20px' }}>
+                <ModuleWidgetRenderer
+                  moduleId={modId}
+                  widgetKey={widgetKey}
+                  widgetType={wDef?.type || 'line'}
+                  metrics={wDef?.metrics || [widgetKey]}
+                  title={wDef?.label || widgetKey}
+                  unit={wDef?.unit}
+                  color={wDef?.color || 'var(--accent)'}
+                />
+              </div>
+            </Panel>
+          );
+        }
         return null;
+      }
     }
   };
 
@@ -1334,13 +1367,24 @@ export default function Dashboard({
           <PoolSelector pools={pools} selected={effectivePoolName} onSelect={onSelectPool} />
         )}
         {!isMobile && (
-          <button
-            onClick={() => setEditMode(m => !m)}
-            className="btn btn-secondary"
-            style={{ gap: 6 }}
-          >
-            {editMode ? <><Check size={13} /> Done</> : <><Edit2 size={13} /> Edit Layout</>}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {editMode && (
+              <button
+                onClick={() => setShowAddModuleModal(true)}
+                className="btn btn-secondary"
+                style={{ gap: 6 }}
+              >
+                <Plus size={13} /> Add Module Widget
+              </button>
+            )}
+            <button
+              onClick={() => setEditMode(m => !m)}
+              className="btn btn-secondary"
+              style={{ gap: 6 }}
+            >
+              {editMode ? <><Check size={13} /> Done</> : <><Edit2 size={13} /> Edit Layout</>}
+            </button>
+          </div>
         )}
       </div>
 
@@ -1397,6 +1441,20 @@ export default function Dashboard({
           </div>
         </div>
       )}
+
+      {/* Add Module Widget Modal */}
+      <AddModuleWidgetModal
+        isOpen={showAddModuleModal}
+        onClose={() => setShowAddModuleModal(false)}
+        onSelectWidget={(mod, widget) => {
+          const widgetId = `module:${mod.id}:${widget.key}`;
+          if (widgets.some(w => w.id === widgetId)) {
+            setVisible(widgetId, true);
+          } else {
+            save([...widgets, { id: widgetId, visible: true, order: widgets.length }]);
+          }
+        }}
+      />
 
       {/* Empty state */}
       {loaded && pools.length === 0 && !loading && (

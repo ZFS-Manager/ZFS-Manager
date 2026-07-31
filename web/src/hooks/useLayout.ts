@@ -16,13 +16,44 @@ const DEFAULTS: Record<string, WidgetConfig[]> = {
     { id: 'activity-log',     visible: true, order: 5 },
   ],
   performance: [
-    { id: 'live-gauges',     visible: true, order: 0 },
-    { id: 'disk-io',         visible: true, order: 1 },
-    { id: 'io-chart',        visible: true, order: 2 },
-    { id: 'storage-history', visible: true, order: 3 },
-    { id: 'smart-health',    visible: true, order: 4 },
+    { id: 'live-read-speed',   visible: true, order: 0 },
+    { id: 'live-write-speed',  visible: true, order: 1 },
+    { id: 'live-read-iops',    visible: true, order: 2 },
+    { id: 'live-write-iops',   visible: true, order: 3 },
+    { id: 'live-total-read',   visible: true, order: 4 },
+    { id: 'live-total-write',  visible: true, order: 5 },
+    { id: 'disk-io',         visible: true, order: 6 },
+    { id: 'io-chart',        visible: true, order: 7 },
+    { id: 'storage-history', visible: true, order: 8 },
+    { id: 'smart-health',    visible: true, order: 9 },
   ],
 };
+
+function normalizeWidgets(page: string, list: WidgetConfig[]): WidgetConfig[] {
+  if (page !== 'performance') return list;
+  const hasLegacyGauges = list.some(w => w.id === 'live-gauges');
+  if (!hasLegacyGauges) return list;
+
+  const legacyIndex = list.findIndex(w => w.id === 'live-gauges');
+  const legacyVisible = list[legacyIndex]?.visible ?? true;
+  const newGaugeIds = [
+    'live-read-speed', 'live-write-speed', 'live-read-iops',
+    'live-write-iops', 'live-total-read', 'live-total-write'
+  ];
+
+  const result: WidgetConfig[] = [];
+  list.forEach(w => {
+    if (w.id === 'live-gauges') {
+      newGaugeIds.forEach(id => {
+        result.push({ id, visible: legacyVisible, order: result.length });
+      });
+    } else {
+      result.push({ ...w, order: result.length });
+    }
+  });
+
+  return result;
+}
 
 function getApiKey() {
   return localStorage.getItem('zfs_access_token') || '';
@@ -32,7 +63,7 @@ function getLocalLayout(page: string): WidgetConfig[] {
   const cached = localStorage.getItem(`layout:${page}`);
   if (cached) {
     try {
-      return JSON.parse(cached);
+      return normalizeWidgets(page, JSON.parse(cached));
     } catch (_) {}
   }
   return DEFAULTS[page] ?? [];
@@ -51,13 +82,14 @@ export function useLayout(page: string) {
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(data => {
         if (Array.isArray(data?.widgets) && data.widgets.length > 0) {
+          const normData = normalizeWidgets(page, data.widgets);
           // Merge server widgets with defaults (in case new widgets were added)
-          const serverIds = new Set(data.widgets.map((w: WidgetConfig) => w.id));
+          const serverIds = new Set(normData.map((w: WidgetConfig) => w.id));
           const defaults  = DEFAULTS[page] ?? [];
           const merged: WidgetConfig[] = [
-            ...data.widgets,
+            ...normData,
             ...defaults.filter(d => !serverIds.has(d.id)).map((d, i) => ({
-              ...d, order: data.widgets.length + i,
+              ...d, order: normData.length + i,
             })),
           ];
           setWidgets(merged);
