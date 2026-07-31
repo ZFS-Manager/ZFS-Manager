@@ -1,4 +1,5 @@
 import type { ActiveModule, CustomTab, ModuleMetricPoint, ModuleRun, StoreModule } from './types';
+import { clearModuleCache } from './utils/moduleCache';
 
 export interface ModuleDbSettings {
   mode: 'internal' | 'external';
@@ -366,30 +367,42 @@ export const api = {
   getRegistries: () =>
     request<{ registries: Array<{ id: number; url: string; is_default: boolean }> }>('/modules/registries'),
 
-  addRegistry: (url: string) =>
-    request<{ id: number; url: string }>('/modules/registries', {
+  addRegistry: async (url: string) => {
+    const res = await request<{ id: number; url: string }>('/modules/registries', {
       method: 'POST',
       body: JSON.stringify({ url }),
-    }),
+    });
+    clearModuleCache();
+    return res;
+  },
 
-  removeRegistry: (id: number) =>
-    request<{ ok: boolean }>(`/modules/registries/${id}`, { method: 'DELETE' }),
+  removeRegistry: async (id: number) => {
+    const res = await request<{ ok: boolean }>(`/modules/registries/${id}`, { method: 'DELETE' });
+    clearModuleCache();
+    return res;
+  },
 
   getModuleReleases: (repositoryUrl: string) =>
     request<{ releases: Array<{ tag_name: string; name: string; published_at: string; wasm_url: string }> }>(
       `/modules/releases?repository_url=${encodeURIComponent(repositoryUrl)}`
     ),
 
-  installModule: (registryUrl: string, id: string, version?: string, wasmUrl?: string) =>
-    request<{ id: string; version: string }>('/modules/install', {
+  installModule: async (registryUrl: string, id: string, version?: string, wasmUrl?: string) => {
+    const res = await request<{ id: string; version: string }>('/modules/install', {
       method: 'POST',
       body: JSON.stringify({ registry_url: registryUrl, id, version, wasm_url: wasmUrl }),
-    }),
+    });
+    clearModuleCache();
+    return res;
+  },
 
   getActiveModules: () => request<{ modules: ActiveModule[] }>('/modules/active'),
 
-  uninstallModule: (id: string) =>
-    request<{ ok: boolean }>(`/modules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  uninstallModule: async (id: string) => {
+    const res = await request<{ ok: boolean }>(`/modules/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    clearModuleCache();
+    return res;
+  },
 
   updateModuleConfig: (id: string, config: Record<string, unknown>, secrets: Record<string, string | null>) =>
     request<{ ok: boolean }>(`/modules/${encodeURIComponent(id)}/config`, {
@@ -458,11 +471,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ metrics }),
     }),
-  switchModuleVersion: (id: string, version: string, wasmUrl: string) =>
-    request<{ ok: boolean; version: string }>(`/modules/${encodeURIComponent(id)}/switch-version`, {
+  switchModuleVersion: async (id: string, version: string, wasmUrl: string) => {
+    const res = await request<{ ok: boolean; version: string }>(`/modules/${encodeURIComponent(id)}/switch-version`, {
       method: 'POST',
       body: JSON.stringify({ version, wasm_url: wasmUrl }),
-    }),
+    });
+    clearModuleCache();
+    return res;
+  },
   executeModuleAction: (id: string, actionKey: string) =>
     request<{ run_id: number; action: string; success: boolean; message: string; metrics_written: number; error: string | null }>(
       `/modules/${encodeURIComponent(id)}/action/${encodeURIComponent(actionKey)}`,

@@ -78,12 +78,35 @@ export default function ModuleStore() {
   const [pendingAddRegistryUrl, setPendingAddRegistryUrl] = useState<string | null>(null);
 
   const filterAndSetModules = (rawMods: StoreModule[], selections: Record<string, string>) => {
+    // Validate selections against currently available rawMods per module ID
+    const validRegistriesByMod = new Map<string, Set<string>>();
+    rawMods.forEach(m => {
+      if (!validRegistriesByMod.has(m.id)) validRegistriesByMod.set(m.id, new Set());
+      validRegistriesByMod.get(m.id)!.add(m.registry_url);
+    });
+
+    const cleanedSelections: Record<string, string> = { ...selections };
+    let changed = false;
+    Object.keys(cleanedSelections).forEach(id => {
+      const valid = validRegistriesByMod.get(id);
+      if (!valid || !valid.has(cleanedSelections[id])) {
+        delete cleanedSelections[id];
+        changed = true;
+      }
+    });
+
+    if (changed) {
+      setStoredRegistrySelections(cleanedSelections);
+      setSelectedRegistryForMod(cleanedSelections);
+    }
+
     const seen = new Set<string>();
     const result: StoreModule[] = [];
 
     rawMods.forEach(mod => {
-      if (selections[mod.id]) {
-        if (mod.registry_url === selections[mod.id] && !seen.has(mod.id)) {
+      const activeSel = cleanedSelections[mod.id];
+      if (activeSel) {
+        if (mod.registry_url === activeSel && !seen.has(mod.id)) {
           seen.add(mod.id);
           result.push(mod);
         }
@@ -153,7 +176,7 @@ export default function ModuleStore() {
     }
   };
 
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { reload(false, true); }, []);
 
   const openInstallModal = async (mod: StoreModule) => {
     setSelectedModuleForVersionModal(mod);
