@@ -16,8 +16,6 @@ allow = [
     "ISC",
     "Unicode-3.0",
     "Zlib",
-    "MPL-2.0",
-    "CC0-1.0",
     # webpki-roots ships Mozilla's CA list under this data license.
     "CDLA-Permissive-2.0",
 ]
